@@ -511,7 +511,9 @@ another task. Resource cleanup callbacks run before the owning pool is reset.
   FUSE, virtiofs, 9p and CIFS mounts, whose stat and close wait for a daemon or a server (mount
   points from `/proc/self/mountinfo`, read once per core and matched by the path as written,
   relative paths through `getcwd`); `TIN_IO_URING=0`; and kernels without io_uring, its
-  operations (5.6) or its features (5.5), or that refuse it (seccomp, `io_uring_disabled`).
+  operations (5.6) or its features (5.5), or that refuse it (`io_uring_disabled`, or a seccomp
+  profile: the default ones of recent Docker and containerd releases refuse io_uring, so a
+  container under them uses the helper threads unless its profile allows the three calls).
   With the ring a FIFO read may hold one descriptor per waiting request.
 - Standard input and streams (#316): inside a task, when the descriptor is a pipe, socket or
   terminal, `quarry.ReadStdin` and `flume.Reader` wait with `rt_task_wait(fd, 1, 0)` before

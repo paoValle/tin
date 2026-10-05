@@ -118,7 +118,7 @@ def run_one(exe, cores, ring, args, files):
                 raise RuntimeError('TIN_IO_URING=0 run made a ring')
         if p.poll() is not None:
             raise RuntimeError('server exited during the run')
-        cpu = None if c0 is None else (c1 - c0) * 1000 / got
+        cpu = None if c0 is None else (c1 - c0) * 1e6 / got  # ms of CPU per 1000 files
         return got / took, cpu
     finally:
         p.kill()
@@ -129,7 +129,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--files', type=int, default=10000)
     ap.add_argument('--size', type=int, default=4096)
-    ap.add_argument('--n', type=int, default=200, help='files read per request')
+    ap.add_argument('--n', type=int, default=1000, help='files read per request')
     ap.add_argument('--cores', default='1,2,4,8')
     ap.add_argument('--rounds', type=int, default=5)
     ap.add_argument('--seconds', type=float, default=3.0)
@@ -170,8 +170,8 @@ def main():
     for c in cores:
         h, u = med[(c, 'helper')], med[(c, 'io_uring')]
         ch, cu = cpu[(c, 'helper')], cpu[(c, 'io_uring')]
-        print('%5d  %14.0f  %16.0f  %11.2fx  %16s  %18s' % (c, h, u, u / h, '-' if ch is None else '%.1f' % ch,
-                                                           '-' if cu is None else '%.1f' % cu))
+        print('%5d  %14.0f  %16.0f  %11.2fx  %16s  %18s' % (c, h, u, u / h, '-' if ch is None else '%.2f' % ch,
+                                                           '-' if cu is None else '%.2f' % cu))
     base = cores[0]
     for c in cores[1:]:
         print('%d cores / %d: helper %.2fx, io_uring %.2fx' % (c, base, med[(c, 'helper')] / med[(base, 'helper')],
