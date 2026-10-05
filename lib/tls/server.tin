@@ -454,78 +454,12 @@ fn (c mut Conn) ReadRaw(p i64, cap i64) (i64, []u8) {
 		if c.eof {
 			break
 		}
-		// A whole record buffered? Otherwise read more without waiting.
-		let have = c.ine - c.ins
-		mut need = 5
-		if have >= 5 {
-			need = 5 + (i64(c.in[c.ins+3])<<8 | i64(c.in[c.ins+4]))
+		let r = c.raw_step(mut out)
+		if r == 0 {
+			break
 		}
-		if have < need && need <= len(c.in) {
-			if c.ins > 0 {
-				copy(c.in, c.in[c.ins:c.ine])
-				c.ine -= c.ins
-				c.ins = 0
-			}
-			let base = cast(i64, c.in)[2]
-			let k = rt_sys_read(c.fd, base+c.ine, len(c.in)-c.ine)
-			if k > 0 {
-				c.ine += k
-				continue
-			}
-			if k == 0 {
-				// End of input without close_notify: a truncation, not a clean end. The failure
-				// texts here are constants: this Conn may be kept in long-lived memory (anvil),
-				// where a string made in a request's pool must not be stored.
-				c.failure = "tls: connection closed by the peer without close_notify"
-				c.closed = true
-				return -2, out
-			}
-			let e = rt_errno()
-			if e == EINTR {
-				continue
-			}
-			if e == EAGAIN {
-				break
-			}
-			c.failure = "tls: read failed"
-			c.closed = true
+		if r == -2 {
 			return -2, out
-		}
-		pendingAlert = 0
-		let (typ, data, err) = c.read_record()
-		if err != nil {
-			return -2, cat(out, c.raw_alert(err))
-		}
-		if typ == ctApplicationData {
-			if len(data) == 0 {
-				c.alertCt += 1
-				if c.alertCt > 32 {
-					pendingAlert = alertUnexpectedMessage
-					return -2, cat(out, c.raw_alert(fail("tls: too many empty records")))
-				}
-				continue
-			}
-			c.alertCt = 0
-			copy(c.plain, data)
-			c.ps = 0
-			c.pe = len(data)
-		} else if typ == ctAlert {
-			let e3 = handle_alert(data)
-			if e3 != nil {
-				c.failure = "tls: the peer sent a fatal alert"
-				c.closed = true
-				return -2, out
-			}
-			c.eof = true
-		} else if typ == ctHandshake {
-			let (ku, e4) = c.raw_key_update(data)
-			if e4 != nil {
-				return -2, cat(out, c.raw_alert(e4))
-			}
-			out = cat(out, ku)
-		} else {
-			pendingAlert = alertUnexpectedMessage
-			return -2, cat(out, c.raw_alert(fail("tls: unexpected record")))
 		}
 	}
 	if got > 0 {
@@ -535,6 +469,122 @@ fn (c mut Conn) ReadRaw(p i64, cap i64) (i64, []u8) {
 		return 0, out
 	}
 	return -1, out
+}
+
+// ClosedRaw reports, without waiting, whether the peer has ended the connection: its
+// close_notify or another alert arrived, the socket reached end of input, or it failed. It
+// decrypts what the socket has, record by record, and stops at the first one of application
+// data, which stays buffered for ReadRaw; a KeyUpdate answer (or the alert to send) is returned
+// for the caller to send. For a stream that asks whether its client went away: a peek at the
+// socket sees only ciphertext.
+fn (c mut Conn) ClosedRaw() (bool, []u8) {
+	mut out = []u8{}
+	for {
+		if c.closed || c.eof {
+			return true, out
+		}
+		if c.pe > c.ps {
+			return false, out
+		}
+		let r = c.raw_step(mut out)
+		if r == 0 {
+			return false, out
+		}
+		if r == -2 {
+			return true, out
+		}
+	}
+	return false, out
+}
+
+// raw_step reads and handles one record without waiting: 1 when it handled one (application
+// data is then in plain), 0 when no whole record can be had yet, 2 at the peer's close_notify,
+// -2 when the connection is broken. A KeyUpdate answer, or the alert to send before closing,
+// is appended to out. The failure texts are constants: this Conn may be kept in long-lived
+// memory (anvil), where a string made in a request's pool must not be stored.
+fn (c mut Conn) raw_step(out mut []u8) i64 {
+	for {
+		// A whole record buffered? Otherwise read more without waiting.
+		let have = c.ine - c.ins
+		mut need = 5
+		if have >= 5 {
+			need = 5 + (i64(c.in[c.ins+3])<<8 | i64(c.in[c.ins+4]))
+		}
+		if have >= need || need > len(c.in) {
+			break
+		}
+		if c.ins > 0 {
+			copy(c.in, c.in[c.ins:c.ine])
+			c.ine -= c.ins
+			c.ins = 0
+		}
+		let base = cast(i64, c.in)[2]
+		let k = rt_sys_read(c.fd, base+c.ine, len(c.in)-c.ine)
+		if k > 0 {
+			c.ine += k
+			continue
+		}
+		if k == 0 {
+			// End of input without close_notify: a truncation, not a clean end.
+			c.failure = "tls: connection closed by the peer without close_notify"
+			c.closed = true
+			return -2
+		}
+		let e = rt_errno()
+		if e == EINTR {
+			continue
+		}
+		if e == EAGAIN {
+			return 0
+		}
+		c.failure = "tls: read failed"
+		c.closed = true
+		return -2
+	}
+	pendingAlert = 0
+	let (typ, data, err) = c.read_record()
+	if err != nil {
+		out = append(out, c.raw_alert(err)...)
+		return -2
+	}
+	if typ == ctApplicationData {
+		if len(data) == 0 {
+			c.alertCt += 1
+			if c.alertCt > 32 {
+				pendingAlert = alertUnexpectedMessage
+				out = append(out, c.raw_alert(fail("tls: too many empty records"))...)
+				return -2
+			}
+			return 1
+		}
+		c.alertCt = 0
+		copy(c.plain, data)
+		c.ps = 0
+		c.pe = len(data)
+		return 1
+	}
+	if typ == ctAlert {
+		let e3 = handle_alert(data)
+		if e3 != nil {
+			c.failure = "tls: the peer sent a fatal alert"
+			c.closed = true
+			return -2
+		}
+		c.eof = true
+		return 2
+	}
+	if typ == ctHandshake {
+		let (ku, e4) = c.raw_key_update(data)
+		if e4 != nil {
+			out = append(out, c.raw_alert(e4)...)
+			return -2
+		}
+		out = append(out, ku...)
+		return 1
+	}
+	pendingAlert = alertUnexpectedMessage
+	out = append(out, c.raw_alert(fail("tls: unexpected record"))...)
+	return -2
 }
 
 // raw_alert ends the connection after err and returns the alert record (the one pendingAlert

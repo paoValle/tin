@@ -158,11 +158,13 @@ def openssl_interop(openssl, exe, certs, work):
                 out = (r.stdout + r.stderr).decode('latin1')
                 assert r.returncode != 0 and 'alert number 70' in out, ('TLS 1.2 only', out[-1500:])
                 keyupdate(openssl, srv)
+                watch_closed(openssl, srv)
         finally:
             srv.stop()
     print(f'PASS openssl s_client: {runs} handshakes (ECDSA P-256, ECDSA P-384 and RSA certificates verified by OpenSSL; '
           'every suite; X25519, P-256 and P-256 by HelloRetryRequest), RSA-PSS SHA-256/384/512, '
-          'handshake_failure, no_application_protocol and protocol_version refusals, client KeyUpdate')
+          'handshake_failure, no_application_protocol and protocol_version refusals, client KeyUpdate, '
+          'a stream sees the client\'s close_notify (Out.Closed)')
 
 
 def keyupdate(openssl, srv):
@@ -181,6 +183,23 @@ def keyupdate(openssl, srv):
             p.wait()
     out = out.decode('latin1')
     assert out.count('KEYUPDATE') == 2 and '\r\n\r\nfast' in out and 'alpn= suite=' in out, out[-2000:]
+
+
+def watch_closed(openssl, srv):
+    """A stream's handler polling w.Closed() sees the client's close_notify (a socket peek would
+    see only a record), then its FIN."""
+    # Not -quiet: it implies -ign_eof, and here the end of input is what makes s_client close.
+    p = subprocess.Popen([openssl, 's_client', '-tls1_3', '-connect', srv.addr()], stdin=subprocess.PIPE,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    p.stdin.write(get('/watch', close=False))
+    p.stdin.flush()
+    time.sleep(0.5)
+    p.stdin.close()  # s_client sends close_notify and exits
+    p.wait(timeout=10)
+    deadline = time.time() + 5
+    while 'watch saw closed' not in srv.output() and time.time() < deadline:
+        time.sleep(0.05)
+    assert 'watch saw closed' in srv.output(), srv.output()[-1000:]
 
 
 # ---- Python's ssl ----

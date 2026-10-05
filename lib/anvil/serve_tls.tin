@@ -27,7 +27,8 @@ shared mut gTlsMs i64   // a handshake must finish within this (TIN_HANDSHAKE_TI
 shared mut gTlsAccept fn(i64)                  // tls_accept: start the handshake of a new connection
 shared mut gTlsDone fn(i64, i64)               // tls_done: a handshake task ended
 shared mut gTlsRead fn(i64, i64, i64) i64      // tls_read: decrypted input, as ReadRaw counts it
-shared mut gTlsPending fn(i64) bool            // tls_pending: input TLS holds that the socket will not report again
+shared mut gTlsPending fn(i64) i64             // tls_pending: input TLS holds that the socket will not report again
+shared mut gTlsClosed fn(i64) bool             // tls_closed: Out.Closed for a TLS connection
 shared mut gTlsSeal fn(i64) bool               // tls_seal: the output batch, sealed in place
 shared mut gTlsWrite fn(i64, i64, i64) !()     // tls_write_all: a stream's bytes, sealed and written (!(): a bare ! ends no line here, notes/compiler_bugs_tls.md)
 shared mut gTlsFile fn(i64, i64, i64, i64) !i64 // tls_file_step: a piece of SendFile's file, read and sealed
@@ -88,6 +89,7 @@ fn tls_setup(certPEM str, keyPEM str) ! {
 	gTlsDone = tls_done
 	gTlsRead = tls_read
 	gTlsPending = tls_pending
+	gTlsClosed = tls_closed
 	gTlsSeal = tls_seal
 	gTlsWrite = tls_write_all
 	gTlsFile = tls_file_step
@@ -177,7 +179,7 @@ fn tls_http1(c i64) {
 		c[cDeadline] = loopNow + gHeaderMs*1000000
 	}
 	ev_conn(c[cFD])
-	if tls_pending(c) {
+	if tls_pending(c) != 0 {
 		on_read(c)
 	}
 }
@@ -282,13 +284,42 @@ fn tls_read(c i64, p i64, n i64) i64 {
 	return k
 }
 
-// tls_pending reports whether TLS holds input of c that the socket will not report again.
-fn tls_pending(c i64) bool {
+// tls_pending tells what input of c TLS holds that the socket will not report again: 2
+// decrypted data (a read returns it at once), 1 only part of a record, 0 nothing.
+fn tls_pending(c i64) i64 {
 	if c[cTls] == 0 {
-		return false
+		return 0
 	}
 	let tc = cast(tls.Conn, c[cTls])
-	return tc.PendingRaw()
+	if tc.Buffered() > 0 {
+		return 2
+	}
+	if tc.PendingRaw() {
+		return 1
+	}
+	return 0
+}
+
+// tls_closed is Out.Closed for a TLS connection (in its stream's task): whether the client
+// sent close_notify or an alert, or closed the socket. Records read on the way stay buffered.
+fn tls_closed(c i64) bool {
+	let tc = cast(tls.Conn, c[cTls])
+	let (gone, out) = tc.ClosedRaw()
+	if len(out) > 0 {
+		let p = cast(i64, out)[2]
+		if conns[c[cFD]] == c {
+			// The event loop owns the socket: after the output already pending.
+			tls_send(c, p, len(out))
+		} else if rt_sys_write(c[cFD], p, len(out)) != len(out) {
+			// A stream owns it and the answer (a KeyUpdate's) does not fit: the stream ends.
+			if c[cStream] >= 2 {
+				c[cStream] = 5
+			}
+			c[cClose] = 1
+			return true
+		}
+	}
+	return gone
 }
 
 // tls_send writes the n sealed bytes at p after c's pending output, keeping what the socket

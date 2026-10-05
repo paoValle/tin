@@ -9,6 +9,7 @@
 //   GET  /slow?ms=M    waits M ms, then "slow done"
 //   GET  /fast         "fast"
 //   GET  /ws           a WebSocket echo: each message back, prefixed "echo: "
+//   GET  /watch        streams its head, then waits until w.Closed() and prints "watch saw closed"
 package main
 
 import "anvil"
@@ -91,6 +92,25 @@ fn fast(q anvil.Req, w mut anvil.Out) {
 	w.Text("fast")
 }
 
+fn watch(q anvil.Req, w mut anvil.Out) {
+	w.Stream() catch _ {
+		return
+	}
+	w.Flush() catch _ {
+		return
+	}
+	for i in 0..400 {
+		if w.Closed() {
+			quarry.Eprintln("watch saw closed")
+			return
+		}
+		tide.Wait(25ms) catch _ {
+			return
+		}
+	}
+	quarry.Eprintln("watch timed out")
+}
+
 fn wsEcho(ws websocket.Conn, m websocket.Message) ! {
 	try ws.WriteText("echo: {m.Data}")
 }
@@ -122,6 +142,7 @@ fn main() {
 	r.Get("/slow", slow)
 	r.Get("/fast", fast)
 	r.Get("/ws", ws)
+	r.Get("/watch", watch)
 	r.ServeTLS(":8443", cert, key) catch err {
 		say.Line("server:", err)
 	}
