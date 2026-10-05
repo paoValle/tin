@@ -15,3 +15,5 @@ fn ev_fd(i i64) i64 {
 }
 
 const sysSendfile = 71
+
+const sysPread = 67
