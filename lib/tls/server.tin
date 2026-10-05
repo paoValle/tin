@@ -606,17 +606,25 @@ fn (c mut Conn) SealRawTo(p i64, n i64, dst i64) !i64 {
 		if m > maxPlaintext {
 			m = maxPlaintext
 		}
-		// header, data, content type, tag (RFC 8446 5.2)
+		// header, data, content type, tag (RFC 8446 5.2); the nonce and the header (the
+		// additional data) are rewritten in the Conn's own slices: nothing is allocated.
 		let rec = dst + o
 		let ln = m + 17
-		store8(rec, ctApplicationData)
-		store8(rec+1, 3)
-		store8(rec+2, 3)
-		store8(rec+3, ln>>8)
-		store8(rec+4, ln&255)
+		let h = c.whdr
+		h[0] = ctApplicationData
+		h[1] = 3
+		h[2] = 3
+		h[3] = u8(ln >> 8)
+		h[4] = u8(ln)
+		memcpy(rec, cast(i64, h)[2], 5)
 		memcpy(rec+5, p+off, m)
 		store8(rec+5+m, ctApplicationData)
-		try a.SealTo(nonce(c.wiv, c.wseq), rec+5, m+1, raw_bytes(rec, 5), rec+5)
+		let nc = c.wnonce
+		copy(nc, c.wiv)
+		for i in 0..8 {
+			nc[11-i] ^= u8(c.wseq >> u64(8*i))
+		}
+		try a.SealTo(nc, rec+5, m+1, h, rec+5)
 		c.wseq += 1
 		o += 5 + ln
 	}
