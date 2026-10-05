@@ -677,12 +677,18 @@ runners with four vCPUs, Linux 6.17.0-1022-azure, Go 1.26.8, h2load nghttp2 1.59
 medians of five alternating rounds (`bench/http/run_h2load.py`; Go is `bench/http/goh2c`,
 net/http with `Protocols.SetUnencryptedHTTP2`). Only the ratios are meaningful on these runners.
 
-| architecture, path | anvil req/s | net/http req/s | net/http / anvil |
+| architecture, path | anvil req/s | net/http req/s | anvil / net/http |
 |---|---:|---:|---:|
-| amd64 /json | 727258 | 38315 | 0.053 |
-| amd64 /plaintext | 705675 | 38208 | 0.054 |
-| arm64 /json | 938356 | 31205 | 0.033 |
-| arm64 /plaintext | 939703 | 32056 | 0.034 |
+| amd64 /json | 727258 | 38315 | 18.98 |
+| amd64 /plaintext | 705675 | 38208 | 18.47 |
+| arm64 /json | 938356 | 31205 | 30.07 |
+| arm64 /plaintext | 939703 | 32056 | 29.31 |
+
+With 10 streams in flight on each of 32 connections, anvil reads a burst of frames from each
+connection in one read and answers it in one write. net/http's HTTP/2 server runs a goroutine per
+connection and another per stream and hands frames between them, which on one core costs it more
+than the requests. The same h2load run against goh2c on a developer machine gives about 37000
+req/s as well, so this is how that server behaves with GOMAXPROCS=1, not a broken baseline.
 
 The same run compared the HTTP/1.1 path with main (wrk, as above): head/base 0.994 (`/json`) and
 0.998 (`/plaintext`) on amd64, 1.002 and 0.987 on arm64.
