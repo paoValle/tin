@@ -87,8 +87,9 @@ def wait_port(port, proc=None, limit=10):
     raise AssertionError(f'port {port} never opened')
 
 
-def run(exe, *args, timeout=30):
-    r = subprocess.run([str(exe), *map(str, args)], capture_output=True, text=True, timeout=timeout)
+def run(exe, *args, timeout=30, env=None):
+    r = subprocess.run([str(exe), *map(str, args)], capture_output=True, text=True, timeout=timeout,
+                       env=None if env is None else dict(os.environ, **env))
     assert r.returncode == 0, (args, r.returncode, r.stdout, r.stderr[-3000:])
     return r.stdout
 
@@ -341,7 +342,7 @@ def python_servers(exe, certs):
     out = run(exe, 'truncated', f'127.0.0.1:{trunc.getsockname()[1]}')
     assert out == 'fault tls: connection closed by the peer without close_notify 12\n', out
     trunc.close()
-    # Verification is the default: without X.509 support yet, every server is refused.
+    # Verification is the default: a server whose certificate no trusted root signed is refused.
     port = free_port()
 
     class H(http.server.BaseHTTPRequestHandler):
@@ -370,7 +371,9 @@ def python_servers(exe, certs):
     serve_in_thread(srv.serve_forever)
     try:
         wait_port(port)
-        out = run(exe, 'verify', f'127.0.0.1:{port}', 'localhost')
+        # The trusted roots are an unrelated certificate (SSL_CERT_FILE), so the outcome does not
+        # depend on whether this machine has a CA bundle.
+        out = run(exe, 'verify', f'127.0.0.1:{port}', 'localhost', env={'SSL_CERT_FILE': str(certs['rsa'][0])})
         assert out.startswith('fault tls: x509: certificate signed by unknown authority'), out
         want = hashlib.sha256(b'hello over tls ' * 4096).hexdigest()
         out = run(exe, 'https', f'https://127.0.0.1:{port}/x')
