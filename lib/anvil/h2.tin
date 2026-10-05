@@ -406,6 +406,9 @@ fn b64url(p i64, n i64, out i64) i64 {
 // when nothing more is there now, -2 when the connection is broken (tls_read's contract, so a
 // TLS connection, #124, decrypts here).
 fn conn_read(c i64, p i64, n i64) i64 {
+	if c[cTls] != 0 {
+		return gTlsRead(c, p, n)
+	}
 	let k = rt_sys_read(c[cFD], p, n)
 	if k >= 0 {
 		return k
@@ -421,6 +424,9 @@ fn conn_read(c i64, p i64, n i64) i64 {
 // cannot be (the batch is dropped and the connection is broken). Over plain TCP there is nothing
 // to do; a TLS connection (#124) seals the batch into records here.
 fn conn_seal(c i64) bool {
+	if c[cTls] != 0 {
+		return gTlsSeal(c)
+	}
 	return true
 }
 
@@ -477,7 +483,8 @@ fn h2_read(c i64) bool {
 	if !h2_after(c) {
 		return false
 	}
-	return full && c[cWriting] == 0 && c[cClose] == 0
+	// Decrypted input TLS still holds is read on the next turn: the socket will not report it.
+	return (full || (c[cTls] != 0 && gTlsPending(c) == 2)) && c[cWriting] == 0 && c[cClose] == 0
 }
 
 // h2_keep holds the n bytes at p, a frame that has not fully arrived, until the next read.
@@ -2254,6 +2261,9 @@ fn h2_drain_all() {
 // freed once their tasks have ended.
 fn h2_close(c i64) {
 	let fd = c[cFD]
+	if c[cTls] != 0 {
+		gTlsBye(c) // close_notify (serve_tls.tin)
+	}
 	rt_sys_close(fd)
 	conns[fd] = 0
 	h2_cancel_all(c)

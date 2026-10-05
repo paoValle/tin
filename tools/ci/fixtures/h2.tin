@@ -24,6 +24,7 @@ import "tide"
 //   /abort            one streamed write, then Abort
 //   /endless          writes 16 KiB pieces until one fails (herald logs "endless stopped")
 //   /hijack           Hijack, which an HTTP/2 stream refuses
+// With TLS_CERT and TLS_KEY (paths) it serves HTTPS, where ALPN chooses h2 or HTTP/1.1.
 
 fn num(q anvil.Req, name str, dflt i64) i64 {
 	let v = mint.Atoi(q.Param(name)) catch _ { dflt }
@@ -251,6 +252,21 @@ fn main() {
 	r.Get("/abort", abort)
 	r.Get("/endless", endless)
 	r.Get("/hijack", hijack)
+	if quarry.Getenv("TLS_CERT") != "" {
+		// HTTPS: h2 by ALPN, HTTP/1.1 otherwise (#124, #360).
+		let cert = quarry.ReadFile(quarry.Getenv("TLS_CERT")) catch err {
+			herald.Log(herald.LError, "cert", []str{"err", "{err}"})
+			return
+		}
+		let key = quarry.ReadFile(quarry.Getenv("TLS_KEY")) catch err {
+			herald.Log(herald.LError, "key", []str{"err", "{err}"})
+			return
+		}
+		r.ServeTLS(":9360", cert, key) catch err {
+			herald.Log(herald.LError, "server", []str{"err", "{err}"})
+		}
+		return
+	}
 	r.Serve(":9360") catch err {
 		herald.Log(herald.LError, "server", []str{"err", "{err}"})
 	}

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """HTTP/2 in anvil (#360): h2c by prior knowledge and by Upgrade: h2c, on the port that serves
-HTTP/1.1. The fixture (tools/ci/fixtures/h2.tin) is checked by:
+HTTP/1.1, and h2 over TLS by ALPN. The fixture (tools/ci/fixtures/h2.tin) is checked by:
 
 - h2spec (H2SPEC, or h2spec on PATH; required when CI is set): every generic, http2 and hpack
   case but http2/3.5/2, which sends "INVALID CONNECTION PREFACE" to a port that also speaks
@@ -10,6 +10,8 @@ HTTP/1.1. The fixture (tools/ci/fixtures/h2.tin) is checked by:
   headers, request and response trailers, large bodies both ways, a streamed body, HEAD and 600
   requests on one connection;
 - a gRPC client (grpc-go, tools/ci/grpc) against examples/grpc.tin;
+- over TLS (ServeTLS, #124): h2 by ALPN with raw frames, h2spec (every case) and Go's client,
+  HTTP/1.1 for clients that do not offer h2, and no h2c over TLS;
 - raw frames (h2wire.py): the server's settings, exact flow control, the HPACK dynamic table under
   insertions, evictions and size updates, multiplexed waits, cancels by RST_STREAM and by a closed
   connection, the write timeout, limits (413, 431), CONTINUATION, 100-continue, the Upgrade,
@@ -20,6 +22,7 @@ from pathlib import Path
 import shutil
 import signal
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -29,6 +32,7 @@ from suite import ROOT
 import h2wire as w
 
 H2SPEC_SKIP = 'http2/3.5/2'
+PY_TLS13 = getattr(ssl, 'HAS_TLSv1_3', False) and not ssl.OPENSSL_VERSION.startswith('LibreSSL')
 H2SPEC_SECTIONS = ['generic', 'hpack', 'http2/3.5/1', 'http2/4', 'http2/5', 'http2/6', 'http2/7', 'http2/8']
 
 
@@ -101,7 +105,7 @@ def fields(r):
 
 # ---- h2spec, Go and gRPC clients ----
 
-def check_h2spec(port, out):
+def check_h2spec(port, out, tls=False):
     h2spec = os.environ.get('H2SPEC') or shutil.which('h2spec')
     if not h2spec:
         if os.environ.get('CI'):
@@ -109,19 +113,25 @@ def check_h2spec(port, out):
         print('SKIP h2spec: not installed (go install github.com/summerwind/h2spec/cmd/h2spec@'
               'v1.5.1-0.20220625142712-af83a65f0b62, then H2SPEC=path)')
         return
-    report = out / 'h2spec.xml'
-    r = subprocess.run([h2spec, '-h', '127.0.0.1', '-p', str(port), '-o', '3', '-j', str(report)] + H2SPEC_SECTIONS,
+    name = 'h2spec-tls' if tls else 'h2spec'
+    # Over TLS a connection is HTTP/2 from its handshake (ALPN), so every case applies, 3.5/2 too.
+    args = ['-t', '-k', 'generic', 'hpack', 'http2'] if tls else H2SPEC_SECTIONS
+    r = subprocess.run([h2spec, '-h', '127.0.0.1', '-p', str(port), '-o', '3', '-j', str(out / (name + '.xml'))] + args,
                        capture_output=True, text=True, timeout=600)
-    (out / 'h2spec.log').write_text(r.stdout + r.stderr)
+    (out / (name + '.log')).write_text(r.stdout + r.stderr)
     tail = [l for l in r.stdout.splitlines() if 'tests,' in l]
     assert r.returncode == 0 and tail and ' 0 failed' in tail[-1], 'h2spec failed:\n' + r.stdout[-6000:]
-    print('PASS h2spec:', tail[-1].strip(), '(skipped by design: %s)' % H2SPEC_SKIP)
+    if tls:
+        print('PASS h2spec over TLS (h2 by ALPN):', tail[-1].strip())
+    else:
+        print('PASS h2spec:', tail[-1].strip(), '(skipped by design: %s)' % H2SPEC_SKIP)
 
 
-def check_go_client(port, out):
+def check_go_client(port, out, ca=None):
     exe = out / 'h2client'
     subprocess.run(['go', 'build', '-o', str(exe), './tools/ci/fixtures/h2client.go'], cwd=ROOT, check=True)
-    r = subprocess.run([str(exe), '-addr', '127.0.0.1:%d' % port], capture_output=True, text=True, timeout=120)
+    r = subprocess.run([str(exe), '-addr', '127.0.0.1:%d' % port] + (['-ca', str(ca)] if ca else []),
+                       capture_output=True, text=True, timeout=120)
     sys.stdout.write(r.stdout)
     assert r.returncode == 0, "Go's HTTP/2 client failed:\n" + r.stdout + r.stderr
 
@@ -508,6 +518,102 @@ def check_drain(exe, out):
         srv.stop()
 
 
+# ---- HTTP/2 over TLS (#124) ----
+
+def openssl3():
+    """An OpenSSL 3 command line, or None."""
+    for cand in (shutil.which('openssl'), '/opt/homebrew/opt/openssl@3/bin/openssl', '/usr/local/opt/openssl@3/bin/openssl'):
+        if cand and os.path.exists(cand):
+            if subprocess.run([cand, 'version'], capture_output=True, text=True).stdout.startswith('OpenSSL 3'):
+                return cand
+    return None
+
+
+def tls_conn(port, cert, alpn):
+    """A TLS 1.3 connection to the fixture that offers the ALPN protocols alpn (None: no ALPN)."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.load_verify_locations(str(cert))
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+    if alpn:
+        ctx.set_alpn_protocols(alpn)
+    return ctx.wrap_socket(socket.create_connection(('127.0.0.1', port), timeout=5), server_hostname='localhost')
+
+
+def http1_over(s, request):
+    """The whole HTTP/1.1 reply to request on TLS socket s (the request says Connection: close)."""
+    s.sendall(request)
+    reply = b''
+    while True:
+        try:
+            part = s.recv(65536)
+        except (ssl.SSLEOFError, ConnectionResetError):
+            break
+        if not part:
+            break
+        reply += part
+    s.close()
+    return reply
+
+
+def check_tls(exe, out, files):
+    """ServeTLS offers h2 and then http/1.1: a client that offers h2 gets HTTP/2, the others
+    HTTP/1.1 on the same port, and the cleartext ways into HTTP/2 do not apply over TLS."""
+    openssl = openssl3()
+    if not openssl or not PY_TLS13:
+        if os.environ.get('CI'):
+            raise AssertionError('h2 over TLS needs an OpenSSL 3 command line and Python ssl with TLS 1.3')
+        print('SKIP h2 over TLS: no OpenSSL 3 command line, or Python ssl without TLS 1.3 (%s)' % ssl.OPENSSL_VERSION)
+        return
+    cert, key = out / 'tls.pem', out / 'tls.key'
+    subprocess.run([openssl, 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-keyout', str(key),
+                    '-out', str(cert), '-days', '30', '-nodes', '-subj', '/CN=localhost',
+                    '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1'], check=True, capture_output=True)
+    srv = Server(exe, out / 'h2tls.log', TLS_CERT=str(cert), TLS_KEY=str(key), FILES_DIR=str(files), TIN_MAX_BODY='2000000')
+    try:
+        # Raw frames over TLS: ALPN chose h2, then multiplexed streams and a body past the
+        # initial window, as over TCP.
+        s = tls_conn(srv.port, cert, ['h2', 'http/1.1'])
+        assert s.selected_alpn_protocol() == 'h2', s.selected_alpn_protocol()
+        c = w.Conn.__new__(w.Conn)
+        c.sock, c.buf, c.dec, c.port = s, b'', w.Decoder(), srv.port
+        c.send(w.PREFACE + w.settings())
+        t = time.monotonic()
+        for i in range(4):
+            c.request(1 + 2 * i, 'GET', '/wait?ms=300')
+        c.request(9, 'GET', '/')
+        c.request(11, 'GET', '/big?n=200000')
+        r = c.responses([9, 11])
+        fast = time.monotonic() - t
+        assert r[9]['body'] == b'hello from anvil over HTTP/2.0\n', r[9]
+        assert r[11]['body'] == pattern(200000), len(r[11]['body'])
+        r = c.responses([1, 3, 5, 7])
+        assert all(x['body'] == b'waited 300' for x in r.values()), r
+        assert fast < 0.25, fast
+        c.close()
+        # The same port without h2: HTTP/1.1 when ALPN offers only http/1.1 and when there is none.
+        for alpn in (['http/1.1'], None):
+            s = tls_conn(srv.port, cert, alpn)
+            assert s.selected_alpn_protocol() == (alpn[0] if alpn else None), s.selected_alpn_protocol()
+            reply = http1_over(s, b'GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n')
+            assert reply.startswith(b'HTTP/1.1 200 OK\r\n') and reply.endswith(b'hello from anvil over HTTP/1.1\n'), reply
+        # h2c is for cleartext (RFC 9113 3.2, 3.3): over a TLS connection that agreed on HTTP/1.1,
+        # Upgrade: h2c is ignored and the client preface is a malformed request line.
+        s = tls_conn(srv.port, cert, ['http/1.1'])
+        reply = http1_over(s, b'GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade, HTTP2-Settings, close\r\n'
+                              b'Upgrade: h2c\r\nHTTP2-Settings: AAMAAABkAARAAAAA\r\n\r\n')
+        assert reply.startswith(b'HTTP/1.1 200 OK\r\n') and reply.endswith(b'over HTTP/1.1\n'), reply
+        s = tls_conn(srv.port, cert, ['http/1.1'])
+        reply = http1_over(s, w.PREFACE + w.settings())
+        assert reply.startswith(b'HTTP/1.1 400 '), reply
+        print('PASS h2 over TLS: ALPN chose h2 for a client offering it (multiplexed waits, a 200 KB body), '
+              'HTTP/1.1 for http/1.1 and for no ALPN on the same port; Upgrade: h2c and the preface are cleartext only')
+        check_h2spec(srv.port, out, tls=True)
+        check_go_client(srv.port, out, ca=cert)
+        assert srv.p.poll() is None, 'the server died'
+    finally:
+        srv.stop()
+
+
 def main():
     out = ROOT / 'bin/ci/h2'
     out.mkdir(parents=True, exist_ok=True)
@@ -540,6 +646,7 @@ def main():
     finally:
         srv.stop()
     check_drain(exe, out)
+    check_tls(exe, out, files)
     check_grpc(out)
 
 

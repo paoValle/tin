@@ -1,10 +1,13 @@
 // An HTTP/2 client for tools/ci/fixtures/h2.tin, run by tools/ci/h2_check.py (#360): Go's own
-// HTTP/2 implementation (net/http, h2c by prior knowledge) against anvil's, with Huffman-coded
-// headers and the dynamic table, request trailers, many streams at once and large bodies.
+// HTTP/2 implementation (net/http: h2c by prior knowledge, or h2 over TLS by ALPN with -ca)
+// against anvil's, with Huffman-coded headers and the dynamic table, request trailers, many
+// streams at once and large bodies.
 package main
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"io"
@@ -87,17 +90,38 @@ func echo(body []byte, header map[string]string, trailer map[string]string) map[
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:9360", "the server")
+	ca := flag.String("ca", "", "HTTPS: the PEM file of the root that signed the server's certificate (h2 by ALPN)")
 	flag.Parse()
 	base = "http://" + *addr
 	var p http.Protocols
 	p.SetUnencryptedHTTP2(true)
-	client = &http.Client{Transport: &http.Transport{Protocols: &p, MaxConnsPerHost: 1}, Timeout: 60 * time.Second}
+	tr := &http.Transport{Protocols: &p, MaxConnsPerHost: 1}
+	if *ca != "" {
+		// HTTP/2 only: ALPN offers "h2" alone, so the server must choose it.
+		pem, err := os.ReadFile(*ca)
+		if err != nil {
+			fail("ca: %v", err)
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(pem) {
+			fail("ca: no certificate in %s", *ca)
+		}
+		base = "https://" + *addr
+		p = http.Protocols{}
+		p.SetHTTP2(true)
+		tr.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13}
+	}
+	client = &http.Client{Transport: tr, Timeout: 60 * time.Second}
 
 	_, body := get("/")
 	if string(body) != "hello from anvil over HTTP/2.0\n" {
 		fail("GET / = %q", body)
 	}
-	fmt.Println("PASS GET / over h2c with Go's client")
+	if *ca != "" {
+		fmt.Println("PASS GET / over h2 (TLS 1.3, ALPN) with Go's client")
+	} else {
+		fmt.Println("PASS GET / over h2c with Go's client")
+	}
 
 	m := echo([]byte("hi"), map[string]string{"X-Test": "a value", "Cookie": "a=1"}, nil)
 	if m["proto"] != "HTTP/2.0" || m["len"] != "2" || m["x-test"] != "a value" || m["query"] != "k=v" || m["cookie"] != "a=1" {
