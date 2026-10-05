@@ -529,6 +529,50 @@ loaded word). Cold stubs preserve registers, including leaf-function homes. The 
 keeps existing allocation and register-home decisions; the poll check stays inside loops.
 The watchdog is started only for an opted-in executable.
 
+## Integer overflow checks (Linux)
+
+`+`, `-`, `*`, negation, signed `/`, shifts and float to integer conversions are checked in
+user code and library packages (#362; `lib/runtime/` and the compiler are not). Each check is a
+flag test and a branch to a cold stub. The compiler drops the checks it can prove cannot fire
+(loop counters, and after inlining, constants, lengths, narrow types and locals defined once),
+and the crypto kernels are `@wrap`.
+
+[Run 37350166526](https://github.com/yasserreslan/tin/actions/runs/37350166526) measured head
+`1d07ed3` against main `c0145f2` on the same runners: Linux 6.17.0-1022-azure, AMD EPYC 9V45 on
+amd64, Neoverse-V3 on arm64, Go 1.26.8. CPU figures are medians of seven alternating runs per
+side; HTTP uses one server core and wrk `-t2 -c100` on the same runner. Only ratios on these
+shared runners are meaningful.
+
+| architecture, workload | main ms | checked ms | checked/main time |
+|---|---:|---:|---:|
+| arm64 spectral | 889.20 | 1201.88 | 1.352 |
+| arm64 ordered_less | 25.48 | 27.35 | 1.074 |
+| arm64 indexsum | 33.30 | 35.31 | 1.060 |
+| arm64 json | 1294.42 | 1344.69 | 1.039 |
+| arm64 sieve | 367.14 | 380.61 | 1.037 |
+| amd64 sha512 | 310.23 | 322.68 | 1.040 |
+| amd64 spectral | 6162.75 | 6138.30 | 0.996 |
+
+The other 41 benchmark and architecture pairs were within 3.5% (0.978 to 1.034). HTTP
+checked/main throughput was 0.997 (`/json`) and 0.994 (`/plaintext`) on amd64, and 0.979
+and 0.994 on arm64. Output equality is checked on every timed repetition.
+
+spectral is the one real cost. Its inner loop computes `(i+j)*(i+j+1)`, where `i` and `j` are
+bounded only by a slice length, so the multiply keeps its check. On arm64 that is an `smulh`
+and a compare in a loop of 0.73 ns an iteration. On x86-64 `imul` sets the overflow flag
+itself, so the check is free there. A program that has measured such a loop can write `*%`
+in it.
+
+Before the elision pass and `@wrap` on the crypto kernels, the same comparison
+([run 37344878578](https://github.com/yasserreslan/tin/actions/runs/37344878578), main
+`8b4e916`) cost 1.58 on arm64 x25519, 1.52 on tls13keys and 1.22 on p256ecdh. Those three are
+now 1.000, 1.002 and 1.006. Two probes with the checks off measure noise. All changes with the
+checks off ([run 37344888270](https://github.com/yasserreslan/tin/actions/runs/37344888270)) was
+within 3% on arm64. The same with 12 bytes of padding after `main`
+([run 37350044953](https://github.com/yasserreslan/tin/actions/runs/37350044953)) moved
+memory_16 by 1.197 on arm64 and aesgcm by 1.113 on amd64. A ratio of a few percent on one
+benchmark can be code placement.
+
 ## Long-lived blocks above 4 KiB (Linux)
 
 The ingot heap served only blocks up to 4 KiB from slabs: a bigger kept value had a
@@ -553,6 +597,31 @@ and 1141 ms for 200000 keeps and overwrites of one 5 KB value. The 5000-byte val
 bytes of a slab each instead of a page-rounded 8192, and the memory of deleted values is
 reused instead of unmapped. These are not same-machine before and after figures: run
 `.github/workflows/bench-linux.yml` for those.
+
+## File reads through io_uring (Linux)
+
+`quarry.ReadFile` in a request task goes through the core's own io_uring ring on Linux (#357);
+the helper threads are the fallback (`TIN_IO_URING=0`, kernels or seccomp profiles that refuse
+io_uring, FIFOs and network mounts). `bench/files` reads 10000 files of 4 KiB, 1000 per request
+over 4 connections per core, in 5 alternating rounds of 3 s per side; the table gives medians.
+[Run 37350232975](https://github.com/yasserreslan/tin/actions/runs/37350232975), GitHub's
+4-vCPU runners (Linux 6.17.0-1022-azure, AMD EPYC 9V74 and Neoverse-N2); only ratios mean anything there.
+
+| cores | amd64 helper files/s | amd64 io_uring files/s | io_uring/helper | arm64 helper files/s | arm64 io_uring files/s | io_uring/helper |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 158401 | 101909 | 0.64x | 181622 | 161346 | 0.89x |
+| 2 | 185771 | 195836 | 1.05x | 275430 | 292280 | 1.06x |
+| 4 | 76655 | 317049 | 4.14x | 136593 | 559164 | 4.09x |
+| 8 | 165514 | 303163 | 1.83x | 265550 | 550220 | 2.07x |
+
+- Scaling from one core to four: io_uring 3.11x (amd64) and 3.47x (arm64); the helper threads
+  0.48x and 0.75x, as every core queues on the same few threads. Eight cores on four vCPUs add
+  nothing to either.
+- CPU per 1000 files: io_uring 9.8 to 12.8 ms (amd64) and 6.2 to 7.0 ms (arm64), about half
+  of the helper path's 17.1 to 23.6 and 11.8 to 14.5 ms.
+- On one core io_uring is slower (0.64x, 0.89x): the helper path then runs the reads on other
+  CPUs in parallel with the core, which a 4-vCPU runner has to spare. Serving cores take
+  those CPUs away, so the multi-core rows are the production case.
 
 ## Map growth without stalls (Linux)
 
