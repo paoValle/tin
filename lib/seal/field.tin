@@ -49,7 +49,10 @@ fn (f monty) size() i64 {
 	return u64(i64(a < b))
 }
 
-// mul sets z = x*y/R mod m (CIOS Montgomery multiplication); z may alias x or y.
+// mul sets z = x*y/R mod m; z may alias x or y. Each round adds x*y[i] and mm*m (mm chosen so
+// that the low limb becomes zero) to t in one pass with two carries (FIOS), then drops the low
+// limb. The limbs are read and written by address (#474): every element is checked to have n
+// limbs first, so no index can leave its slice.
 @wrap fn (f mut monty) mul(z mut []u64, x []u64, y []u64) {
 	let n = f.n
 	if n == 4 {
@@ -57,51 +60,61 @@ fn (f monty) size() i64 {
 		return
 	}
 	let t = f.t
-	let m = f.m
-	for i in 0..n+2 {
-		t[i] = 0
+	if len(x) != n || len(y) != n || len(z) != n || len(f.m) != n || len(t) != n+2 {
+		rt_panic("seal: a field element has the wrong number of limbs")
 	}
+	let xp = cast(i64, x)[2]
+	let yp = cast(i64, y)[2]
+	let mp = cast(i64, f.m)[2]
+	let tp = cast(i64, t)[2]
+	for i in 0..n+1 {
+		__st(tp+8*i, 0, 3)
+	}
+	let minv = f.minv
+	let m0 = u64(__ld(mp, 3))
+	let x0 = u64(__ld(xp, 3))
 	for i in 0..n {
-		let yi = y[i]
-		mut c = u64(0)
-		for j in 0..n {
-			// t[j] + x[j]*yi + c fits in 128 bits: (hi, lo).
-			let xj = x[j]
-			let tj = t[j]
-			mut lo = xj * yi
-			mut hi = mulhi(xj, yi)
-			lo += tj
-			hi += lt(lo, tj)
-			lo += c
-			hi += lt(lo, c)
-			t[j] = lo
-			c = hi
-		}
-		let s = t[n] + c
-		t[n+1] = lt(s, c)
-		t[n] = s
-		// Add mm*m, which makes the low limb zero, and shift down one limb.
-		let mm = t[0] * f.minv
-		mut lo = mm * m[0]
-		mut hi = mulhi(mm, m[0])
-		lo += t[0]
-		hi += lt(lo, t[0])
-		c = hi
+		let yi = u64(__ld(yp+8*i, 3))
+		let t0 = u64(__ld(tp, 3))
+		// Limb 0: t0 + x0*yi, then mm*m0 makes it zero.
+		mut lo = x0 * yi
+		mut hi = mulhi(x0, yi)
+		lo += t0
+		hi += lt(lo, t0)
+		mut c1 = hi
+		let mm = lo * minv
+		mut lo2 = mm * m0
+		mut hi2 = mulhi(mm, m0)
+		lo2 += lo
+		hi2 += lt(lo2, lo)
+		mut c2 = hi2
 		for j in 1..n {
-			let mj = m[j]
-			let tj = t[j]
-			lo = mm * mj
-			hi = mulhi(mm, mj)
+			let xj = u64(__ld(xp+8*j, 3))
+			let tj = u64(__ld(tp+8*j, 3))
+			let mj = u64(__ld(mp+8*j, 3))
+			lo = xj * yi
+			hi = mulhi(xj, yi)
 			lo += tj
 			hi += lt(lo, tj)
-			lo += c
-			hi += lt(lo, c)
-			t[j-1] = lo
-			c = hi
+			lo += c1
+			hi += lt(lo, c1)
+			c1 = hi
+			lo2 = mj * mm
+			hi2 = mulhi(mj, mm)
+			lo2 += lo
+			hi2 += lt(lo2, lo)
+			lo2 += c2
+			hi2 += lt(lo2, c2)
+			c2 = hi2
+			__st(tp+8*(j-1), i64(lo2), 3)
 		}
-		let s2 = t[n] + c
-		t[n-1] = s2
-		t[n] = t[n+1] + lt(s2, c)
+		let tn = u64(__ld(tp+8*n, 3))
+		let s1 = tn + c1
+		let k1 = lt(s1, c1)
+		let s2 = s1 + c2
+		let k2 = lt(s2, c2)
+		__st(tp+8*(n-1), i64(s2), 3)
+		__st(tp+8*n, i64(k1+k2), 3)
 	}
 	f.reduce(mut z, t, t[n])
 }
@@ -305,21 +318,35 @@ fn (f monty) set(z mut []u64, x []u64) {
 	return 1 ^ ((v | (u64(0) - v)) >> 63)
 }
 
-// exp sets z = x^e (e big-endian and public) in Montgomery form; z may alias x.
+// exp sets z = x^e (e big-endian and public) in Montgomery form; z may alias x. It uses 4-bit
+// windows: x^1..x^15 first, then per digit four squarings and one multiplication, skipped for a
+// zero digit (e is public, so branching on it reveals nothing): an inversion mod a 256-bit
+// prime takes about 64 multiplications instead of one per set bit (#474).
 @wrap fn (f mut monty) exp(z mut []u64, x []u64, e []u8) {
+	mut table = make([][]u64, 0, 16)
+	table = append(table, f.elem())
+	f.set(mut table[0], f.one)
+	for k in 1..16 {
+		let t = f.elem()
+		f.mul(mut t, table[k-1], x)
+		table = append(table, t)
+	}
 	let acc = f.elem()
-	let base = f.elem()
-	f.set(mut base, x)
 	f.set(mut acc, f.one)
-	for i in 0..len(e) {
-		{
-			mut bit = 7
-			for bit >= 0 {
+	mut started = false
+	for i in 0..2*len(e) {
+		let w = i64(e[i/2] >> u8(4-4*(i%2))) & 15
+		if started {
+			for s in 0..4 {
 				f.mul(mut acc, acc, acc)
-				if (e[i]>>u8(bit))&1 == 1 {
-					f.mul(mut acc, acc, base)
-				}
-				bit -= 1
+			}
+		}
+		if w != 0 {
+			if started {
+				f.mul(mut acc, acc, table[w])
+			} else {
+				f.set(mut acc, table[w])
+				started = true
 			}
 		}
 	}
