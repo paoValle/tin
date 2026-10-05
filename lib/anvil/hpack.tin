@@ -17,10 +17,12 @@ const hpEntries = 128   // entries the dynamic table can hold: each takes at lea
 
 mut hpReady bool
 mut hpStatic i64 // per core: 62 x [name, name length, value, value length]
+mut hpKinds i64  // per core: the kind of each static entry's name (h2_kind)
 mut hpSym i64    // the symbols ordered by code length, then value
 mut hpFirst i64  // per code length: its first code, its symbols' count and their offset in hpSym
 mut hpCount i64
 mut hpOff i64
+mut hpFast i64   // per first byte: the symbol of a code of at most 8 bits and its length << 16 (0: a longer code)
 mut hpPos i64    // the decoder's position in the header block
 mut hpScr i64    // Huffman-decoded strings of the field being decoded
 mut hpScrCap i64
@@ -31,6 +33,8 @@ mut hpN i64      // the entry hp_entry found
 mut hpNn i64
 mut hpV i64
 mut hpVn i64
+mut hpVok bool   // hp_entry's value was checked already (a static entry, or a dynamic one checked when added)
+mut hpKind i64   // hp_entry's name, classified (h2_kind)
 
 // hp_init builds this core's static table and Huffman tables the first time a connection needs them.
 fn hp_init() {
@@ -56,6 +60,11 @@ fn hp_init() {
 			i += 1
 		}
 	}
+	hpKinds = calloc(62, 8)
+	for i in 1..62 {
+		let e = hpStatic + i*32
+		hpKinds[i] = h2_kind(e[0], e[1])
+	}
 	hpSym = calloc(257, 8)
 	hpFirst = calloc(32, 8)
 	hpCount = calloc(32, 8)
@@ -75,9 +84,17 @@ fn hp_init() {
 		}
 	}
 	let fill = calloc(32, 8)
+	hpFast = calloc(256, 8)
 	for s in 0..257 {
 		let l = hp_len(lp, s)
 		hpSym[hpOff[l]+fill[l]] = s
+		if l <= 8 {
+			// Every byte that starts with this code decodes to it in one lookup.
+			let code = hpFirst[l] + fill[l]
+			for j in 0..(1 << (8-l)) {
+				hpFast[(code<<(8-l))|j] = s | (l << 16)
+			}
+		}
 		fill[l] += 1
 	}
 	free(fill)
@@ -92,42 +109,98 @@ fn hp_len(lp i64, s i64) i64 {
 
 // hp_huff decodes the n Huffman-coded bytes at p into out: the decoded length, or -1 when they are
 // not a valid string (an EOS symbol, or padding longer than 7 bits or not all ones, RFC 7541 5.2).
+// A code of at most 8 bits (every letter, digit and common sign) takes one lookup of the next 8
+// bits; a longer one is decoded bit by bit from its ninth.
 fn hp_huff(p i64, n i64, out i64) i64 {
-	let first = hpFirst
-	let count = hpCount
-	let off = hpOff
-	let sym = hpSym
-	mut code = 0
-	mut bits = 0
+	let fast = hpFast
+	mut acc = 0  // the bits not decoded yet: the low nacc bits
+	mut nacc = 0
+	mut i = 0
 	mut o = 0
-	for i in 0..n {
-		let b = i64(load8(p + i))
-		mut k = 7
-		for k >= 0 {
-			code = (code << 1) | ((b >> k) & 1)
-			bits += 1
-			if bits >= 5 {
-				let x = code - first[bits]
-				if x >= 0 && x < count[bits] {
-					let v = sym[off[bits]+x]
-					if v == 256 {
-						return -1
-					}
-					store8(out+o, v)
-					o += 1
-					code = 0
-					bits = 0
-				} else if bits >= 30 {
-					return -1
-				}
-			}
-			k -= 1
+	for {
+		for nacc < 8 && i < n {
+			acc = (acc << 8) | i64(load8(p+i))
+			nacc += 8
+			i += 1
 		}
+		if nacc == 0 {
+			break
+		}
+		mut top = 0
+		if nacc >= 8 {
+			top = (acc >> (nacc - 8)) & 255
+		} else {
+			top = ((acc << (8 - nacc)) | ((1 << (8 - nacc)) - 1)) & 255 // the end: padded with ones
+		}
+		let e = fast[top]
+		let l = e >> 16
+		if l > 0 && l <= nacc {
+			store8(out+o, e&255)
+			o += 1
+			nacc -= l
+			acc = acc & ((1 << nacc) - 1)
+			continue
+		}
+		if nacc < 8 {
+			break // what is left must be padding
+		}
+		let r = hp_huff_long(p, n, i, top, acc&((1<<(nacc-8))-1), nacc-8)
+		if r < 0 {
+			return -1
+		}
+		store8(out+o, r&255)
+		o += 1
+		i = hpHi
+		acc = hpHacc
+		nacc = hpHn
 	}
-	if bits > 7 || code != (1<<bits)-1 {
+	if nacc > 7 || acc != (1<<nacc)-1 {
 		return -1
 	}
 	return o
+}
+
+mut hpHi i64   // hp_huff_long's input position and bits left over
+mut hpHacc i64
+mut hpHn i64
+
+// hp_huff_long decodes a code longer than 8 bits whose first 8 are top: the bits after them are
+// the low nacc bits of acc, then the input from p+i. It returns the symbol (-1 for an invalid
+// code or EOS) and leaves the position and the bits left in hpHi, hpHacc and hpHn.
+fn hp_huff_long(p i64, n i64, i i64, top i64, acc i64, nacc i64) i64 {
+	let first = hpFirst
+	let count = hpCount
+	mut code = top
+	mut bits = 8
+	mut a = acc
+	mut na = nacc
+	mut j = i
+	for bits < 30 {
+		if na == 0 {
+			if j >= n {
+				return -1
+			}
+			a = i64(load8(p + j))
+			na = 8
+			j += 1
+		}
+		na -= 1
+		code = (code << 1) | ((a >> na) & 1)
+		a = a & ((1 << na) - 1)
+		bits += 1
+		let x = code - first[bits]
+		if x >= 0 && x < count[bits] {
+			let v = hpSym[hpOff[bits]+x]
+			if v == 256 {
+				return -1
+			}
+			hpHi = j
+			hpHacc = a
+			hpHn = na
+			return v
+		}
+	}
+	return -1
 }
 
 // hp_int reads an integer whose prefix is the bits of mask in the byte at hpPos (RFC 7541 5.1),
@@ -200,6 +273,8 @@ fn hp_entry(h i64, idx i64) bool {
 		hpNn = e[1]
 		hpV = e[2]
 		hpVn = e[3]
+		hpVok = true
+		hpKind = hpKinds[idx]
 		return true
 	}
 	let d = idx - 62
@@ -208,14 +283,18 @@ fn hp_entry(h i64, idx i64) bool {
 	}
 	let e = h[hDyn] + ((h[hDynHead]-1-d)&(hpEntries-1))*24
 	hpN = e[0]
-	hpNn = e[1]
-	hpV = e[0] + e[1]
+	hpNn = e[1] & 0xffffffff
+	hpV = e[0] + hpNn
 	hpVn = e[2]
+	hpVok = ((e[1] >> 32) & 1) != 0
+	hpKind = e[1] >> 33
 	return true
 }
 
 // hp_insert adds a field to the front of h's dynamic table, evicting the oldest entries to make
 // room (RFC 7541 4.4). The bytes are copied first: the name may be an entry the room is made from.
+// The entry keeps the kind of its name and whether its value passed (hfKind, hfVok from h2_field),
+// so a reference to it is not checked again.
 fn hp_insert(h i64, np i64, nn i64, vp i64, vn i64) {
 	let size = nn + vn + 32
 	mut b = 0
@@ -232,7 +311,7 @@ fn hp_insert(h i64, np i64, nn i64, vp i64, vn i64) {
 	}
 	let e = h[hDyn] + (h[hDynHead]&(hpEntries-1))*24
 	e[0] = b
-	e[1] = nn
+	e[1] = nn | (i64(hfVok) << 32) | (hfKind << 33)
 	e[2] = vn
 	h[hDynHead] += 1
 	h[hDynCount] += 1
@@ -242,7 +321,7 @@ fn hp_insert(h i64, np i64, nn i64, vp i64, vn i64) {
 // hp_evict drops the oldest entry of h's dynamic table.
 fn hp_evict(h i64) {
 	let e = h[hDyn] + ((h[hDynHead]-h[hDynCount])&(hpEntries-1))*24
-	h[hDynSize] -= e[1] + e[2] + 32
+	h[hDynSize] -= (e[1] & 0xffffffff) + e[2] + 32
 	free(e[0])
 	e[0] = 0
 	h[hDynCount] -= 1
@@ -266,7 +345,7 @@ fn hp_decode(h i64, p i64, n i64) bool {
 			if !hp_entry(h, hp_int(p, n, 127)) {
 				return false
 			}
-			h2_field(hpN, hpNn, hpV, hpVn)
+			h2_field(hpN, hpNn, hpV, hpVn, hpVok, hpKind)
 			fields = true
 		} else if b >= 64 || b < 32 {
 			// A literal (6.2): with incremental indexing (01), without (0000) or never indexed (0001).
@@ -281,6 +360,7 @@ fn hp_decode(h i64, p i64, n i64) bool {
 			}
 			mut np = 0
 			mut nn = 0
+			mut kind = -1
 			if i == 0 {
 				if !hp_str(p, n) {
 					return false
@@ -293,11 +373,12 @@ fn hp_decode(h i64, p i64, n i64) bool {
 				}
 				np = hpN
 				nn = hpNn
+				kind = hpKind
 			}
 			if !hp_str(p, n) {
 				return false
 			}
-			h2_field(np, nn, hpSp, hpSn)
+			h2_field(np, nn, hpSp, hpSn, false, kind)
 			if index {
 				hp_insert(h, np, nn, hpSp, hpSn)
 			}

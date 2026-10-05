@@ -45,6 +45,26 @@ def _huffman_table():
 
 
 HUFF = _huffman_table()
+HUFF_CODES = {sym: (code, n) for (n, code), sym in HUFF.items()}
+
+
+def huffman_encode(data):
+    acc, bits, out = 0, 0, bytearray()
+    for b in data:
+        code, n = HUFF_CODES[b]
+        acc = (acc << n) | code
+        bits += n
+        while bits >= 8:
+            bits -= 8
+            out.append((acc >> bits) & 255)
+    if bits:
+        out.append(((acc << (8 - bits)) | ((1 << (8 - bits)) - 1)) & 255)
+    return bytes(out)
+
+
+def enc_huff(s):
+    b = huffman_encode(s.encode('latin-1') if isinstance(s, str) else s)
+    return enc_int(128, 7, len(b)) + b
 
 
 def huffman_decode(data):

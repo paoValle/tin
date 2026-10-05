@@ -145,6 +145,8 @@ mut hfBig bool   // past SETTINGS_MAX_HEADER_LIST_SIZE: 431
 mut hfRegular bool
 mut hfHost bool
 mut hfExpect bool // expect: 100-continue
+mut hfVok bool    // the last field's value passed (hp_insert keeps it with the entry)
+mut hfKind i64    // the last field's name, classified
 mut hfSize i64
 mut hfCl i64     // content-length: -1 none
 mut hfSeen i64   // pseudo-header fields seen: 1 :method, 2 :scheme, 4 :path, 8 :authority
@@ -959,97 +961,151 @@ fn h2_new_stream(c i64, h i64, id i64) i64 {
 	return s
 }
 
+// Kinds of field names (h2_kind): the pseudo-header fields of a request, and the names a request
+// treats apart.
+const kdMethod = 1
+const kdScheme = 2
+const kdPath = 4
+const kdAuthority = 8
+const kdPseudo = 16  // another pseudo-header field: malformed in a request
+const kdBad = 32     // not a lower case token, or connection-specific (RFC 9113 8.2.1, 8.2.2)
+const kdTe = 64
+const kdLength = 128
+const kdCookie = 256
+const kdHost = 512
+const kdExpect = 1024
+
+// h2_kind classifies the field name at np (nn bytes). Static entries are classified once, and a
+// dynamic entry when it is added, so an indexed field is never compared again.
+fn h2_kind(np i64, nn i64) i64 {
+	if nn == 0 {
+		return kdBad
+	}
+	let f = load8(np)
+	if f == ':' {
+		if bytes_are(np, nn, ":path") {
+			return kdPath
+		}
+		if bytes_are(np, nn, ":method") {
+			return kdMethod
+		}
+		if bytes_are(np, nn, ":scheme") {
+			return kdScheme
+		}
+		if bytes_are(np, nn, ":authority") {
+			return kdAuthority
+		}
+		return kdPseudo
+	}
+	let tok = gTok
+	for i in 0..nn {
+		let b = load8(np + i)
+		if (b >= 'A' && b <= 'Z') || load8(tok+i64(b)) == 0 {
+			return kdBad
+		}
+	}
+	if (f == 'c' && bytes_are(np, nn, "connection")) || (f == 'k' && bytes_are(np, nn, "keep-alive")) || (f == 'p' && bytes_are(np, nn, "proxy-connection")) || (f == 't' && bytes_are(np, nn, "transfer-encoding")) || (f == 'u' && bytes_are(np, nn, "upgrade")) {
+		return kdBad
+	}
+	if f == 't' && bytes_are(np, nn, "te") {
+		return kdTe
+	}
+	if f == 'c' && bytes_are(np, nn, "content-length") {
+		return kdLength
+	}
+	if f == 'c' && bytes_are(np, nn, "cookie") {
+		return kdCookie
+	}
+	if f == 'h' && bytes_are(np, nn, "host") {
+		return kdHost
+	}
+	if f == 'e' && bytes_are(np, nn, "expect") {
+		return kdExpect
+	}
+	return 0
+}
+
 // h2_field takes one decoded field of the block being decoded (RFC 9113 8.2, 8.3): pseudo-header
-// fields go to their slots, the others become field lines "name: value\r\n" for Req.Header.
-fn h2_field(np i64, nn i64, vp i64, vn i64) {
+// fields go to their slots, the others become field lines "name: value\r\n" for Req.Header. vok
+// says the value was checked already and kind is the name's (h2_kind; -1: not known yet); hfVok
+// and hfKind tell hp_insert what the entry keeps.
+fn h2_field(np i64, nn i64, vp i64, vn i64, vok bool, kind i64) {
 	hfSize += nn + vn + 32
 	if hfSize > h2HeaderList {
 		hfBig = true
 	}
-	if nn == 0 || (vn > 0 && (memchr(vp, 0, vn) != 0 || memchr(vp, '\r', vn) != 0 || memchr(vp, '\n', vn) != 0)) {
-		hfBad = true
-		return
+	mut k = kind
+	if k < 0 {
+		k = h2_kind(np, nn)
 	}
-	if load8(np) == ':' {
-		if hfTrailers || hfRegular {
-			hfBad = true // pseudo-header fields only lead a request's block
+	hfKind = k
+	hfVok = vok
+	if !vok {
+		// A value holds no NUL, CR or LF (RFC 9113 8.2.1): a line of its own could follow it.
+		for i in 0..vn {
+			let b = load8(vp + i)
+			if b <= 13 && (b == 0 || b == 10 || b == 13) {
+				hfBad = true
+				return
+			}
+		}
+		hfVok = true
+	}
+	if (k & 31) != 0 {
+		if hfTrailers || hfRegular || k == kdPseudo || (hfSeen&k) != 0 {
+			hfBad = true // only a request's own pseudo-header fields, once each, leading its block
 			return
 		}
-		mut bit = 0
-		if bytes_are(np, nn, ":method") {
-			bit = 1
-		} else if bytes_are(np, nn, ":scheme") {
-			bit = 2
-		} else if bytes_are(np, nn, ":path") {
-			bit = 4
-		} else if bytes_are(np, nn, ":authority") {
-			bit = 8
-		}
-		if bit == 0 || (hfSeen&bit) != 0 {
-			hfBad = true // unknown, a response's, or twice
-			return
-		}
-		hfSeen = hfSeen | bit
+		hfSeen = hfSeen | k
 		if hfBig {
 			return
 		}
 		let off = h2PsLen
 		memcpy(h2Ps+off, vp, vn)
 		h2PsLen += vn
-		if bit == 1 {
+		if k == kdMethod {
 			hfM = off
 			hfMn = vn
-		} else if bit == 4 {
+		} else if k == kdPath {
 			hfP = off
 			hfPn = vn
-		} else if bit == 8 {
+		} else if k == kdAuthority {
 			hfA = off
 			hfAn = vn
 		}
 		return
 	}
 	hfRegular = true
-	let tok = gTok
-	for i in 0..nn {
-		let b = load8(np + i)
-		if (b >= 'A' && b <= 'Z') || load8(tok+i64(b)) == 0 {
-			hfBad = true // field names are lower case tokens (RFC 9113 8.2.1)
+	if k != 0 {
+		if k == kdBad || (k == kdTe && !bytes_are(vp, vn, "trailers")) {
+			hfBad = true
 			return
 		}
-	}
-	let f = load8(np)
-	if (f == 'c' && bytes_are(np, nn, "connection")) || (f == 'k' && bytes_are(np, nn, "keep-alive")) || (f == 'p' && bytes_are(np, nn, "proxy-connection")) || (f == 't' && bytes_are(np, nn, "transfer-encoding")) || (f == 'u' && bytes_are(np, nn, "upgrade")) {
-		hfBad = true // connection-specific fields (RFC 9113 8.2.2)
-		return
-	}
-	if f == 't' && bytes_are(np, nn, "te") && !bytes_are(vp, vn, "trailers") {
-		hfBad = true
-		return
-	}
-	if !hfTrailers {
-		if f == 'c' && bytes_are(np, nn, "content-length") {
-			let v = parse_cl(vp, vn)
-			if v < 0 || (hfCl >= 0 && v != hfCl) {
-				hfBad = true
+		if !hfTrailers {
+			if k == kdLength {
+				let v = parse_cl(vp, vn)
+				if v < 0 || (hfCl >= 0 && v != hfCl) {
+					hfBad = true
+					return
+				}
+				hfCl = v
+			} else if k == kdCookie {
+				if hfBig {
+					return
+				}
+				if h2CkLen > 0 {
+					store8(h2Ck+h2CkLen, ';')
+					store8(h2Ck+h2CkLen+1, ' ')
+					h2CkLen += 2
+				}
+				memcpy(h2Ck+h2CkLen, vp, vn)
+				h2CkLen += vn
 				return
+			} else if k == kdHost {
+				hfHost = true
+			} else if k == kdExpect && name_is(vp, vn, "100-continue") {
+				hfExpect = true
 			}
-			hfCl = v
-		} else if f == 'c' && bytes_are(np, nn, "cookie") {
-			if hfBig {
-				return
-			}
-			if h2CkLen > 0 {
-				store8(h2Ck+h2CkLen, ';')
-				store8(h2Ck+h2CkLen+1, ' ')
-				h2CkLen += 2
-			}
-			memcpy(h2Ck+h2CkLen, vp, vn)
-			h2CkLen += vn
-			return
-		} else if f == 'h' && bytes_are(np, nn, "host") {
-			hfHost = true
-		} else if f == 'e' && bytes_are(np, nn, "expect") && name_is(vp, vn, "100-continue") {
-			hfExpect = true
 		}
 	}
 	if hfBig {

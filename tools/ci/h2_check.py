@@ -183,6 +183,26 @@ def check_hpack_table(port):
     print('PASS HPACK dynamic table: 800 requests with indexed fields, insertions, evictions and size updates')
 
 
+def check_huffman(port):
+    import random
+    rnd = random.Random(7541)
+    alphabet = [b for b in range(1, 256) if b not in (10, 13)]
+    c = w.Conn(port)
+    sid = 1
+    for i in range(400):
+        n = rnd.randrange(0, 200)
+        v = bytes(rnd.choice(alphabet) for _ in range(n)).strip(b' \t')
+        block = (w.encode([(':method', 'GET'), (':scheme', 'http'), (':path', '/echo'), (':authority', 'x')]) +
+                 b'\x00' + w.enc_huff('x-test') + w.enc_huff(v))
+        c.send(w.frame(w.HEADERS, w.END_HEADERS | w.END_STREAM, sid, block))
+        r = c.responses([sid])[sid]
+        got = [l for l in r['body'].split(b'\n') if l.startswith(b'x-test=')][0][7:]
+        assert got == v, (i, v, got)
+        sid += 2
+    c.close()
+    print('PASS Huffman: 400 values of every byte but CR and LF decode exactly')
+
+
 def check_multiplexing(port):
     c = w.Conn(port)
     t = time.monotonic()
@@ -503,6 +523,7 @@ def main():
         check_h2spec(srv.port, out)
         check_go_client(srv.port, out)
         check_hpack_table(srv.port)
+        check_huffman(srv.port)
         check_multiplexing(srv.port)
         check_flow_control(srv.port)
         check_cancels(srv)
