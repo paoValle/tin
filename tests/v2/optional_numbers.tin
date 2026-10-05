@@ -98,6 +98,22 @@ fn main() {
 	if u != nil {
 		say.Line(u + 1)
 	}
+	// Assigning inside a branch that checked != nil replaces the box: a copy made before is unchanged.
+	mut acc ?i64 = nil
+	for i in 0..3 {
+		if acc != nil {
+			acc = acc + 10
+		} else {
+			acc = 1
+		}
+	}
+	mut w ?i64 = 5
+	let w0 = w
+	if w != nil {
+		w += 1
+		w = w * 2
+	}
+	say.Line(acc, w, w0)
 	// Fields, slices, maps, formatting and generics.
 	let it = Item{name: "pen", price: 1.5, qty: 0, tags: []?i64{1, nil, 3}, by: map[str]?i64{"a": 7, "b": nil}}
 	say.Line(it.qty != nil, it.ok == nil, it.tags, it.by["a"], it.by["zz"])
