@@ -687,8 +687,8 @@ net/http with `Protocols.SetUnencryptedHTTP2`). Only the ratios are meaningful o
 With 10 streams in flight on each of 32 connections, anvil reads a burst of frames from each
 connection in one read and answers it in one write. net/http's HTTP/2 server runs a goroutine per
 connection and another per stream and hands frames between them, which on one core costs it more
-than the requests. The same h2load run against goh2c on a developer machine gives about 37000
-req/s as well, so this is how that server behaves with GOMAXPROCS=1, not a broken baseline.
+than the requests. The harness counts only completed 2xx responses and checks each body, so
+the figure is the server's own, not a failing baseline.
 
 The same run compared the HTTP/1.1 path with main (wrk, as above): head/base 0.994 (`/json`) and
 0.998 (`/plaintext`) on amd64, 1.002 and 0.987 on arm64.
