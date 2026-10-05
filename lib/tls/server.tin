@@ -416,6 +416,7 @@ fn (c mut Conn) server_handshake(cfg ServerConfig) ! {
 	let thash = transcript_hash(h, transcript)
 	let cats = try derive_secret(h, sc.master, "c ap traffic", thash)
 	let sats = try derive_secret(h, sc.master, "s ap traffic", thash)
+	keylog(ch.random, sc.chs, sc.shs, cats, sats)
 	try c.set_write_key(sats)
 	// The client's certificate and CertificateVerify when one was asked for, then its Finished,
 	// under its handshake key.

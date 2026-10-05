@@ -151,7 +151,7 @@ def openssl_interop(openssl, exe, certs, work):
             if kind == 'ecdsa':
                 rc, out = s_client(openssl, srv.port, ['-sigalgs', 'rsa_pss_rsae_sha256'], get('/fast'))
                 assert rc != 0 and 'alert number 40' in out, ('RSA-only client against an ECDSA key', out[-1500:])
-                rc, out = s_client(openssl, srv.port, ['-alpn', 'h2'], get('/fast'))
+                rc, out = s_client(openssl, srv.port, ['-alpn', 'spdy/3'], get('/fast'))
                 assert rc != 0 and 'alert number 120' in out, ('no common ALPN protocol', out[-1500:])
                 rc, out = s_client(openssl, srv.port, [], get('/info'))
                 assert 'alpn= suite=' in out, ('no ALPN offered', out[-1500:])
@@ -237,7 +237,9 @@ def python_clients(exe, certs, work):
     cert = certs['ecdsa']
     srv = Server(exe, cert, work)
     try:
-        ctx = py_ctx(cert, alpn=['h2', 'http/1.1'])
+        # http.client speaks HTTP/1.1: of what it offers, the server has only http/1.1 (h2 is
+        # checked by tools/ci/h2_check.py).
+        ctx = py_ctx(cert, alpn=['spdy/3', 'http/1.1'])
         c = http.client.HTTPSConnection('127.0.0.1', srv.port, context=ctx, timeout=30)
         upload = os.urandom(1 << 20)
         fbytes = (work / 'file.bin').read_bytes()
@@ -278,7 +280,7 @@ def python_clients(exe, certs, work):
         # read, no_application_protocol (120) and protocol_version (70). It is taken from the
         # records, because Python's name for an alert depends on the OpenSSL it was built with
         # (Ubuntu 24.04's has none for 120).
-        for ctx2, want in ((py_ctx(cert, alpn=['h2']), 120), (py_ctx(cert, max12=True), 70)):
+        for ctx2, want in ((py_ctx(cert, alpn=['spdy/3']), 120), (py_ctx(cert, max12=True), 70)):
             alerts = []
 
             def seen(conn, direction, version, ctype, mtype, data, alerts=alerts):
@@ -506,6 +508,14 @@ def mtls(openssl, exe, client, certs, work):
         assert r.stdout == 'mtls false cn=alice chain=1 resumed=false\nmtls true cn=alice chain=1 resumed=true\n', r.stdout
         r = subprocess.run([str(client), 'mtls', srv.addr(), '1', str(cert[0])], capture_output=True, text=True, timeout=60)
         assert r.stdout == 'fault tls: remote error: certificate required\n', r.stdout
+        # wire with client certificates: alice, then dave, then alice again; a kept connection is
+        # never lent to the other identity.
+        r = subprocess.run([str(client), 'wiremtls', f'https://localhost:{srv.port}/whoami', str(cert[0]),
+                            str(pki / 'alice.pem'), str(pki / 'alice.key'), str(pki / 'rsa.pem'), str(pki / 'rsa.key')],
+                           capture_output=True, text=True, timeout=60)
+        lines = r.stdout.splitlines()
+        assert len(lines) == 3 and lines[0].startswith('wire 200 cn=alice ') and lines[1].startswith('wire 200 cn=rsa-client ') \
+            and lines[2].startswith('wire 200 cn=alice '), r.stdout
         if PY_TLS13:
             ctx = py_ctx(cert)
             ctx.load_cert_chain(str(pki / 'alice.pem'), str(pki / 'alice.key'))
@@ -749,6 +759,22 @@ def example(openssl, compiler, client, certs, work):
     print('PASS examples/https_server.tin: HTTPS verified by OpenSSL, wss:// echo')
 
 
+def server_keylog(openssl, exe, certs, work):
+    """SSLKEYLOGFILE on the server (#478): anvil logs the four secrets openssl s_client logs."""
+    from tls_check import keylog_lines
+    cert = certs['ecdsa']
+    mine, theirs = work / 'keylog-anvil.txt', work / 'keylog-s_client.txt'
+    srv = Server(exe, cert, work, env={'SSLKEYLOGFILE': str(mine)})
+    try:
+        rc, out = s_client(openssl, srv.port, ['-keylogfile', str(theirs)], get('/fast'))
+        assert rc == 0 and '\r\n\r\nfast' in out, out[-1500:]
+    finally:
+        srv.stop()
+    a, b = keylog_lines(mine), keylog_lines(theirs)
+    assert len(a) == 4 and a == b, (a, b)
+    print('PASS SSLKEYLOGFILE: anvil logs the four TLS 1.3 traffic secrets openssl s_client logs for the connection')
+
+
 def bad_config(exe, certs, work):
     for name, pair, want in (('a key of another certificate', (certs['ecdsa'][0], certs['rsa'][1]), 'does not belong'),):
         srv = Server(exe, pair, work, wait=False)
@@ -810,6 +836,7 @@ def main():
         example(openssl, compiler, client, certs, work)
         bad_config(exe, certs, work)
         ed25519_server(openssl, exe, client, certs, work)
+        server_keylog(openssl, exe, certs, work)
         if PY_TLS13:
             python_clients(exe, certs, work)
             shutdown(exe, certs, work)
