@@ -2,13 +2,16 @@
 """HTTPS: anvil.ServeTLS (bench/http/https.tin) against Go's crypto/tls (bench/http/gotls), one
 server core each, interleaved rounds, medians with the Tin/Go ratio.
 
-Scenarios (wrk over TLS 1.3, certificates generated per run with openssl):
-  handshakes ECDSA P-256 / RSA-2048   every request on a new connection (Connection: close): full
-                                      handshakes per second (neither server issues session tickets)
-  keep-alive /plaintext               requests per second on established connections
-  1 MiB bodies                        MiB per second on established connections
+Scenarios (TLS 1.3, certificates generated per run with openssl):
+  handshakes ECDSA P-256 / RSA-2048   wrk, every request on a new connection (Connection: close):
+                                      full handshakes per second (wrk keeps no sessions)
+  resumed handshakes ECDSA P-256      bin/tlsload -resume: every connection resumes the session of
+                                      the one before (a ticket, no certificate or signature, #472)
+  keep-alive /plaintext               wrk: requests per second on established connections
+  1 MiB bodies                        wrk: MiB per second on established connections
 
-Usage: run_https.py SECONDS ROUNDS [--json PATH]   (needs bin/https_bench, bin/gotls, wrk, openssl)"""
+Usage: run_https.py SECONDS ROUNDS [--json PATH]   (needs bin/https_bench, bin/gotls, bin/tlsload,
+wrk, openssl)"""
 import argparse
 import json
 import os
@@ -27,6 +30,7 @@ SCENARIOS = [
     # name, certificate, path, connections, new connection per request
     ('handshakes ECDSA P-256', 'ecdsa', '/plaintext', 50, True),
     ('handshakes RSA-2048', 'rsa', '/plaintext', 50, True),
+    ('resumed handshakes ECDSA P-256', 'ecdsa', '/plaintext', 32, True),
     ('keep-alive /plaintext', 'ecdsa', '/plaintext', 100, False),
     ('1 MiB bodies', 'ecdsa', '/big?n=1048576', 10, False),
 ]
@@ -88,6 +92,18 @@ def measure(name, server, cert, path, conns, close, args, log_dir, label):
         proc = subprocess.Popen(cmd, env=env, stdout=log, stderr=log)
         try:
             ready(port)
+            if '-resumed-' in label:
+                load = [str(ROOT / 'bin/tlsload'), '-addr', f'127.0.0.1:{port}', '-path', path, '-c', str(conns), '-resume']
+                subprocess.run(load + ['-d', '1'], capture_output=True, text=True, check=True, timeout=30)
+                r = subprocess.run(load + ['-d', str(args.seconds)], capture_output=True, text=True, check=True,
+                                   timeout=args.seconds + 30)
+                (log_dir / f'{label}.tlsload.log').write_text(r.stdout + r.stderr)
+                if proc.poll() is not None:
+                    raise RuntimeError(f'{name} exited during {label}')
+                m = json.loads(r.stdout)
+                if m['errors'] or m['handshakes'] == 0 or m['resumed'] < 0.9 * m['handshakes']:
+                    raise ValueError(f'{name} {label}: {r.stdout}')
+                return m['rate'], 0.0
             wrk = ['wrk', '-t2', f'-c{conns}']
             if close:
                 wrk += ['-H', 'Connection: close']
