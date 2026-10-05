@@ -1,0 +1,11 @@
+# bits.Mul64 is the __mulhu intrinsic: the high word in one instruction (#474).
+
+[arm64]
+CHECK: _hi:
+CHECK: umulh x[0-9]+, x[0-9]+, x[0-9]+
+
+[amd64]
+CHECK: # L1: hi
+CHECK: \nL1:\n
+CHECK-NOT: call
+CHECK: mul r
