@@ -572,3 +572,23 @@ the change:
 
 Lookups in a big map read an entry through a chunk directory; their cost against the old flat
 layout has not been measured on Linux, so no claim is made about it.
+
+## HTTP/2 against Go's net/http (Linux)
+
+anvil serves h2c (#360). [Run 37347324727](https://github.com/yasserreslan/tin/actions/runs/37347324727)
+(`.github/workflows/bench-linux.yml`, head `tin2/360-http2` against main `c0145f2`, GitHub-hosted
+runners with four vCPUs, Linux 6.17.0-1022-azure, Go 1.26.8, h2load nghttp2 1.59.0: AMD EPYC
+9V45 on amd64, Neoverse-N2 on arm64). One server core each (`TIN_CORES=1`, `GOMAXPROCS=1`),
+`h2load -t2 -c32 -m10` (h2c by prior knowledge) on the same runner, 10 s after a 2 s warm-up,
+medians of five alternating rounds (`bench/http/run_h2load.py`; Go is `bench/http/goh2c`,
+net/http with `Protocols.SetUnencryptedHTTP2`). Only the ratios are meaningful on these runners.
+
+| architecture, path | anvil req/s | net/http req/s | net/http / anvil |
+|---|---:|---:|---:|
+| amd64 /json | 727258 | 38315 | 0.053 |
+| amd64 /plaintext | 705675 | 38208 | 0.054 |
+| arm64 /json | 938356 | 31205 | 0.033 |
+| arm64 /plaintext | 939703 | 32056 | 0.034 |
+
+The same run compared the HTTP/1.1 path with main (wrk, as above): head/base 0.994 (`/json`) and
+0.998 (`/plaintext`) on amd64, 1.002 and 0.987 on arm64.
