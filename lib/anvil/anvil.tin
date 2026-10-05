@@ -1,4 +1,6 @@
-// Package anvil is an HTTP/1.1 server: one event loop per core (kqueue), share-nothing.
+// Package anvil is an HTTP/1.1 and HTTP/2 server: one event loop per core (epoll, kqueue),
+// share-nothing. HTTP/2 without TLS (h2c) is served on the same port, by prior knowledge or after
+// Upgrade: h2c; handlers are the same for both, each request (or stream) in a task of its own.
 //
 // Core 0 accepts connections and deals them round-robin to every core through a pipe;
 // from then on a connection belongs to one core for its whole life. Each core reads
@@ -2281,7 +2283,7 @@ fn header_in(hp i64, hn i64, name str) str {
 // websocket package uses it): the responses before this request are written, the core
 // stops reading the connection and the request's deadline no longer applies. It returns
 // the non-blocking descriptor, for the caller's I/O until the handler returns; then anvil
-// closes it. The handler's Out is not sent.
+// closes it. The handler's Out is not sent. An HTTP/2 stream cannot be hijacked: Hijack fails there.
 fn (q Req) Hijack() !i64 {
 	let task = rt_task_current()
 	if task == 0 {
@@ -2343,7 +2345,8 @@ fn (q Req) Hijack() !i64 {
 // an HTTP/1.0 client, which cannot read chunks, gets the body up to the end of the connection.
 // Each write waits for a slow client within the write timeout (TIN_WRITE_TIMEOUT_MS), and the
 // request deadline (TIN_DEADLINE_MS) counts from the last write, so a stream lives as long as it
-// keeps writing. Calling Stream again does nothing.
+// keeps writing. Calling Stream again does nothing. On HTTP/2 the body goes in DATA frames within
+// the client's flow-control windows, and Length sets content-length.
 fn (w mut Out) Stream() ! {
 	let c = stream_conn()
 	if c == 0 {
