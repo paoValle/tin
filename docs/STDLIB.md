@@ -8,7 +8,7 @@ Generated from the comments in `lib/*/` by `tools/gendoc.py`.
 | [fault](#fault) | fault chains and standard sentinels (errors) |
 | [argo](#argo) | JSON (encoding/json) |
 | [io](#io) | streaming shapes (io) |
-| [anvil](#anvil) | HTTP/1.1 server, HTTPS with ServeTLS (net/http) |
+| [anvil](#anvil) | HTTP/1.1 and HTTP/2 server, HTTPS with ServeTLS (net/http) |
 | [hearth](#hearth) | cores and threads (runtime) |
 | [relay](#relay) | messages between cores (channels) |
 | [task](#task) | deadline and cancellation of the running code (context) |
@@ -89,7 +89,7 @@ Package io declares the streaming shapes: a type satisfies Reader, Writer, Close
 
 ## anvil
 
-Package anvil is an HTTP/1.1 server: one event loop per core (kqueue), share-nothing.
+Package anvil is an HTTP/1.1 and HTTP/2 server: one event loop per core (epoll, kqueue), share-nothing. HTTP/2 without TLS (h2c) is served on the same port, by prior knowledge or after Upgrade: h2c, and over TLS (ServeTLS) to a client whose ALPN offers h2; handlers are the same for both, each request (or stream) in a task of its own.
 
 Core 0 accepts connections and deals them round-robin to every core through a pipe; from then on a connection belongs to one core for its whole life. Each core reads into one scratch buffer, parses requests in place, runs the handler, writes every response of the batch with one write, and wipes its request pool. Idle connections hold no buffers, only a 96-byte record.
 
@@ -163,8 +163,9 @@ ServeTLS (and Router.ServeTLS) serve HTTPS: TLS 1.3 with a PEM certificate chain
 - `Limits(maxBody i64, maxBuffered i64, maxConns i64)`: Limits sets the largest request body in bytes (413 past it), the bytes of requests still arriving that one core may buffer (a new partial request past it gets 503 and close), and the connections per core (more are closed at accept; 0: no limit). Defaults 64 MiB, 256 MiB and 16384; TIN_MAX_BODY, TIN_MAX_BUFFERED and TIN_MAX_CONNS override them. Call before Serve.
 - `Deadline(ms i64)`: Deadline makes every request's waits (tide.Wait, client calls) fail with "deadline exceeded" once ms have passed since the request started (0: no deadline; call before Serve). TIN_DEADLINE_MS sets it too; the default is 30000.
 - `(q Req) Header(name str) str`: Header returns the value of the request header name (any case), or "". A chunked request's trailer fields are read after the header block's.
-- `(q Req) Hijack() !i64`: Hijack takes the request's connection out of HTTP for a protocol of its own (the websocket package uses it): the responses before this request are written, the core stops reading the connection and the request's deadline no longer applies. It returns the non-blocking descriptor, for the caller's I/O until the handler returns; then anvil closes it. The handler's Out is not sent.
-- `(w mut Out) Stream() !`: Stream switches the response to streaming. The status, content type and headers set so far are sent with the first Write or Flush (set them before). The body is then written with Write and Flush, in chunks (Transfer-Encoding: chunked), or as a plain body of the size Length gave; an HTTP/1.0 client, which cannot read chunks, gets the body up to the end of the connection. Each write waits for a slow client within the write timeout (TIN_WRITE_TIMEOUT_MS), and the request deadline (TIN_DEADLINE_MS) counts from the last write, so a stream lives as long as it keeps writing. Calling Stream again does nothing.
+- `(q Req) Proto() str`: Proto is the protocol the request came in: "HTTP/2.0" (h2c, or h2 over TLS), "HTTP/1.1" or "HTTP/1.0". A request made with Router.Run is "HTTP/1.1".
+- `(q Req) Hijack() !i64`: Hijack takes the request's connection out of HTTP for a protocol of its own (the websocket package uses it): the responses before this request are written, the core stops reading the connection and the request's deadline no longer applies. It returns the non-blocking descriptor, for the caller's I/O until the handler returns; then anvil closes it. The handler's Out is not sent. An HTTP/2 stream cannot be hijacked: Hijack fails there.
+- `(w mut Out) Stream() !`: Stream switches the response to streaming. The status, content type and headers set so far are sent with the first Write or Flush (set them before). The body is then written with Write and Flush, in chunks (Transfer-Encoding: chunked), or as a plain body of the size Length gave; an HTTP/1.0 client, which cannot read chunks, gets the body up to the end of the connection. Each write waits for a slow client within the write timeout (TIN_WRITE_TIMEOUT_MS), and the request deadline (TIN_DEADLINE_MS) counts from the last write, so a stream lives as long as it keeps writing. Calling Stream again does nothing. On HTTP/2 the body goes in DATA frames within the client's flow-control windows, and Length sets content-length.
 - `(w mut Out) Length(n i64) !`: Length sets the size of the streamed body in bytes: the response then has a Content-Length header instead of chunks, and the handler must write exactly n bytes. Call it after Stream and before the first Write or Flush.
 - `(w mut Out) Write(b []u8) !`: Write sends b as part of the body, after the head if that is not out yet. It waits while the client does not read, and fails when the client has closed the connection, stopped reading for the write timeout, or the request was cancelled: the handler should stop then. Text appended to the body with Text or argo.Put(mut w.Body, v) is sent by the next Write or Flush.
 - `(w mut Out) WriteString(s str) !`: WriteString is Write for a str.
@@ -180,6 +181,7 @@ ServeTLS (and Router.ServeTLS) serve HTTPS: TLS 1.3 with a PEM certificate chain
 - `(w mut Out) Status(code i64)`: Status sets the response status code.
 - `(w mut Out) Type(t str)`: Type sets the Content-Type header. CR, LF and NUL in t become spaces, so a value taken from the request cannot add header lines.
 - `(w mut Out) Head(k str, v str)`: Head adds a response header. A name that is not an HTTP token is ignored, and so are Content-Length, Transfer-Encoding and Connection: anvil writes the framing itself. CR, LF and NUL in the value become spaces, so a value taken from the request cannot add header lines or a body (response splitting), as Go's net/http does.
+- `(w mut Out) Trailer(k str, v str)`: Trailer adds a trailer field, sent after the body: on HTTP/2 in a HEADERS frame that ends the stream (gRPC's grpc-status and grpc-message), on HTTP/1.1 after the last chunk of a chunked stream (w.Stream() without Length). A response with a Content-Length cannot carry trailers in HTTP/1.1: they are dropped there. Like Head, a name that is not a token and the framing fields are ignored, and CR, LF and NUL in the value become spaces.
 - `(w mut Out) Text(s str)`: Text appends s to the body.
 - `(w mut Out) Json()`: Json sets the JSON content type; the body is then written with argo.Put(mut w.Body, v).
 - `(w Out) Code() i64`: Code returns the response status set so far (200 unless Status changed it).
@@ -211,7 +213,7 @@ ServeTLS (and Router.ServeTLS) serve HTTPS: TLS 1.3 with a PEM certificate chain
 - `(r Router) Match(method str, path str) str`: Match returns the pattern of the route that would serve method and path ("/users/{id}"), or "" when the request would get 404 or 405. Like Run, it panics if r has an error (see Check).
 - `StuckCores() i64`: StuckCores is how many cores have not turned their event loop for 1.5 seconds: each is running something that does not wait (a handler stuck in a loop, say). 0 while no server runs.
 - `StuckFor() i64`: StuckFor is how long, in milliseconds, the most stuck core's event loop has not turned (0: every core turns). A service can export it and alert before a stuck core is an outage.
-- `ServeTLS(addr str, certPEM str, keyPEM str, h fn(Req, mut Out)) !`: ServeTLS is Serve over TLS 1.3 (HTTPS): certPEM is the certificate chain (leaf first) and keyPEM the leaf's private key (RSA, or ECDSA P-256 or P-384), as PEM text. The pair is checked before listening. ALPN offers "http/1.1". Each handshake runs in a task, so slow clients never hold a core; it must finish within TIN_HANDSHAKE_TIMEOUT_MS (default: the header timeout, 10 s). Clients without TLS 1.3 are refused with a protocol_version alert.
+- `ServeTLS(addr str, certPEM str, keyPEM str, h fn(Req, mut Out)) !`: ServeTLS is Serve over TLS 1.3 (HTTPS): certPEM is the certificate chain (leaf first) and keyPEM the leaf's private key (RSA, or ECDSA P-256 or P-384), as PEM text. The pair is checked before listening. ALPN offers "h2" (HTTP/2) and then "http/1.1"; a client without ALPN gets HTTP/1.1. Each handshake runs in a task, so slow clients never hold a core; it must finish within TIN_HANDSHAKE_TIMEOUT_MS (default: the header timeout, 10 s). Clients without TLS 1.3 are refused with a protocol_version alert, and those whose ALPN offers neither protocol with no_application_protocol.
 - `(r Router) ServeTLS(addr str, certPEM str, keyPEM str) !`: ServeTLS is Serve over TLS 1.3, as anvil.ServeTLS: the routes are checked first, then the certificate and key.
 - `type TLSConfig struct`: TLSConfig configures ServeTLSConfig: the certificate chain and private key, as ServeTLS takes them, and client certificates (mutual TLS, #475).
 - `ServeTLSConfig(addr str, cfg TLSConfig, h fn(Req, mut Out)) !`: ServeTLSConfig is ServeTLS with a TLSConfig. With ClientAuth set, every full handshake asks for a client certificate: RequireClientCert refuses a client without one (certificate_required), and both refuse one that does not chain to ClientCAs for client authentication. A handler finds the verified chain in q.TLSConn().PeerCertificates().
@@ -338,6 +340,8 @@ try c.Write("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
 - `(c Conn) ALPN() str`: ALPN is the application protocol the server chose ("" when none).
 - `(c Conn) CipherSuite() i64`: CipherSuite is the negotiated cipher suite (TLS_AES_128_GCM_SHA256 and so on).
 - `(c Conn) Group() str`: Group is the key exchange: "X25519", or "P-256" when the server asked for it.
+- `const VersionTLS13 = 0x0304`: VersionTLS13 is TLS 1.3's protocol version (Conn.Version).
+- `(c Conn) Version() i64`: Version is the negotiated protocol version: VersionTLS13.
 - `(c Conn) Resumed() bool`: Resumed reports whether the handshake resumed an earlier session with a ticket: the server's certificate was checked on that session, and PeerCertificates is empty.
 - `(c Conn) PeerCertificates() [][]u8`: PeerCertificates is the peer's certificate chain as sent (DER, leaf first): on a client the server's, on a server the client's when it sent one (mutual TLS, #475).
 - `(c Conn) Fd() i64`: Fd is the connection's descriptor (for waiting on it; never read or write it directly).
@@ -1444,7 +1448,7 @@ fn echo(ws websocket.Conn, m websocket.Message) ! {
 - `type Conn struct`: Conn is a WebSocket connection.
 - `Accept(q anvil.Req, w mut anvil.Out) !Conn`: Accept completes the opening handshake for request q and takes over its connection. A request that is not a WebSocket handshake gets a 400 (426 for another version) in w and fails. The connection and its buffers close when the handler returns.
 - `Dial(url str) !Conn`: Dial connects to a ws:// or wss:// URL ("ws://host:port/path"); wss:// verifies the server's certificate against the system's roots. Close it when finished; inside a request task, it is also closed automatically when its scope ends.
-- `DialTLS(url str, cfg tls.Config) !Conn`: DialTLS is Dial with the TLS configuration of a wss:// URL (RootCAs, Timeout for the handshake, InsecureSkipVerify for tests); the server name is the URL's host.
+- `DialTLS(url str, cfg tls.Config) !Conn`: DialTLS is Dial with the TLS configuration of a wss:// URL (RootCAs, Timeout for the handshake, InsecureSkipVerify for tests); the server name is the URL's host, and ALPN offers http/1.1 whatever cfg.ALPN says (the upgrade is HTTP/1.1).
 - `(c Conn) SetTimeout(ns i64)`: SetTimeout limits every later read and write to ns nanoseconds (0: no limit).
 - `(c Conn) SetMaxMessage(n i64)`: SetMaxMessage sets the largest message Read accepts (default 16 MiB); a bigger one closes the connection with 1009.
 - `(c Conn) WriteText(s str) !`: WriteText sends s as a text message.
