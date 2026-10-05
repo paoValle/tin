@@ -51,6 +51,29 @@ fn (a AEAD) Seal(nonce []u8, plaintext secret []u8, aad []u8) ![]u8 {
 	return chacha_seal(a.key, nonce, plaintext, aad)
 }
 
+// SealTo is Seal into raw memory: it encrypts the n bytes at src into dst and writes the 16-byte
+// tag after them (dst may be src, to seal in place). Nothing it allocates grows with n, so a
+// connection that streams can seal into a buffer of its own instead of its request's pool.
+fn (a AEAD) SealTo(nonce []u8, src i64, n i64, aad []u8, dst i64) ! {
+	if len(nonce) != 12 {
+		fail "seal: AEAD nonce must be 12 bytes"
+	}
+	if a.kind == aeadAESGCM {
+		if n > 0 {
+			gcm_ctr(a, dst, src, n, mut gcm_counter(nonce))
+		}
+		let tag = gcm_tag(a, nonce, aad, dst, n)
+		memcpy(dst+n, cast(i64, tag)[2], 16)
+		return
+	}
+	if n > 0 {
+		chacha20_xor(dst, src, n, cast(i64, a.key)[2], cast(i64, nonce)[2], 1)
+	}
+	let pk = chacha_poly_key(a.key, nonce)
+	let tag = poly1305_aead(cast(i64, pk)[2], aad, dst, n)
+	memcpy(dst+n, cast(i64, tag)[2], 16)
+}
+
 // Open checks the tag of sealed (ciphertext then tag) against aad and the nonce and returns the
 // plaintext; it fails, revealing nothing else, when anything was changed.
 fn (a AEAD) Open(nonce []u8, sealed []u8, aad []u8) ![]u8 {

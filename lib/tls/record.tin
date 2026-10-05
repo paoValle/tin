@@ -407,8 +407,14 @@ fn (c mut Conn) set_read_key(secret_ []u8) ! {
 	}
 	copy(c.riv, iv)
 	c.rseq = 0
-	c.rsecret = c.rsecret[:0]
-	c.rsecret = append(c.rsecret, secret_...)
+	if len(c.rsecret) == len(secret_) {
+		// In place after the first key: a Conn kept in long-lived memory (anvil's) must not
+		// point into a request's pool after a KeyUpdate.
+		copy(c.rsecret, secret_)
+	} else {
+		c.rsecret = c.rsecret[:0]
+		c.rsecret = append(c.rsecret, secret_...)
+	}
 }
 
 fn (c mut Conn) set_write_key(secret_ []u8) ! {
@@ -421,8 +427,12 @@ fn (c mut Conn) set_write_key(secret_ []u8) ! {
 	}
 	copy(c.wiv, iv)
 	c.wseq = 0
-	c.wsecret = c.wsecret[:0]
-	c.wsecret = append(c.wsecret, secret_...)
+	if len(c.wsecret) == len(secret_) {
+		copy(c.wsecret, secret_) // in place, as in set_read_key
+	} else {
+		c.wsecret = c.wsecret[:0]
+		c.wsecret = append(c.wsecret, secret_...)
+	}
 }
 
 // send_key_update sends KeyUpdate and moves to the next write secret (RFC 8446 4.6.3).
