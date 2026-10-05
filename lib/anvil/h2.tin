@@ -6,8 +6,10 @@
 // WINDOW_UPDATE comes (or the write timeout passes) while the connection serves its other streams.
 //
 // Entry points: h2_begin(c) makes connection c an HTTP/2 connection whose client preface is still
-// to come; h2_read(c) serves what arrives on it (through conn_read) and h2_feed(c, p, n) bytes
-// already read; every byte written goes through conn_write.
+// to come (h2_enter and h2_upgrade for h2c, h2_start for a connection that agreed on h2 by ALPN);
+// h2_read(c) serves what arrives (through conn_read) and h2_feed(c, p, n) bytes already read. The
+// output batch is sealed by conn_seal before it is written, and every write goes through
+// conn_write: those three are where a TLS connection (#124) decrypts and seals.
 package anvil
 
 const h2Preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
@@ -400,16 +402,51 @@ fn b64url(p i64, n i64, out i64) i64 {
 
 // ---- reading ----
 
-// conn_read reads up to n bytes from connection c into p: the count, 0 at its end, or -1 with
-// errno set. HTTP/2 reads go through it, so a TLS connection (#124) can decrypt here.
+// conn_read reads up to n bytes of connection c's input into p: the count (> 0), 0 at its end, -1
+// when nothing more is there now, -2 when the connection is broken (tls_read's contract, so a
+// TLS connection, #124, decrypts here).
 fn conn_read(c i64, p i64, n i64) i64 {
-	return rt_sys_read(c[cFD], p, n)
+	let k = rt_sys_read(c[cFD], p, n)
+	if k >= 0 {
+		return k
+	}
+	let e = errno()
+	if e == EAGAIN || e == 4 {
+		return -1
+	}
+	return -2
 }
 
-// conn_write writes n bytes at p to connection c: the bytes the socket took, or -1 with errno set
-// (EAGAIN when it is full). HTTP/2 writes go through it, so a TLS connection (#124) can seal here.
+// conn_seal prepares the output batch (obLen bytes at ob, all for c) to be written; false when it
+// cannot be (the batch is dropped and the connection is broken). Over plain TCP there is nothing
+// to do; a TLS connection (#124) seals the batch into records here.
+fn conn_seal(c i64) bool {
+	return true
+}
+
+// conn_write writes n bytes at p (already sealed) to connection c's socket: the bytes it took, -1
+// when it is full, -2 when the connection is broken.
 fn conn_write(c i64, p i64, n i64) i64 {
-	return rt_sys_write(c[cFD], p, n)
+	let k = rt_sys_write(c[cFD], p, n)
+	if k >= 0 {
+		return k
+	}
+	let e = errno()
+	if e == EAGAIN || e == 4 {
+		return -1
+	}
+	return -2
+}
+
+// h2_start is the entry of a connection that agreed on "h2" by ALPN (the start function given to
+// alpn_offer, #124): the server preface goes out, the connection is watched, and input that
+// already arrived is served.
+fn h2_start(c i64) {
+	h2_begin(c)
+	h2_flush(c)
+	ev_conn(c[cFD])
+	h2_arm(c)
+	on_read(c)
 }
 
 // h2_read reads what arrived on HTTP/2 connection c and serves it; true means more may be waiting.
@@ -423,16 +460,11 @@ fn h2_read(c i64) bool {
 	}
 	let want = scrSize - have
 	mut n = conn_read(c, scr+have, want)
-	if n == 0 {
+	if n == 0 || n == -2 {
 		close_conn(c)
 		return false
 	}
 	if n < 0 {
-		let e = errno()
-		if e != EAGAIN && e != 4 {
-			close_conn(c)
-			return false
-		}
 		n = 0
 	}
 	let full = n == want && n > 0
@@ -2073,19 +2105,23 @@ fn h2_flush(c i64) {
 		obLen = 0
 		return
 	}
+	if !conn_seal(c) {
+		obLen = 0
+		h[hBroken] = 1
+		return
+	}
 	if c[cOut] != 0 {
 		pend_out(c, ob, obLen)
 		obLen = 0
 		return
 	}
 	mut w = conn_write(c, ob, obLen)
+	if w == -2 {
+		obLen = 0
+		h[hBroken] = 1
+		return
+	}
 	if w < 0 {
-		let e = errno()
-		if e != EAGAIN && e != 4 {
-			obLen = 0
-			h[hBroken] = 1
-			return
-		}
 		w = 0
 	}
 	if w < obLen {
@@ -2104,10 +2140,11 @@ fn h2_on_write(c i64) {
 		return
 	}
 	let w = conn_write(c, c[cOut]+c[cOutOff], c[cOutLen]-c[cOutOff])
+	if w == -2 {
+		close_conn(c)
+		return
+	}
 	if w < 0 {
-		if errno() != EAGAIN && errno() != 4 {
-			close_conn(c)
-		}
 		return
 	}
 	c[cOutOff] += w

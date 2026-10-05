@@ -652,9 +652,10 @@ connections leave it 0, and the HTTP/1.1 path reads it once per read, never per 
   stream 1 (half-closed by the client), its connection-specific fields left out. HTTP/1.0, a
   chunked request, an unusable `HTTP2-Settings` or a draining core keep the request on HTTP/1.1.
 - h2 over TLS (#124): once the TLS server lands, a connection whose ALPN is `h2` enters at
-  `h2_begin(c)` (from its `start` registered with `alpn_offer("h2", ...)`), reads decrypted
-  bytes through `conn_read` and seals its output batch where `h2_flush` writes it (`conn_write`
-  is the one socket write). Until then HTTP/2 is h2c only.
+  `h2_start(c)`, the `start` given to `alpn_offer("h2", ...)`. TLS then goes in three places:
+  `conn_read` (decrypted input, with `tls_read`'s results: bytes, 0 at the end, -1 nothing now,
+  -2 broken), `conn_seal` (the output batch made into records before `h2_flush` writes it) and
+  `conn_write` (the socket write, also of pending output). Until then HTTP/2 is h2c only.
 
 **Reading.** In the core's event loop, as for HTTP/1.1: a read into the core's scratch buffer,
 whole frames served in order (`h2_feed`), a frame not fully arrived kept in the connection (at
