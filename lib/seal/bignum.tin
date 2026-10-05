@@ -24,9 +24,9 @@ fn monty_new(mod []u8) !monty {
 	// Newton's iteration doubles the correct low bits of m[0]^-1 mod 2^32 each step.
 	mut x = m[0]
 	for i in 0..5 {
-		x = (x * (2 - m[0]*x)) & 0xffffffff
+		x = (x *% (2 -% m[0]*%x)) & 0xffffffff
 	}
-	let f = new_monty(m, make([]u64, n), make([]u64, n), (0-x)&0xffffffff)
+	let f = new_monty(m, make([]u64, n), make([]u64, n), (0-%x)&0xffffffff)
 	// R mod m: start from 2^(bits-1) < m and double up to 2^(32n), reducing each time.
 	mut bits = 32 * n
 	for (m[n-1]>>u64(31-(32*n-bits)))&1 == 0 {
@@ -103,7 +103,7 @@ fn monty_exp_ct(f mut monty, z mut []u64, x []u64, e secret []u8) {
 		}
 		for k in 0..16 {
 			let d = u64(k) ^ w
-			let mask = ((d | (0 - d)) >> 63) - 1
+			let mask = ((d | (0 -% d)) >> 63) -% 1
 			for j in 0..n {
 				sel[j] |= table[k*n+j] & mask
 			}

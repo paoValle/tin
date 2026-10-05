@@ -189,7 +189,7 @@ fn p256_mul(r mut p256pt, p p256pt, k []u8) {
 		// Read table[w] by touching every entry.
 		for j in 0..16 {
 			let d = u64(j) ^ w
-			let bit = 1 ^ ((d | (u64(0) - d)) >> 63)
+			let bit = 1 ^ ((d | (u64(0) -% d)) >> 63)
 			let e = table[j]
 			p256f.sel(mut sel.x, e.x, sel.x, bit)
 			p256f.sel(mut sel.y, e.y, sel.y, bit)

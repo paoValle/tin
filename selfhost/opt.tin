@@ -609,7 +609,7 @@ fn binary_node(pos i64, op i64, l i64, r i64) i64 {
 // index_rewrite turns x[a + b] into (x + (a << 3))[b] when x and a are invariant and b is not.
 fn index_rewrite(e i64) {
 	let ix = cast(IndexExpr, e).i
-	if cast(Node, ix).kind != EX_BINARY || streq(cast(Binary, ix).op, cstr("+")) == 0 || invariant(cast(IndexExpr, e).x) == 0 {
+	if cast(Node, ix).kind != EX_BINARY || streq(cast(Binary, ix).op, cstr("+")) == 0 || cast(Binary, ix).ovf == OVF_CHECK || invariant(cast(IndexExpr, e).x) == 0 {
 		return
 	}
 	mut a = cast(Binary, ix).l
@@ -701,7 +701,7 @@ fn int_node(pos i64, v i64) i64 {
 // (base + a*scale)[b], so the row address is computed once per loop.
 fn mem_rewrite(e i64) {
 	let ix = cast(MemExpr, e).index
-	if ix == 0 || cast(MemExpr, e).len != 0 || cast(Node, ix).kind != EX_BINARY || streq(cast(Binary, ix).op, cstr("+")) == 0 || invariant(cast(MemExpr, e).base) == 0 {
+	if ix == 0 || cast(MemExpr, e).len != 0 || cast(Node, ix).kind != EX_BINARY || streq(cast(Binary, ix).op, cstr("+")) == 0 || cast(Binary, ix).ovf == OVF_CHECK || invariant(cast(MemExpr, e).base) == 0 {
 		return
 	}
 	mut a = cast(Binary, ix).l

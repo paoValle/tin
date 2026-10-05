@@ -485,7 +485,7 @@ fn next_sample() u64 {
 	sampleState ^= sampleState >> 12
 	sampleState ^= sampleState << 25
 	sampleState ^= sampleState >> 27
-	return sampleState * 0x2545f4914f6cdd1d
+	return sampleState *% 0x2545f4914f6cdd1d
 }
 
 // remove deletes a spool file; one already gone is not an error.

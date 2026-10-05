@@ -14,6 +14,7 @@ type Binary struct {
 	op i64
 	l i64
 	r i64
+	ovf i64 // OVF_* (#362): integer + - * / and shifts the checker marks for a run-time check.
 }
 
 type Block struct {
@@ -106,7 +107,7 @@ type Conv struct {
 	w1 i64
 	x i64
 	kind i64
-	w4 i64
+	ovf i64 // OVF_CHECK on a float to integer conversion that panics out of range (#362).
 	dyn_table i64
 	w6 i64
 	dyn_index i64
@@ -521,6 +522,8 @@ type Unary struct {
 	w1 i64
 	op i64
 	x i64
+	w4 i64
+	ovf i64 // OVF_CHECK on a checked integer negation (#362).
 }
 
 type UnitExpr struct {
