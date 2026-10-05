@@ -51,8 +51,9 @@ Session B's `notes/interface_tls.md` (#304) defines the certificate API the clie
 `NewCertPool`/`AddPEM`/`SystemRoots` and `Certificate.CheckTLSSignature(scheme, signed, sig)`.
 The client calls them from one place, `verify_peer` in `lib/tls/verify.tin`, with the chain as
 received (DER, leaf first), the server name, the SignatureScheme and the CertificateVerify
-content (64 spaces, the context string, a zero byte, the transcript hash). Until that API is on
-main, `verify_peer` refuses every server unless `InsecureSkipVerify` is set.
+content (64 spaces, the context string, a zero byte, the transcript hash). It verifies the chain
+against the system's roots plus `Config.RootCAs` (that pool is cached per core for the last
+RootCAs given), then the CertificateVerify signature; only `InsecureSkipVerify` skips both.
 
 Phase 2's files: `der.tin` (strict DER reader), `bignum.tin` (`monty_new`: Montgomery constants
 computed at run time, so `field.tin`'s `monty` serves RSA moduli), `rsa.tin` (PKCS #1 v1.5 and

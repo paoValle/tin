@@ -2,9 +2,10 @@
 """The TLS 1.3 client (lib/tls, #124): the RFC 8448 trace, interop with openssl s_server and
 Python's ssl module, KeyUpdate, timeouts, truncation, https:// in wire and wss:// in websocket.
 
-Certificates are generated here with the runner's openssl, so no key is checked in. Until
-X.509 verification lands (#124 phase 2) the interop runs use InsecureSkipVerify, and the
-default configuration must refuse every server."""
+Certificates are generated here with the runner's openssl, so no key is checked in. The interop
+runs use InsecureSkipVerify; the verified runs trust the generated certificate through RootCAs
+(chain, host name and CertificateVerify checked for RSA-PSS, ECDSA and Ed25519 keys), and the
+default configuration refuses it as signed by an unknown authority."""
 import argparse
 import base64
 import hashlib
@@ -161,6 +162,23 @@ def openssl_matrix(exe, openssl, certs):
         proc.kill()
         proc.wait()
     print('PASS ALPN chosen and absent; a TLS 1.2-only server is refused')
+
+
+def verified(exe, openssl, certs):
+    """Verification on (the default) with the server's certificate in RootCAs: each key type."""
+    for kind, cert in certs.items():
+        port = free_port()
+        proc = subprocess.Popen([openssl, 's_server', '-tls1_3', '-accept', str(port), '-cert', str(cert[0]), '-key', str(cert[1]),
+                                 '-www', '-quiet', '-ciphersuites', 'TLS_AES_128_GCM_SHA256'],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            wait_port(port, proc)
+            out = run(exe, 'resume', f'127.0.0.1:{port}', 1, cert[0])
+        finally:
+            proc.kill()
+            proc.wait()
+        assert out == 'resumed false TLS_AES_128_GCM_SHA256 X25519 1 true\n', (kind, out)
+    print(f'PASS verification against RootCAs: certificates {", ".join(certs)} (chain, name, CertificateVerify)')
 
 
 def resumption(exe, openssl, certs, work):
@@ -353,7 +371,7 @@ def python_servers(exe, certs):
     try:
         wait_port(port)
         out = run(exe, 'verify', f'127.0.0.1:{port}', 'localhost')
-        assert out.startswith('fault tls: certificate verification is not available yet'), out
+        assert out.startswith('fault tls: x509: certificate signed by unknown authority'), out
         want = hashlib.sha256(b'hello over tls ' * 4096).hexdigest()
         out = run(exe, 'https', f'https://127.0.0.1:{port}/x')
         assert out == f'get 200 {15 * 4096} {want}\npost 200 posted over tls\n', out
@@ -506,6 +524,7 @@ def main():
         request_tasks(compiler, work, certs)
         if openssl:
             openssl_matrix(exe, openssl, certs)
+            verified(exe, openssl, certs)
             resumption(exe, openssl, certs, work)
             keyupdate(exe, openssl, certs)
         else:
