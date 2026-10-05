@@ -574,7 +574,11 @@ fn writeRing(path str, data str, flags i64) ! {
 		memcpy(buf, cast(i64, data)+8, n)
 		mut done = 0
 		for done < n {
-			let w = rt_ring_write(fd, buf+done, n-done, buf)
+			mut ask = n - done
+			if ask > 1073741824 {
+				ask = 1073741824 // the length field is 32 bits
+			}
+			let w = rt_ring_write(fd, buf+done, ask, buf)
 			if w == ringGone {
 				fail cast(fault, rt_wait_fault()) // the ring closes fd and frees buf
 			}
