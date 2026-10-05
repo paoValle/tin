@@ -174,6 +174,37 @@ fn https(url str) {
 	say.Line("post", p.Status, p.Body)
 }
 
+// wiremtls GETs url with wire, verifying the server against the PEM roots in ca, once with each
+// client certificate and key pair given (paths), then the first again: kept connections must not
+// be lent across certificates (#475). It prints each status and body.
+fn wiremtls(url str, ca str, pairs []str) {
+	let roots = quarry.ReadFile(ca) catch e {
+		say.Line("fault", e)
+		return
+	}
+	mut order = make([]i64, 0, len(pairs)/2+1)
+	for i in 0..len(pairs)/2 {
+		order = append(order, i)
+	}
+	order = append(order, 0)
+	for _, i in order {
+		let cert = quarry.ReadFile(pairs[2*i]) catch e {
+			say.Line("fault", e)
+			return
+		}
+		let key = quarry.ReadFile(pairs[2*i+1]) catch e {
+			say.Line("fault", e)
+			return
+		}
+		let cfg = tls.Config{ServerName: "localhost", RootCAs: roots, Certificate: cert, Key: key}
+		let r = wire.DoWith("GET", url, []str{}, "", wire.Options{Timeout: 10000000000, TLS: cfg}) catch e {
+			say.Line("fault", e)
+			return
+		}
+		say.Line("wire", r.Status, r.Body)
+	}
+}
+
 fn wss(url str) {
 	let ws = websocket.DialTLS(url, insecure()) catch e {
 		say.Line("fault", e)
@@ -259,6 +290,8 @@ fn main() {
 		keyupdate(args[2])
 	} else if cmd == "truncated" {
 		truncated(args[2])
+	} else if cmd == "wiremtls" {
+		wiremtls(args[2], args[3], args[4:])
 	} else if cmd == "mtls" {
 		let n = mint.Atoi(args[3]) catch _ { 1 }
 		mut cert = ""

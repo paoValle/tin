@@ -508,6 +508,14 @@ def mtls(openssl, exe, client, certs, work):
         assert r.stdout == 'mtls false cn=alice chain=1 resumed=false\nmtls true cn=alice chain=1 resumed=true\n', r.stdout
         r = subprocess.run([str(client), 'mtls', srv.addr(), '1', str(cert[0])], capture_output=True, text=True, timeout=60)
         assert r.stdout == 'fault tls: remote error: certificate required\n', r.stdout
+        # wire with client certificates: alice, then dave, then alice again; a kept connection is
+        # never lent to the other identity.
+        r = subprocess.run([str(client), 'wiremtls', f'https://localhost:{srv.port}/whoami', str(cert[0]),
+                            str(pki / 'alice.pem'), str(pki / 'alice.key'), str(pki / 'rsa.pem'), str(pki / 'rsa.key')],
+                           capture_output=True, text=True, timeout=60)
+        lines = r.stdout.splitlines()
+        assert len(lines) == 3 and lines[0].startswith('wire 200 cn=alice ') and lines[1].startswith('wire 200 cn=rsa-client ') \
+            and lines[2].startswith('wire 200 cn=alice '), r.stdout
         if PY_TLS13:
             ctx = py_ctx(cert)
             ctx.load_cert_chain(str(pki / 'alice.pem'), str(pki / 'alice.key'))
