@@ -398,7 +398,7 @@ type Sym struct {
 	decl i64
 	expr i64
 	reads i64
-	w16 i64
+	defs i64 // definitions of a local, counted by the overflow-check elision (opt.tin, #362)
 	mut_ i64
 	region i64
 	tls i64

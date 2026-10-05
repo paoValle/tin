@@ -9,7 +9,7 @@ import "say"
 
 // ec_mul_ct sets r = k*p for a big-endian scalar k of c.size bytes, in time that does not depend
 // on k or p (as p256_mul does for P-256).
-fn ec_mul_ct(c mut ecCurve, p ecpt, k secret []u8) ecpt {
+@wrap fn ec_mul_ct(c mut ecCurve, p ecpt, k secret []u8) ecpt {
 	mut table = make([]ecpt, 0, 16)
 	table = append(table, ec_identity(c))
 	for i in 1..16 {

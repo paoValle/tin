@@ -28,7 +28,7 @@ fn (f monty) elem() []u64 {
 }
 
 // mul sets z = x*y/R mod m (CIOS Montgomery multiplication); z may alias x or y.
-fn (f mut monty) mul(z mut []u64, x []u64, y []u64) {
+@wrap fn (f mut monty) mul(z mut []u64, x []u64, y []u64) {
 	let n = f.n
 	let t = f.t
 	for i in 0..n+2 {
@@ -60,7 +60,8 @@ fn (f mut monty) mul(z mut []u64, x []u64, y []u64) {
 	f.reduce(mut z, t, t[n])
 }
 
-// The constant-time helpers below find borrows and build masks by wrapping modulo 2^64 (@wrap, #362).
+// The arithmetic below is @wrap (#362): the borrows and masks wrap modulo 2^64 by design, the
+// 32-bit limbs keep products and carries in u64, and constant-time code takes no value-dependent branch.
 // reduce sets z = t - m if the n+1-word value (t[:n], top) is at least m, else t, in constant
 // time; t < 2m.
 @wrap fn (f mut monty) reduce(z mut []u64, t []u64, top u64) {
@@ -81,7 +82,7 @@ fn (f mut monty) mul(z mut []u64, x []u64, y []u64) {
 }
 
 // add sets z = x + y mod m; z may alias x or y.
-fn (f mut monty) add(z mut []u64, x []u64, y []u64) {
+@wrap fn (f mut monty) add(z mut []u64, x []u64, y []u64) {
 	let n = f.n
 	let t = f.t
 	mut c = u64(0)
@@ -147,7 +148,7 @@ fn (f monty) set(z mut []u64, x []u64) {
 }
 
 // exp sets z = x^e (e big-endian and public) in Montgomery form; z may alias x.
-fn (f mut monty) exp(z mut []u64, x []u64, e []u8) {
+@wrap fn (f mut monty) exp(z mut []u64, x []u64, e []u8) {
 	let acc = f.elem()
 	let base = f.elem()
 	f.set(mut base, x)

@@ -2613,20 +2613,14 @@ fn x_try_if_increment(s IfStmt) i64 {
 	let cc = x_gen_flags(s.cond, 0)
 	// LEA preserves the flags set by the condition and avoids spilling x + 1 while
 	// compiler-created condition sequences are evaluated.
-	emit2(X_LEA, XSCR, x_mem1(x.reg, 1))
 	if cast(Binary, a.value).ovf == OVF_CHECK {
-		// Checked (#362): keep x when the condition fails, then the increment wrapped exactly
-		// when the new value is below the old one.
-		emit3(X_CMOVCC, XSCR, x.reg, cc ^ 1)
-		emit2(X_CMP, XSCR, x.reg)
-		if is_unsigned_t(cast(Ty, x.type_)) != 0 {
-			emit2(X_JCC, XC_B, x_ovf_stub(OVK_ADD))
-		} else {
-			emit2(X_JCC, XC_L, x_ovf_stub(OVK_ADD))
-		}
-		x_mov(x.reg, XSCR)
+		// Checked (#362): add the condition (0 or 1) with add, which sets OF and CF.
+		x_setcc(XSCR, cc, 0)
+		emit2(X_ADD, x.reg, XSCR)
+		x_checked_flags(OVK_ADD, i64(is_unsigned_t(cast(Ty, x.type_)) == 0))
 		return 1
 	}
+	emit2(X_LEA, XSCR, x_mem1(x.reg, 1))
 	emit3(X_CMOVCC, x.reg, XSCR, cc)
 	return 1
 }
@@ -3169,6 +3163,7 @@ fn x_gen_fn(f Fn) {
 		write_all(2, cast([]u8, cast([]i64, tb)))
 	}
 	inline_appends(f)
+	ovf_elide_fn(f)
 	licm_fn(f)
 	analyze_fn(f)
 	used_regs = 0

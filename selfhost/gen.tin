@@ -3297,15 +3297,10 @@ fn try_if_increment(s IfStmt) i64 {
 	let x = cast(Sym, cast(IdentExpr, a.target).ref)
 	let cc = gen_flags(s.cond, 0)
 	if cast(Binary, a.value).ovf == OVF_CHECK {
-		// Checked (#362): the increment wrapped exactly when the new value is below the old one.
-		emit3(I_CINC, X16, x.reg, cc)
-		emit2(I_CMP, X16, x.reg)
-		if is_unsigned_t(cast(Ty, x.type_)) != 0 {
-			emit2(I_BCOND, C_LO, ovf_stub(OVK_ADD))
-		} else {
-			emit2(I_BCOND, C_LT, ovf_stub(OVK_ADD))
-		}
-		mov(x.reg, X16)
+		// Checked (#362): add the condition (0 or 1) with adds, still without a branch on it.
+		emit2(I_CSET, X16, cc)
+		emit4(I_ADDS, x.reg, x.reg, X16, 0)
+		checked_flags(OVK_ADD, i64(is_unsigned_t(cast(Ty, x.type_)) == 0))
 		return 1
 	}
 	emit3(I_CINC, x.reg, x.reg, cc)
@@ -4109,6 +4104,7 @@ fn gen_fn(f Fn) {
 		write_all(2, cast([]u8, cast([]i64, tb)))
 	}
 	inline_appends(f)
+	ovf_elide_fn(f)
 	licm_fn(f)
 	analyze_fn(f)
 	used_regs = 0

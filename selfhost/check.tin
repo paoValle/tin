@@ -1011,17 +1011,32 @@ fn const_value_b(e i64, iota i64) i64 {
 		cv_big = s.big
 		return s.val
 	}
-	if k == EX_UNARY && streq(cast(Unary, e).op, cstr("&")) == 0 {
+	if k == EX_UNARY && streq(cast(Unary, e).op, cstr("-")) == 0 && streq(cast(Unary, e).op, cstr("&")) == 0 {
 		let uv = eval_unary(cast(Unary, e).op, const_value_b(cast(Unary, e).x, iota))
-		cv_big = i64(cv_big != 0 && uv < 0 && streq(cast(Unary, e).op, cstr("-")) == 0)
+		cv_big = i64(cv_big != 0 && uv < 0)
 		return uv
+	}
+	if k == EX_UNARY && streq(cast(Unary, e).op, cstr("-")) != 0 {
+		// Negation is exact (#362).
+		let before = error_count
+		let x = const_value_b(cast(Unary, e).x, iota)
+		if error_count != before {
+			return 0
+		}
+		let nv = const_neg(x, cv_big)
+		if cx_ovf != 0 {
+			const_overflow(cast(Node, e).pos)
+		}
+		cv_big = 2 * cx_big
+		return nv
 	}
 	if k == EX_BINARY {
 		let before = error_count
 		let l = const_value_b(cast(Binary, e).l, iota)
 		let lb = cv_big
 		let r = const_value_b(cast(Binary, e).r, iota)
-		let ub = i64(lb != 0 || cv_big != 0)
+		let rb = cv_big
+		let ub = i64(lb != 0 || rb != 0)
 		cv_big = 0
 		if error_count != before {
 			return 0
@@ -1032,6 +1047,28 @@ fn const_value_b(e i64, iota i64) i64 {
 			return 0
 		}
 		mut res = 0
+		if (streq(op, cstr("<<")) != 0 || streq(op, cstr(">>")) != 0) && (r < 0 || r >= 64) {
+			shift_count_error(cast(Node, e).pos, r, 64, 0)
+			return 0
+		}
+		if is_ovf_op(op) != 0 && cast(Binary, e).ovf != OVF_WRAP {
+			// + - * are exact (#362); a result above 2^63-1 fits only unsigned 64-bit types.
+			res = const_exact(op, l, lb, r, rb)
+			if cx_ovf != 0 {
+				const_overflow(cast(Node, e).pos)
+			}
+			cv_big = 2 * cx_big
+			return res
+		}
+		if streq(op, cstr("<<")) != 0 {
+			// A shift keeps the bits it moves, but losing one is an error (#362).
+			res = const_exact(cstr("*"), l, lb, 1 << r, i64(r == 63))
+			if cx_ovf != 0 {
+				const_overflow(cast(Node, e).pos)
+			}
+			cv_big = cx_big
+			return res
+		}
 		if ub != 0 && (streq(op, cstr(">>")) != 0 || streq(op, cstr("/")) != 0 || streq(op, cstr("%")) != 0) {
 			res = eval_unsigned(op, l, r)
 		} else if ub != 0 && (streq(op, cstr("<")) != 0 || streq(op, cstr("<=")) != 0 || streq(op, cstr(">")) != 0 || streq(op, cstr(">=")) != 0) {

@@ -164,7 +164,7 @@ fn p256_double(r mut p256pt, p p256pt) {
 
 // p256_mul sets r = k*p for a 32-byte big-endian scalar k (any value), in time that does not
 // depend on k or p.
-fn p256_mul(r mut p256pt, p p256pt, k []u8) {
+@wrap fn p256_mul(r mut p256pt, p p256pt, k []u8) {
 	mut table = make([]p256pt, 0, 16)
 	table = append(table, p256_identity())
 	for i in 1..16 {
