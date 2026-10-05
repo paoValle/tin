@@ -131,7 +131,7 @@ const cStSent = 21   // body bytes of a Content-Length stream sent so far
 const cStBuf = 22    // scratch the head and the chunk framing are built in (malloc'd)
 const cStCap = 23
 const cStPend = 24   // bytes of the response head in cStBuf that are not written yet
-const cStFlags = 25  // the request: 1 HEAD, 2 HTTP/1.0, 4 keep-alive asked in HTTP/1.0
+const cStFlags = 25  // the request: 1 HEAD, 2 HTTP/1.0, 4 keep-alive asked in HTTP/1.0, 8 the connection closes after it
 const cTls = 26      // HTTPS (#124, serve_tls.tin): the connection's tls.Conn (kept in tlsConns), 0 over plain TCP
 const cHs = 27       // its handshake: 1 running in the task in cTask, 2 done (until tls_done), 0 none
 const cProto = 28    // the protocol ALPN chose: its number in the offered list (alpn_offer), 0 none
@@ -217,6 +217,7 @@ mut pHead bool
 mut pTs i64      // the request target: offset in the request and length (absolute-form reduced to its path)
 mut pTn i64
 mut pKeep10 bool // an HTTP/1.0 request asked for keep-alive: the response must say so
+mut pClose bool  // the connection closes after this request's response, which says so (RFC 9112 9.6)
 mut pHttp10 bool // the request is HTTP/1.0
 mut pTr i64      // a chunked request's trailer lines: offset in the request bytes and length (#349)
 mut pTrLen i64
@@ -1343,7 +1344,7 @@ fn serve_one(c i64, p i64, n i64) i64 {
 		// Past the soft memory limit (TIN_MEMORY_SOFT, #356): refuse new requests rather than
 		// let the container's limit end the process; the requests already running go on.
 		overloaded()
-		shed(c, sp1 == 4 && load8(p) == 'H' && bytes_are(p, 4, "HEAD"), http10 && alive)
+		shed(c, sp1 == 4 && load8(p) == 'H' && bytes_are(p, 4, "HEAD"), http10 && alive, !alive)
 		if !alive {
 			c[cClose] = 1
 		}
@@ -1352,7 +1353,7 @@ fn serve_one(c i64, p i64, n i64) i64 {
 	if gAdmit != nil {
 		if !gAdmit(Load{Core: myID, Waiting: waiting, Conns: __atomic_load(gLoad + myID*128), Buffered: bufBytes, Shed: shedCount, Pool: rt_mem_pool(), Ingot: rt_mem_ingot()}) {
 			overloaded()
-			shed(c, sp1 == 4 && load8(p) == 'H' && bytes_are(p, 4, "HEAD"), http10 && alive)
+			shed(c, sp1 == 4 && load8(p) == 'H' && bytes_are(p, 4, "HEAD"), http10 && alive, !alive)
 			if !alive {
 				c[cClose] = 1
 			}
@@ -1375,6 +1376,7 @@ fn serve_one(c i64, p i64, n i64) i64 {
 	pTs = ts
 	pTn = tn
 	pKeep10 = http10 && alive
+	pClose = !alive
 	pHttp10 = http10
 	let task = rt_task_new(run_request, c)
 	if gReplayTape != 0 {
@@ -1453,7 +1455,8 @@ fn run_request(c i64) {
 	}
 	let hd = pHead
 	let keep10 = pKeep10
-	c[cStFlags] = i64(hd) | i64(pHttp10)<<1 | i64(keep10)<<2
+	let closes = pClose
+	c[cStFlags] = i64(hd) | i64(pHttp10)<<1 | i64(keep10)<<2 | i64(closes)<<3
 	let body = make([]u8, 0, 1024)
 	let w = Out{Body: body, code: 200, ctype: "text/plain; charset=utf-8", extra: make([]u8, 0, 256), own: body}
 	rt_task_current()[tUser] = cast(i64, q)
@@ -1469,7 +1472,7 @@ fn run_request(c i64) {
 		if c[cStream] >= 2 {
 			stream_end(c, w)
 		} else {
-			respond_out(w, hd, keep10)
+			respond_out(w, hd, keep10, closes)
 		}
 	}
 }
@@ -1755,13 +1758,13 @@ fn recovered() {
 
 // shed answers a request the admission policy refused from static bytes, so refusing
 // allocates nothing; the connection stays open when the client keeps it alive.
-fn shed(c i64, hd bool, keep10 bool) {
+fn shed(c i64, hd bool, keep10 bool, closes bool) {
 	shedCount += 1
 	ob_room(256)
 	ob_str("HTTP/1.1 503 Service Unavailable\r\n")
 	ob_raw(common, commonLen)
 	ob_str("Retry-After: 1\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 19\r\n")
-	if draining {
+	if draining || closes {
 		ob_str("Connection: close\r\n")
 	} else if keep10 {
 		ob_str("Connection: keep-alive\r\n")
@@ -2002,7 +2005,7 @@ fn panicked(c i64, task i64) {
 	let code = rt_task_failure_status(task)
 	let w = Out{Body: body, code: code, ctype: "text/plain; charset=utf-8", extra: make([]u8, 0), own: body}
 	w.Body = append(w.Body, status_text(code)...)
-	respond_out(w, false, false)
+	respond_out(w, false, false, true)
 	c[cClose] = 1
 }
 
@@ -2010,7 +2013,7 @@ fn bad(c i64, code i64) {
 	let body = make([]u8, 0, 64)
 	let w = Out{Body: body, code: code, ctype: "text/plain; charset=utf-8", extra: make([]u8, 0), own: body}
 	w.Body = append(w.Body, status_text(code)...)
-	respond_out(w, false, false)
+	respond_out(w, false, false, true)
 	c[cClose] = 1
 	c[cLinger] = 1
 }
@@ -2069,8 +2072,9 @@ fn ob_raw(p i64, n i64) {
 }
 
 // respond_out appends response w to the core's output batch; keep10 adds
-// "Connection: keep-alive", which an HTTP/1.0 client needs to keep the connection.
-fn respond_out(w Out, hd bool, keep10 bool) {
+// "Connection: keep-alive", which an HTTP/1.0 client needs to keep the connection, and closes
+// "Connection: close" for a connection that closes after it.
+fn respond_out(w Out, hd bool, keep10 bool, closes bool) {
 	let bh = cast(i64, w.Body)
 	let eh = cast(i64, w.extra)
 	let bn = bh[0]
@@ -2083,7 +2087,7 @@ fn respond_out(w Out, hd bool, keep10 bool) {
 		if eh[0] > 0 {
 			ob_raw(eh[2], eh[0])
 		}
-		if draining {
+		if draining || closes {
 			ob_str("Connection: close\r\n")
 		} else if keep10 {
 			ob_str("Connection: keep-alive\r\n")
@@ -2117,7 +2121,7 @@ fn respond_out(w Out, hd bool, keep10 bool) {
 	if eh[0] > 0 {
 		ob_raw(eh[2], eh[0])
 	}
-	if draining {
+	if draining || closes {
 		ob_str("Connection: close\r\n")
 	} else if keep10 {
 		ob_str("Connection: keep-alive\r\n")
@@ -2593,7 +2597,7 @@ fn stream_begin(c i64, w Out) ! {
 		o += put_dec(buf, o, c[cStLen])
 		o += put_str(buf, o, "\r\n")
 	}
-	if draining || mode == 4 || ((fl & 2) != 0 && (fl & 4) == 0) {
+	if draining || mode == 4 || ((fl & 2) != 0 && (fl & 4) == 0) || (fl & 8) != 0 {
 		o += put_str(buf, o, "Connection: close\r\n")
 	} else if (fl & 4) != 0 {
 		o += put_str(buf, o, "Connection: keep-alive\r\n")
