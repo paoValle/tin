@@ -128,7 +128,10 @@ const cStBuf = 22    // scratch the head and the chunk framing are built in (mal
 const cStCap = 23
 const cStPend = 24   // bytes of the response head in cStBuf that are not written yet
 const cStFlags = 25  // the request: 1 HEAD, 2 HTTP/1.0, 4 keep-alive asked in HTTP/1.0
-const cWords = 26
+const cTls = 26      // HTTPS (#124, serve_tls.tin): the connection's tls.Conn (kept in tlsConns), 0 over plain TCP
+const cHs = 27       // its handshake: 1 running in the task in cTask, 2 done (until tls_done), 0 none
+const cProto = 28    // the protocol ALPN chose: its number in the offered list (alpn_offer), 0 none
+const cWords = 29
 
 shared mut gListen i64
 shared mut gIP i64
@@ -754,6 +757,11 @@ fn add_conn(fd i64, count bool) {
 	if count {
 		__atomic_add(gLoad+myID*128, 1)
 	}
+	if gTlsOn {
+		// HTTPS: the handshake first, in a task of its own (serve_tls.tin).
+		gTlsAccept(c)
+		return
+	}
 	ev_conn(fd)
 }
 
@@ -762,6 +770,9 @@ fn close_conn(c i64) {
 		return
 	}
 	let fd = c[cFD]
+	if c[cTls] != 0 {
+		gTlsBye(c) // close_notify (serve_tls.tin)
+	}
 	rt_sys_close(fd)
 	conns[fd] = 0
 	if c[cTask] != 0 {
@@ -787,6 +798,9 @@ fn free_conn(c i64) {
 	}
 	if c[cStBuf] != 0 {
 		free(c[cStBuf])
+	}
+	if c[cTls] != 0 {
+		gTlsFree(c)
 	}
 	free(c)
 }
@@ -844,14 +858,21 @@ fn on_read_serve(c i64) bool {
 		}
 	}
 	let want = cap - have
-	mut n = rt_sys_read(fd, buf+have, want)
+	mut n = 0
+	if c[cTls] != 0 {
+		// HTTPS: the records that arrived, decrypted; 0 after close_notify, -1 none complete yet,
+		// -2 broken (serve_tls.tin).
+		n = gTlsRead(c, buf+have, want)
+	} else {
+		n = rt_sys_read(fd, buf+have, want)
+	}
 	if n == 0 && c[cTask] != 0 {
 		// End of input while a request waits: answer it, then close.
 		c[cClose] = 1
 		return false
 	}
 	if n <= 0 {
-		if n < 0 && (errno() == EAGAIN || errno() == 4) {
+		if n < 0 && ((c[cTls] == 0 && (errno() == EAGAIN || errno() == 4)) || (c[cTls] != 0 && n == -1)) {
 			n = 0
 		} else {
 			close_conn(c)
@@ -926,7 +947,8 @@ fn on_read_serve(c i64) bool {
 		c[cInLen] = 0
 		c[cInCap] = 0
 	}
-	arm(c, rem > 0 && c[cClose] == 0)
+	// Part of a TLS record buffered counts as a request still arriving.
+	arm(c, (rem > 0 || (c[cTls] != 0 && gTlsPending(c))) && c[cClose] == 0)
 	rt_pool_reset()
 	return full && c[cClose] == 0 && c[cWriting] == 0 && c[cTask] == 0
 }
@@ -941,6 +963,11 @@ fn flush(c i64) bool {
 			return false
 		}
 		return true
+	}
+	if c[cTls] != 0 && !gTlsSeal(c) {
+		// HTTPS: the batch goes out as records (serve_tls.tin).
+		close_conn(c)
+		return false
 	}
 	if c[cOut] != 0 {
 		pend_out(c, ob, obLen)
@@ -1012,7 +1039,8 @@ fn on_write(c i64) {
 	}
 	ev_conn_read(c[cFD])
 	arm(c, c[cIn] != 0)
-	if c[cIn] != 0 {
+	if c[cIn] != 0 || (c[cTls] != 0 && gTlsPending(c)) {
+		// Input TLS already took from the socket is not reported again.
 		on_read(c)
 	}
 }
@@ -1452,6 +1480,11 @@ fn rebase_request(task i64, delta i64) {
 // finish_request completes connection c after its waiting task finished: write the
 // response, then serve the requests that queued behind it.
 fn finish_request(c i64, task i64) {
+	if c[cHs] != 0 {
+		// A TLS handshake task, not a request (serve_tls.tin).
+		gTlsDone(c, task)
+		return
+	}
 	free(task[tUser+1])
 	mut streamed = false
 	if c[cStream] != 0 {
@@ -1467,6 +1500,9 @@ fn finish_request(c i64, task i64) {
 	}
 	rt_task_free(task)
 	if c[cHijack] != 0 {
+		if c[cTls] != 0 {
+			gTlsBye(c)
+		}
 		rt_sys_close(c[cFD])
 		free_conn(c)
 		return
@@ -1983,6 +2019,9 @@ const lingerMs = 2000
 // whatever arrives is read and dropped until the client closes or lingerMs pass (as nginx's
 // lingering close).
 fn linger(c i64) {
+	if c[cTls] != 0 {
+		gTlsBye(c) // close_notify before the sending side shuts
+	}
 	rt_sys_shutdown(c[cFD], 1)
 	c[cLinger] = 2
 	if c[cIn] != 0 {
@@ -2240,6 +2279,9 @@ fn (q Req) Hijack() !i64 {
 	c[cHijack] = 1
 	rt_task_set_deadline(task, 0)
 	if obLen > 0 {
+		if c[cTls] != 0 {
+			gTlsSeal(c) // HTTPS: the responses before this one, as records
+		}
 		pend_out(c, ob, obLen)
 		obLen = 0
 	}
@@ -2489,6 +2531,9 @@ fn stream_begin(c i64, w Out) ! {
 	let fd = c[cFD]
 	let fl = c[cStFlags]
 	if obLen > 0 {
+		if c[cTls] != 0 {
+			gTlsSeal(c) // HTTPS: earlier pipelined responses, as records
+		}
 		pend_out(c, ob, obLen)
 		obLen = 0
 	}
@@ -2553,6 +2598,9 @@ fn stream_begin(c i64, w Out) ! {
 
 // stream_write_all writes n bytes at p to the client, waiting while it does not read.
 fn stream_write_all(c i64, p i64, n i64) ! {
+	if c[cTls] != 0 {
+		return try gTlsWrite(c, p, n) // HTTPS: sealed into records first (serve_tls.tin)
+	}
 	mut done = 0
 	for done < n {
 		let k = rt_sys_write(c[cFD], p+done, n-done)
@@ -2760,6 +2808,9 @@ fn stream_file(c i64, w Out, fd i64, off i64, count i64) ! {
 // sendfile_step moves some of the n bytes at off of file fd to the client on a helper thread,
 // waiting for the socket when it is full; it returns how many went.
 fn sendfile_step(c i64, fd i64, off i64, n i64) !i64 {
+	if c[cTls] != 0 {
+		return try gTlsFile(c, fd, off, n) // HTTPS: read, sealed and written (serve_tls.tin)
+	}
 	for {
 		let job = calloc(5, 8)
 		job[0] = fd
