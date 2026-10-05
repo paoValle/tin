@@ -273,13 +273,23 @@ def python_clients(exe, certs, work):
         s.close()
         bodies = [part.split(b'\r\n\r\n', 1)[1][:14] for part in data.split(b'HTTP/1.1 200 OK')[1:]]
         assert bodies == [b'fast', b'hello over tls', b'alpn= suite=13'], data[-500:]
-        # ALPN with nothing in common, and a client without TLS 1.3.
-        for ctx2, want in ((py_ctx(cert, alpn=['h2']), 'NO_APPLICATION_PROTOCOL'), (py_ctx(cert, max12=True), 'PROTOCOL_VERSION')):
+        # ALPN with nothing in common, and a client without TLS 1.3: the fatal alert the client
+        # read, no_application_protocol (120) and protocol_version (70). It is taken from the
+        # records, because Python's name for an alert depends on the OpenSSL it was built with
+        # (Ubuntu 24.04's has none for 120).
+        for ctx2, want in ((py_ctx(cert, alpn=['h2']), 120), (py_ctx(cert, max12=True), 70)):
+            alerts = []
+
+            def seen(conn, direction, version, ctype, mtype, data, alerts=alerts):
+                if direction == 'read' and ctype == ssl._TLSContentType.ALERT:
+                    alerts.append(bytes(data[:2]))
+
+            ctx2._msg_callback = seen
             try:
                 py_connect(srv, ctx2).close()
-                raise AssertionError(f'handshake succeeded, wanted {want}')
+                raise AssertionError(f'handshake succeeded, wanted alert {want}')
             except ssl.SSLError as e:
-                assert want in str(e).upper().replace(' ', '_'), e
+                assert alerts == [bytes([2, want])], (want, alerts, e)
         fragmented_hello(srv, cert)
     finally:
         srv.stop()
