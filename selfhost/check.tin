@@ -35,7 +35,7 @@ shared mut dyn_tables Vec[i64] // [concrete type, dyn type, keep function, metho
 shared mut ck_escaping_cells Vec[i64] // variable names that must be allocated in heap cells
 
 fn sym_new(kind i64, name i64, pos i64) Sym {
-	let s = cast(Sym, calloc(31, 8))
+	let s = cast(Sym, calloc(32, 8))
 	s.kind = kind
 	s.name = name
 	s.pos = pos
@@ -298,8 +298,8 @@ fn resolve_type(tx i64) i64 {
 	if k == TX_OPT {
 		let inner = resolve_type(cast(i64, cast(TypeExpr, tx).a))
 		let ik = kind_of(cast(Ty, inner))
-		if ik != K_STRUCT && ik != K_DYN && ik != K_STRING && ik != K_SLICE && ik != K_MAP {
-			err_code_type(cast(Node, tx).pos, cstr("E420 OPTIONAL_TYPE"), cstr("only references (str, slices, maps, structs, dyn) can be optional, not "), inner, cstr(""))
+		if ik != K_STRUCT && ik != K_DYN && ik != K_STRING && ik != K_SLICE && ik != K_MAP && scalar_optionable(cast(Ty, inner)) == 0 {
+			err_code_type(cast(Node, tx).pos, cstr("E420 OPTIONAL_TYPE"), cstr("only numbers, bool and references (str, slices, maps, structs, dyn) can be optional, not "), inner, cstr(""))
 			return inner
 		}
 		return opt_of(inner)
@@ -4772,6 +4772,14 @@ fn check_assignable(e Node, from i64, to Ty) {
 	if bounded_value(cast(i64, e), cast(Ty, from), to) != 0 {
 		return
 	}
+	if kind_of(to) == K_OPT && opt_scalar(to) != 0 && kind_of(cast(Ty, from)) != K_OPT && kind_of(cast(Ty, from)) != K_NIL && assignable(cast(Ty, from), cast(Ty, opt_scalar(to))) != 0 {
+		// A number or bool where ?number is wanted: put it in a box.
+		if is_untyped(from) != 0 {
+			reconvert(e, opt_scalar(to))
+		}
+		box_value(e, to)
+		return
+	}
 	if assignable(cast(Ty, from), to) == 0 {
 		if is_query_t(to) != 0 && kind_of(cast(Ty, from)) == K_STRING {
 			err_code_at(e.pos, cstr("E280 QUERY"), cstr("a query takes a string literal: put values in {{...}} so they are sent apart from the text, never pasted into it"))
@@ -4782,6 +4790,18 @@ fn check_assignable(e Node, from i64, to Ty) {
 		}
 		err_code_types(e.pos, cstr("E230 TYPE_MISMATCH"), cstr("cannot use "), from, cstr(" as "), cast(i64, to))
 	}
+}
+
+// box_value replaces the number or bool e with a new box holding it, of the optional type to.
+fn box_value(e Node, to Ty) {
+	let pos = e.pos
+	let bt = cast(Ty, to.elem)
+	let inner = expr_clone(cast(i64, e))
+	let stmts = vec_new[i64]()
+	let obj = temp(pos, rt_call(pos, cstr("rt_alloc"), args1(mk_int(pos, bt.size, ty_int)), cast(i64, bt)), cast(i64, bt))
+	vec_push(stmts, cast(i64, obj))
+	vec_push(stmts, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, obj.sym)), cast(i64, bt), 0), inner))
+	replace_node(cast(i64, e), mk_seq(pos, cast(i64, stmts), sym_ref_node(pos, cast(Sym, obj.sym)), cast(i64, to)))
 }
 
 // check_value rejects a call with no result, or several, where one value is needed.
@@ -7364,6 +7384,15 @@ fn narrow_begin(c i64, sense i64) Vec[i64] {
 		return cast(Vec[i64], 0)
 	}
 	let rec = pair(cast(i64, s), s.type_)
+	if opt_scalar(cast(Ty, s.type_)) != 0 {
+		// The variable keeps holding the box; the narrowed name reads the number inside it.
+		if s.captured != 0 || s.cell != 0 {
+			return cast(Vec[i64], 0)
+		}
+		s.type_ = opt_scalar(cast(Ty, s.type_))
+		s.unbox = 1
+		return cast(Vec[i64], rec)
+	}
 	s.type_ = cast(Ty, s.type_).elem
 	return cast(Vec[i64], rec)
 }
@@ -7374,6 +7403,7 @@ fn narrow_end(rec Vec[Sym]) {
 		narrow_end(cast(Vec[Sym], cast(Vec[i64], vec_get(rec, 1))))
 	} else if cast(i64, rec) != 0 {
 		vec_get(rec, 0).type_ = cast(i64, vec_get(rec, 1))
+		vec_get(rec, 0).unbox = 0
 	}
 }
 

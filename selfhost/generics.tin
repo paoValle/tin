@@ -398,7 +398,11 @@ fn tunify(g Fn, binds Vec[i64], tx i64, t Ty, untyped_ok i64) {
 	if k == TX_SLICE && tk == K_SLICE {
 		tunify(g, binds, cast(i64, cast(TypeExpr, tx).a), cast(Ty, t.elem), untyped_ok)
 	} else if k == TX_OPT && tk == K_OPT {
-		tunify(g, binds, cast(i64, cast(TypeExpr, tx).a), cast(Ty, t.elem), untyped_ok)
+		if opt_scalar(t) != 0 {
+			tunify(g, binds, cast(i64, cast(TypeExpr, tx).a), cast(Ty, opt_scalar(t)), untyped_ok)
+		} else {
+			tunify(g, binds, cast(i64, cast(TypeExpr, tx).a), cast(Ty, t.elem), untyped_ok)
+		}
 	} else if k == TX_MAP && tk == K_MAP {
 		tunify(g, binds, cast(i64, cast(TypeExpr, tx).a), cast(Ty, t.key), untyped_ok)
 		tunify(g, binds, cast(i64, cast(TypeExpr, tx).b), cast(Ty, t.elem), untyped_ok)

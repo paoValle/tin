@@ -412,6 +412,7 @@ type Sym struct {
 	cell_of i64
 	kept_cap i64
 	scope_at i64
+	unbox i64 // a narrowed ?number: the variable holds the box, reads load its field (#353)
 }
 
 type ScopeStmt struct {
