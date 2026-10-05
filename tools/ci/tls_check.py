@@ -63,6 +63,12 @@ def make_certs(openssl, work):
         if r.returncode == 0:
             certs[kind] = (cert, key)
     assert 'rsa' in certs and 'ecdsa' in certs, 'openssl could not make test certificates'
+    # other-root.pem, next to them, is a root that signed none of them, under its own name: the
+    # trusted roots of the unknown-authority case. It is not one of the kinds the servers use.
+    cert, key = work / 'other-root.pem', work / 'other-root.key'
+    r = subprocess.run([openssl, 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-keyout', str(key),
+                        '-out', str(cert), '-days', '30', '-nodes', '-subj', '/CN=tin unrelated root'], capture_output=True)
+    assert r.returncode == 0, r.stderr
     return certs
 
 
@@ -373,7 +379,7 @@ def python_servers(exe, certs):
         wait_port(port)
         # The trusted roots are an unrelated certificate (SSL_CERT_FILE), so the outcome does not
         # depend on whether this machine has a CA bundle.
-        out = run(exe, 'verify', f'127.0.0.1:{port}', 'localhost', env={'SSL_CERT_FILE': str(certs['rsa'][0])})
+        out = run(exe, 'verify', f'127.0.0.1:{port}', 'localhost', env={'SSL_CERT_FILE': str(certs['rsa'][0].with_name('other-root.pem'))})
         assert out.startswith('fault tls: x509: certificate signed by unknown authority'), out
         want = hashlib.sha256(b'hello over tls ' * 4096).hexdigest()
         out = run(exe, 'https', f'https://127.0.0.1:{port}/x')
