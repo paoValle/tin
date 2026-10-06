@@ -12,8 +12,9 @@ Generated from the comments in `lib/*/` by `tools/gendoc.py`.
 | [hearth](#hearth) | cores and threads (runtime) |
 | [relay](#relay) | messages between cores (channels) |
 | [task](#task) | deadline and cancellation of the running code (context) |
-| [wire](#wire) | TCP and HTTP client (net) |
+| [wire](#wire) | TCP and HTTP/1.1 and HTTP/2 client (net, net/http) |
 | [tls](#tls) | TLS 1.3 client and server (crypto/tls) |
+| [hpack](#hpack) | HTTP/2 header compression (golang.org/x/net/http2/hpack) |
 | [twine](#twine) | strings (strings) |
 | [glyph](#glyph) | UTF-8 and Unicode (unicode/utf8, unicode) |
 | [mint](#mint) | number and string conversion (strconv) |
@@ -263,7 +264,7 @@ Package task reads the deadline and cancellation of the running code, which belo
 
 ## wire
 
-Package wire is TCP networking and a small HTTP/1.1 client. Calls block the calling core (servers should use anvil); every connection can carry a read/write timeout.
+Package wire is TCP networking and an HTTP client: HTTP/1.1, and HTTP/2 to servers that choose it by ALPN or with Options.H2C (#480). Calls inside a request wait without blocking the core; every connection can carry a read/write timeout.
 
 ```tin body
 let c = try wire.Dial("127.0.0.1:6379")
@@ -298,6 +299,7 @@ let r = try wire.Get("http://127.0.0.1:8080/json")
 - `Do(method str, url str, headers []str, body str) !Resp`: Do sends one request: headers is a list of name, value pairs. The method and header names must be tokens, and the URL and header values must not hold CR, LF, NUL or other control bytes (the URL no spaces either), or Do fails instead of sending a request an input could have split. Response bodies over DefaultMaxBody fail; DoWith sets a timeout and the limit.  Connections are kept alive: after a response that ends cleanly (HTTP/1.1, framed by a length or chunks, no "Connection: close") the connection waits in a per-core pool, by scheme, host and port (and TLS settings), and the next call to that host uses it instead of dialing and, for https, doing a TLS handshake. A kept connection is checked before it is used, dropped after 30 s idle, and at most Options.MaxIdle are kept per host. One the server closed meanwhile is replaced by a new connection without the caller seeing it, for a GET, HEAD, PUT, DELETE, OPTIONS or TRACE; any other method (a POST) fails instead of being sent twice.
 - `DoWith(method str, url str, headers []str, body str, opt Options) !Resp`: DoWith is Do with options: an overall timeout and a response size limit.
 - `(r Resp) Header(name str) str`: Header returns the response header name (any case), or "".
+- `(r Resp) Trailer(name str) str`: Trailer returns the response trailer name (any case), or "": HTTP/2 responses carry trailers (gRPC's grpc-status, for one; #480).
 
 ## tls
 
@@ -341,10 +343,29 @@ try c.Write("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
 - `(c Conn) Buffered() i64`: Buffered is how many decrypted bytes a Read returns without waiting.
 - `(c mut Conn) Read(buf mut []u8, max i64) !i64`: Read appends up to max bytes of application data to buf and returns how many; after the server's close_notify it fails with EOF (wire.IsEOF), and a connection the server drops without close_notify is a fault, not EOF (a truncation would otherwise look complete).
 - `(c mut Conn) ReadNow(buf mut []u8, max i64) !i64`: ReadNow is Read without waiting: it returns 0 when no application data can be had without waiting for the socket (then wait until Fd is readable and call it again). For clients that run their own non-blocking loop; data TLS has already buffered is always returned first.
+- `(c mut Conn) ReadNowTo(p i64, max i64) !i64`: ReadNowTo is ReadNow into the raw buffer at p, at most max bytes: for trusted code that keeps its own buffers (the kafka client reads frames of many megabytes this way, with no copy per record).
 - `(c mut Conn) ReadFull(n i64) !str`: ReadFull reads exactly n bytes.
 - `(c mut Conn) WriteBytes(b []u8) !`: WriteBytes sends all of b.
 - `(c mut Conn) Write(s str) !`: Write sends all of s.
 - `(c mut Conn) Close()`: Close sends close_notify and closes the connection; closing twice does nothing.
+
+## hpack
+
+Package hpack is HPACK (RFC 7541), HTTP/2's header compression, for HTTP/2 clients (wire, #480): a Decoder that keeps one connection's dynamic table and decodes Huffman-coded strings, and Encode, which writes a header list with static-table names and plain literals that are never indexed, so it keeps no state and adds nothing to the peer's table. anvil's server has its own decoder, which hands fields over without copying them.
+
+```tin body
+mut block = make([]u8, 0, 64)
+hpack.Encode(mut block, []hpack.Field{hpack.Field{Name: ":status", Value: "200"}})
+let d = hpack.NewDecoder(4096, 65536)
+let fields = try d.Decode(block)
+```
+
+- `type Field struct`: Field is one header field.
+- `type Decoder struct`: Decoder decodes the header blocks one peer sends on a connection, in order: its dynamic table carries from block to block. The table is in malloc'd memory, so a decoder kept with a connection outlives the requests that used it; Free releases it.
+- `NewDecoder(tableSize i64, listMax i64) Decoder`: NewDecoder is a decoder for a peer allowed a table of tableSize bytes (4096 unless the connection's settings say otherwise, at most 8192) whose header lists stay within listMax bytes.
+- `(d Decoder) Free()`: Free releases the decoder's table; the decoder must not be used again.
+- `(d Decoder) Decode(block []u8) ![]Field`: Decode decodes one header block (the fragments of a HEADERS frame and its CONTINUATIONs, joined). An error is a COMPRESSION_ERROR: the connection must end, since the table is no longer the peer's.
+- `Encode(b mut []u8, fields []Field)`: Encode appends the header block of fields to b: a static entry where one matches name and value exactly, else a literal without indexing (with a static name where there is one). Names must be lowercase, as HTTP/2 requires.
 
 ## twine
 

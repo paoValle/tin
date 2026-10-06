@@ -4,7 +4,9 @@
 // never indexed, so it keeps no state and adds nothing to the peer's table. anvil's server has
 // its own decoder, which hands fields over without copying them.
 //
-//	mut d = hpack.NewDecoder(4096, 65536)
+//	mut block = make([]u8, 0, 64)
+//	hpack.Encode(mut block, []hpack.Field{hpack.Field{Name: ":status", Value: "200"}})
+//	let d = hpack.NewDecoder(4096, 65536)
 //	let fields = try d.Decode(block)
 package hpack
 

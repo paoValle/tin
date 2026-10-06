@@ -1,5 +1,6 @@
-// Package wire is TCP networking and a small HTTP/1.1 client. Calls block the calling
-// core (servers should use anvil); every connection can carry a read/write timeout.
+// Package wire is TCP networking and an HTTP client: HTTP/1.1, and HTTP/2 to servers that choose
+// it by ALPN or with Options.H2C (#480). Calls inside a request wait without blocking the core;
+// every connection can carry a read/write timeout.
 //
 //	let c = try wire.Dial("127.0.0.1:6379")
 //	try c.Write("PING\r\n")
