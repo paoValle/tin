@@ -796,7 +796,6 @@ fn compiler_main(argc i64, argv i64) i64 {
 		let e = cast([]i64, err_code(NO_POS, "E903 NO_RUNTIME"))
 		buf_str(cast([]u8, e), "the runtime package is missing: no runtime in ")
 		buf_str(cast([]u8, e), lib_root)
-		buf_str(cast([]u8, e), runtime_dir())
 		fatal(cast([]u8, e))
 	}
 	mut rk = 0
