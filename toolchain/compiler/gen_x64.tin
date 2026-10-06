@@ -3078,18 +3078,18 @@ fn x_has_stack_params(f Fn) i64 {
 // [rbp + 16 + 8k]) into their homes; register moves run in parallel.
 fn x_entry_moves(f Fn) {
 	let locals = cast([]i64, f.locals)
+	mut dsts = []i64{}
+	mut srcs = []i64{}
+	mut stack_syms = []i64{}
+	mut ni = 0
+	mut nf = 0
+	x_nstack = 0
 	// A closure's descriptor arrives in r11, which is also XSCR, the register stack parameters
 	// are loaded through: keep it on the stack until they are in (#533).
 	let keep_env = i64(f.env_sym != 0 && x_has_stack_params(f) != 0)
 	if keep_env != 0 {
 		x_push(R11)
 	}
-	let dsts = []i64{}
-	let srcs = []i64{}
-	let stack_syms = []i64{}
-	mut ni = 0
-	mut nf = 0
-	x_nstack = 0
 	mut i = 0
 	for i < len(f.params) {
 		let s = cast(Sym, locals[i])
