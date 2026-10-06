@@ -2499,7 +2499,7 @@ fn lookup_outer(f Fn, name str) i64 {
 }
 
 fn capture_sym(f Fn, os Sym) i64 {
-	let caps = cast([]i64, f.captures)
+	mut caps = cast([]i64, f.captures)
 	mut ci = -1
 	mut i = 0
 	for i < len(caps) {
@@ -2732,25 +2732,25 @@ fn args1(a i64) i64 {
 }
 
 fn args2(a i64, b i64) i64 {
-	let v = cast([]i64, args1(a))
+	mut v = cast([]i64, args1(a))
 	v = append(v, b)
 	return cast(i64, v)
 }
 
 fn args3(a i64, b i64, c i64) i64 {
-	let v = cast([]i64, args2(a, b))
+	mut v = cast([]i64, args2(a, b))
 	v = append(v, c)
 	return cast(i64, v)
 }
 
 fn args4(a i64, b i64, c i64, d i64) i64 {
-	let v = cast([]i64, args3(a, b, c))
+	mut v = cast([]i64, args3(a, b, c))
 	v = append(v, d)
 	return cast(i64, v)
 }
 
 fn args5(a i64, b i64, c i64, d i64, f i64) i64 {
-	let v = cast([]i64, args4(a, b, c, d))
+	mut v = cast([]i64, args4(a, b, c, d))
 	v = append(v, f)
 	return cast(i64, v)
 }
@@ -3624,7 +3624,7 @@ fn mark_spawns(v []i64, names []str) {
 		let s = v[i]
 		let k = cast(Node, s).kind
 		if k == ST_SCOPE {
-			let inner = slice_clone(names)
+			mut inner = slice_clone(names)
 			inner = append(inner, cast(ScopeStmt, s).name)
 			mark_spawns(cast(Block, cast(ScopeStmt, s).body).stmts, inner)
 		} else if k == ST_BLOCK {
@@ -3798,7 +3798,7 @@ fn lower_select(s i64) {
 	let arms = cast(SelectStmt, s).arms
 	let n = len(arms)
 	let out = cast(Block, empty_block(pos))
-	let st = out.stmts
+	mut st = out.stmts
 	mut kinds = []i64{} // 1 lane, 2 handle, 3 after, 4 canceled
 	mut srcs = []str{}
 	let armv = sel_name(pos, "$sel", 0 - 1)
@@ -3868,7 +3868,7 @@ fn lower_select(s i64) {
 	let loop_ = cast(WhileStmt, node_new(ST_WHILE, pos))
 	loop_.cond = sel_cmp(pos, armv, "<", 0)
 	loop_.body = empty_block(pos)
-	let lb = cast(Block, loop_.body).stmts
+	mut lb = cast(Block, loop_.body).stmts
 	let dl = sel_name(pos, "$seld", 0)
 	lb = append(lb, sel_let(pos, dl, node_new(EX_INT, pos)))
 	mut chain = 0
@@ -3916,7 +3916,7 @@ fn lower_select(s i64) {
 	let wait = cast(IfStmt, node_new(ST_IF, pos))
 	wait.cond = sel_cmp(pos, armv, "<", 0)
 	wait.then = empty_block(pos)
-	let wb = cast(Block, wait.then).stmts
+	mut wb = cast(Block, wait.then).stmts
 	i = 0
 	for i < n {
 		let k = kinds[i]
@@ -3967,7 +3967,7 @@ fn lower_select(s i64) {
 		let ifs = cast(IfStmt, node_new(ST_IF, pos))
 		ifs.cond = sel_cmp(pos, armv, "==", i)
 		ifs.then = empty_block(pos)
-		let tb = cast(Block, ifs.then).stmts
+		mut tb = cast(Block, ifs.then).stmts
 		if i == n {
 			let tr = cast(TryExpr, node_new(EX_TRY, pos))
 			tr.x = sel_call(pos, "rt_select_fail", cast(i64, []i64{}))
@@ -5180,7 +5180,7 @@ fn check_multi(s i64) {
 	let out = cast(Block, node_new(ST_BLOCK, pos))
 	out.stmts = []i64{}
 	out.flat = 1
-	let stmts = out.stmts
+	mut stmts = out.stmts
 	let n = len(targets)
 	mut temps = []i64{}
 	if define == 0 && len(values) == n {
@@ -5494,7 +5494,7 @@ fn lower_try_stmt(s i64, tr_in i64, mode i64, declared i64) {
 	}
 	let out = cast(Block, empty_block(pos))
 	out.flat = 1
-	let stmts = out.stmts
+	mut stmts = out.stmts
 	mut temps = []Sym{}
 	if len(results) == 1 {
 		let tl = temp(pos, cast(i64, call), ty_error)
@@ -5776,7 +5776,7 @@ fn lower_range(s i64) {
 	let xt = cast(Ty, chk(cast(Node, x), 0))
 	let k = kind_of(xt)
 	let out = cast(Block, empty_block(pos))
-	let stmts = out.stmts
+	mut stmts = out.stmts
 	push_scope()
 	let src = temp(pos, x, cast(i64, xt))
 	stmts = append(stmts, cast(i64, src))
@@ -6656,7 +6656,7 @@ fn flat_block(pos i64, stmts i64) i64 {
 fn check_match_let(s i64, m Node, t i64) {
 	let pos = cast(Node, s).pos
 	let vs = cast(Sym, declare_local(pos, mt_name("$match"), t))
-	let stmts = match_valued(pos, cast(i64, m), vs, MATCH_VALUE, 0)
+	mut stmts = match_valued(pos, cast(i64, m), vs, MATCH_VALUE, 0)
 	let l = cast(LetStmt, node_new(ST_LET, pos))
 	l.name = cast(LetStmt, s).name
 	l.type_ = cast(LetStmt, s).type_
@@ -6686,7 +6686,7 @@ fn check_match_assign(s Node, target i64, m i64) {
 		}
 	}
 	let vs = cast(Sym, declare_local(pos, mt_name("$match"), t))
-	let stmts = match_valued(pos, m, vs, MATCH_VALUE, 0)
+	mut stmts = match_valued(pos, m, vs, MATCH_VALUE, 0)
 	if vs.type_ != 0 {
 		let a = assign_stmt(pos, target, sym_ref_node(pos, vs))
 		stmts = append(stmts, a)
@@ -6699,7 +6699,7 @@ fn check_match_assign(s Node, target i64, m i64) {
 fn check_match_tail(s Node, m i64) {
 	let pos = s.pos
 	let vs = cast(Sym, declare_local(pos, mt_name("$match"), 0))
-	let stmts = match_valued(pos, m, vs, MATCH_TAIL, 0)
+	mut stmts = match_valued(pos, m, vs, MATCH_TAIL, 0)
 	let t = vs.type_
 	bound_t = ty_void
 	if t != 0 && kind_of(cast(Ty, t)) != K_VOID {
@@ -7844,7 +7844,7 @@ fn keep_fn(t Ty) Fn {
 	f.slots = 1
 	mut vs5 = cast([]i64, f.locals)
 	vs5 = append(vs5, cast(i64, x))
-	let body = cast(Block, f.body).stmts
+	mut body = cast(Block, f.body).stmts
 	let k = kind_of(t)
 	let ret = cast(ReturnStmt, node_new(ST_RETURN, pos))
 	if k == K_DYN {
@@ -8205,7 +8205,7 @@ fn arrdrop_fn(et i64) i64 {
 	ck_fn = cast(Fn, f)
 	let pos = 0
 	let p = cast([]i64, f.locals)[0]
-	let body = cast(Block, f.body).stmts
+	mut body = cast(Block, f.body).stmts
 	let n = temp(pos, rt_call(pos, "rt_rc_arr_n", args2(sym_ref_node(pos, cast(Sym, p)), mk_int(pos, type_width(cast(Ty, et)), ty_int)), ty_int), ty_int)
 	body = append(body, cast(i64, n))
 	let j = declare_local(pos, "$", ty_int)
@@ -8321,7 +8321,7 @@ fn arenacopy_fn(t Ty) Fn {
 	f.slots = 1
 	mut vs5 = cast([]i64, f.locals)
 	vs5 = append(vs5, cast(i64, x))
-	let body = cast(Block, f.body).stmts
+	mut body = cast(Block, f.body).stmts
 	let k = kind_of(t)
 	let ret = cast(ReturnStmt, node_new(ST_RETURN, pos))
 	if k == K_ERROR {
