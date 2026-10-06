@@ -592,7 +592,7 @@ def sni_reload(openssl, exe, certs, work):
             assert subj.startswith(f'CN={cn},'), (name, subj)
         # A client that verifies only RSA-PSS gets a.test's RSA certificate.
         subj, sig = served_cert(openssl, srv.port, 'a.test', ['-sigalgs', 'rsa_pss_rsae_sha256'])
-        assert subj.startswith('CN=a.test,') and 'rsa_pss' in sig.lower(), (subj, sig)
+        assert subj.startswith('CN=a.test,') and sig.lower().replace('-', '_').startswith('rsa_pss'), (subj, sig)
         # A reload while handshakes run: none fails, and new connections get the new set.
         b = named_cert(openssl, d, 'b.test', ['b.test', 'localhost'])
         stop, errors, done = threading.Event(), [], [0]

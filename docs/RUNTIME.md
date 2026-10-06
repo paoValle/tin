@@ -367,6 +367,19 @@ reading resumes and buffered input is served.
   query; an empty path is `/`.
 - Bodies are limited to 64 MiB by default (413), a chunked body by its decoded length (and
   its chunk framing by the limit plus 64 KiB); `anvil.Limits` or `TIN_MAX_BODY` changes it.
+- **Bodies read as they arrive (#481):** a route registered with `Router.Stream(method, pattern,
+  h)` runs its handler as soon as the request's headers are in, and `q.BodyStream().Read(mut buf)`
+  waits in the request's task for the next bytes, so an upload is processed in the memory of one
+  read buffer and a gRPC client or bidirectional stream gets each message as it comes. The task
+  takes the socket out of the event loop (as a streamed response does) and reads it directly: a
+  Content-Length body up to its length (at most 1 TiB), a chunked one through a decoder of its
+  framing, with bytes read past its end (a pipelined request) given back to the connection. A
+  slow handler reads slowly, so TCP holds the client back. `100 Continue` goes out at the first
+  read that needs the socket. A handler that ends before the body does closes the connection
+  after its response, since what is left cannot be told from a next request. `TIN_MAX_BODY` does
+  not bound such a body (the handler decides what it keeps); each read waits at most the read
+  timeout, and the request deadline applies. On other routes the body has arrived whole when the
+  handler runs, and `BodyStream` reads it from memory.
 - **Timeouts** (`anvil.Timeouts`, or the environment): a request's line and headers must
   arrive within 10 s of its first byte (`TIN_HEADER_TIMEOUT_MS`), and the whole request
   within 60 s (`TIN_READ_TIMEOUT_MS`); a keep-alive connection with no request in progress
@@ -722,7 +735,12 @@ and `expect: 100-continue` gets an interim `:status 100`. The stream and connect
 windows are opened again once half is used. When the client ends its side the request goes
 through the admission checks of `serve_one` and runs in its own task on the connection's core
 (`tArg` the connection, `tUser+2` the stream), with the request deadline and memory budget.
-Many streams of one connection run at once: one that waits does not hold the others.
+Many streams of one connection run at once: one that waits does not hold the others. On a `Router.Stream` route
+(#481) the handler starts at the request's HEADERS instead, and the stream's DATA waits in a buffer
+of at most one stream window (1 MiB) that `BodyStream` reads from: its WINDOW_UPDATE goes out as
+the handler reads, so a slow handler slows its client and not the connection's other streams. A
+handler that ends before the client's END_STREAM resets the stream with NO_ERROR after its
+response.
 
 **Responses.** HEADERS (`:status`, `server`, `date`, `content-type` and `content-length` unless
 the status has no body, then the handler's fields with lower-case names; connection-specific
@@ -1172,14 +1190,14 @@ functions keep that rule, and grows as phase 1 lands.
 | `Hmac`, `HmacSha256` | the key and message bytes | their lengths |
 | `HkdfExtract`, `HkdfExpand`, `HkdfExpandLabel` | the key material | lengths, `info`, labels |
 | `ConstantTimeEq`, `Equal` | the bytes | the lengths |
-| `X25519`, `X25519PublicKey` | the scalar and the point (ladder with masked swaps; ten-limb field) | the final all-zero check, whose result is public |
+| `X25519`, `X25519PublicKey` | the scalar and the point (ladder with masked swaps; five 51-bit limbs, products through `__mulhu`) | the final all-zero check, whose result is public |
 | `ChaCha20`, `AEAD.Seal`, `AEAD.SealTo` and `AEAD.Open` for ChaCha20-Poly1305 | the key, the data and the tag (the tag is compared with `ConstantTimeEq`) | the lengths |
 | `NewAESGCM`, `AEAD.Seal`, `AEAD.SealTo` and `AEAD.Open` for AES-GCM: on the CPU's AES-NI/PCLMULQDQ or ARMv8 AESE/AESMC/PMULL instructions when it has them (`selfhost/aes_hw.tin`), else bitsliced AES with the S-box as GF(2^8) inversion and GHASH by multiplication with holes | the key, the data and the tag | the lengths, and which path the CPU allows |
-| `P256PublicKey`, `P256ECDH` and the field and point code under them (`field.tin`, `p256.tin`) | the private key and every coordinate | the validity checks of the key and the peer's point, whose results are public |
+| `P256PublicKey`, `P256ECDH` and the field and point code under them (`field.tin`: 64-bit limbs, carries by cset, high words by `__mulhu`; `p256.tin`: k·G from the per-core table of j·16^i·G read by touching every entry) | the private key and every coordinate | the validity checks of the key and the peer's point, whose results are public |
 
 | `monty_new` (`bignum.tin`: Montgomery constants for a modulus given at run time) | the modulus's value | its limb count and bit length |
-| `SignPKCS1v15`, `SignPSS` (`rsa_sign.tin`: CRT, base blinding by r^e, r^-1 by Fermat inversion in each prime, a public-key check of every signature) and `monty_exp_ct`, `monty_reduce`, `nat_mul_ct` under them | the private key, the message representative and r | the key's size; PSS's salt is random and public |
-| `SignECDSA`, `PrivateKey.SignTLS` (`ecdsa_sign.tin`: RFC 6979 nonces by `Hmac`, k·G by `p256_mul` or `ec_mul_ct`, k^-1 as k^(n-2) with the public exponent) | the private scalar and the nonce | the digest, and the (negligibly rare, public) retry when a nonce candidate is not below n |
+| `SignPKCS1v15`, `SignPSS` (`rsa_sign.tin`: CRT; base blinding by a pair (r^e, r^-1) kept with the key, squared after each signature and made fresh every 32, r^-1 by Fermat inversion in each prime; a public-key check of every signature) and `monty_exp_ct`, `monty_reduce`, `nat_mul_ct` under them | the private key, the message representative and r | the key's size; PSS's salt is random and public |
+| `SignECDSA`, `PrivateKey.SignTLS` (`ecdsa_sign.tin`: RFC 6979 nonces by `Hmac`, k·G by `p256_mul_base` or `ec_mul_ct`, k^-1 as k^(n-2) with the public exponent) | the private scalar and the nonce | the digest, and the (negligibly rare, public) retry when a nonce candidate is not below n |
 | `SignEd25519`, `Ed25519PublicKey`, `PrivateKey.SignTLS` with scheme 0x0807 (`ed25519_sign.tin`, #477: the clamped scalar and the nonce from SHA-512 of the seed, r·B and a·B from a per-core table of j·16^i·B read by copying every entry and swapping with a mask, S = r + k·a mod L in Montgomery arithmetic) | the seed, the scalar and the nonce | the message and its length |
 | `ParsePrivateKeyPEM`, `ParsePrivateKeyDER` | nothing: the key's encoding (lengths, tags) is parsed with ordinary branches | |
 

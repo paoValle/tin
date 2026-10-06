@@ -2018,6 +2018,14 @@ fn gen_runtime_intrinsic(e Call, dst i64, d i64) i64 {
 		emit1(I_YIELD, 0)
 		return 1
 	}
+	if streq(name, cstr("__mulhu")) != 0 {
+		// __mulhu(a, b): the high 64 bits of the unsigned 128-bit product (bits.Mul64, #474).
+		gen_pair(args[0], args[1], d)
+		if dst >= 0 {
+			emit3(I_UMULH, dst, pl, pr)
+		}
+		return 1
+	}
 	return 0
 }
 
@@ -2625,7 +2633,28 @@ fn gen_branch(e i64, target i64, d i64, when_true i64) {
 	}
 	let k = cast(Node, e).kind
 	if k == EX_SEQ {
+		// The statements start at depth 0: keep the temps below d, as gen_seq does (#492).
+		mut i = 0
+		for i < d {
+			if i < t_count {
+				emit1(I_PUSH, t_regs[i])
+			}
+			if i < f_count {
+				emit1(I_FPUSH, f_regs[i])
+			}
+			i = i + 1
+		}
 		gen_stmts(cast(SeqExpr, e).stmts)
+		i = d - 1
+		for i >= 0 {
+			if i < f_count {
+				emit1(I_FPOP, f_regs[i])
+			}
+			if i < t_count {
+				emit1(I_POP, t_regs[i])
+			}
+			i = i - 1
+		}
 		gen_branch(cast(SeqExpr, e).value, target, d, when_true)
 		return
 	}

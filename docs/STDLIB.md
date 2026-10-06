@@ -200,6 +200,7 @@ ServeTLS (and Router.ServeTLS) serve HTTPS: TLS 1.3 with a PEM certificate chain
 - `(r mut Router) Head(pattern str, h fn(Req, mut Out))`: Head routes HEAD requests for pattern to h (without it, they go to the GET route).
 - `(r mut Router) Options(pattern str, h fn(Req, mut Out))`: Options routes OPTIONS requests for pattern to h.
 - `(r mut Router) Handle(method str, pattern str, h fn(Req, mut Out))`: Handle routes requests with method (any HTTP method name, like "PROPFIND") for pattern to h.
+- `(r mut Router) Stream(method str, pattern str, h fn(Req, mut Out))`: Stream routes method requests for pattern to h, which runs as soon as the request's headers are in and reads the body as it arrives with q.BodyStream() (#481): large uploads in bounded memory, gRPC client and bidirectional streams. TIN_MAX_BODY does not bound such a body.
 - `(r mut Router) Any(pattern str, h fn(Req, mut Out))`: Any routes requests for pattern with every method to h; a route for the request's own method on the same pattern wins over it.
 - `(r mut Router) Use(mw fn(Req, mut Out, fn(Req, mut Out)))`: Use adds middleware mw to r. Middleware run in the order added, around every route of r and of the routers mounted in it, and around their 404 and 405 answers. Each gets next, the rest of the chain, and decides whether and when to call it.
 - `(r mut Router) Route(prefix str, build fn(mut Router))`: Route groups routes under prefix ("/api"): build adds them to a new router mounted there.
@@ -221,6 +222,9 @@ ServeTLS (and Router.ServeTLS) serve HTTPS: TLS 1.3 with a PEM certificate chain
 - `ServeTLSConfig(addr str, cfg TLSConfig, h fn(Req, mut Out)) !`: ServeTLSConfig is ServeTLS with a TLSConfig. With ClientAuth set, every full handshake asks for a client certificate: RequireClientCert refuses a client without one (certificate_required), and both refuse one that does not chain to ClientCAs for client authentication. A handler finds the verified chain in q.TLSConn().PeerCertificates().
 - `(r Router) ServeTLSConfig(addr str, cfg TLSConfig) !`: ServeTLSConfig is Serve over TLS with a TLSConfig, as anvil.ServeTLSConfig.
 - `(q Req) TLSConn() ?tls.Conn`: TLSConn is the TLS connection the request arrived on, or nil over plain TCP: for its ALPN(), CipherSuite() and Group(). After Hijack every byte must go through it (Read, Write, Close), since the descriptor carries records.
+- `type BodyReader struct`: BodyReader reads a request body: Read fills buf with the next bytes. It is q.BodyStream().
+- `(q Req) BodyStream() BodyReader`: BodyStream is the request body as a stream: on a route registered with Router.Stream it arrives as the handler reads it; elsewhere it has arrived whole (and Body has it too). Read the body either with Body or with BodyStream, not with both.
+- `(r BodyReader) Read(buf mut []u8) !i64`: Read fills buf with the body's next bytes, waiting for them, and returns how many it wrote: 0 at the end of the body. It fails when the client ends the connection or resets the stream before the end of the body, when no byte comes within the read timeout, and at the request's deadline.
 
 ## hearth
 
@@ -352,6 +356,7 @@ try c.Write("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
 - `(c Conn) Buffered() i64`: Buffered is how many decrypted bytes a Read returns without waiting.
 - `(c mut Conn) Read(buf mut []u8, max i64) !i64`: Read appends up to max bytes of application data to buf and returns how many; after the server's close_notify it fails with EOF (wire.IsEOF), and a connection the server drops without close_notify is a fault, not EOF (a truncation would otherwise look complete).
 - `(c mut Conn) ReadNow(buf mut []u8, max i64) !i64`: ReadNow is Read without waiting: it returns 0 when no application data can be had without waiting for the socket (then wait until Fd is readable and call it again). For clients that run their own non-blocking loop; data TLS has already buffered is always returned first.
+- `(c mut Conn) ReadNowTo(p i64, max i64) !i64`: ReadNowTo is ReadNow into the raw buffer at p, at most max bytes: for trusted code that keeps its own buffers (the kafka client reads frames of many megabytes this way, with no copy per record).
 - `(c mut Conn) ReadFull(n i64) !str`: ReadFull reads exactly n bytes.
 - `(c mut Conn) WriteBytes(b []u8) !`: WriteBytes sends all of b.
 - `(c mut Conn) Write(s str) !`: Write sends all of s.
@@ -598,7 +603,7 @@ Package bits counts, rotates and reverses the bits of fixed-width unsigned integ
 - `Add32(x u32, y u32, carry u32) (u32, u32)`: Add32 returns the sum x + y + carry and the carry out (0 or 1).
 - `Sub64(x u64, y u64, borrow u64) (u64, u64)`: Sub64 returns the difference x - y - borrow and the borrow out. borrow must be 0 or 1, otherwise the behavior is undefined.
 - `Sub32(x u32, y u32, borrow u32) (u32, u32)`: Sub32 returns the difference x - y - borrow and the borrow out (0 or 1).
-- `Mul64(x u64, y u64) (u64, u64)`: Mul64 returns the 128-bit product of x and y as (high word, low word).
+- `Mul64(x u64, y u64) (u64, u64)`: Mul64 returns the 128-bit product of x and y as (high word, low word): two instructions, umulh and mul on arm64, one mul on x86-64 (#474).
 - `Mul32(x u32, y u32) (u32, u32)`: Mul32 returns the 64-bit product of x and y as (high word, low word).
 - `const Div64Mask32 = two32 - 1`
 - `Div64(hi u64, lo u64, y u64) (u64, u64)`: Div64 returns the quotient and remainder of (hi, lo) divided by y. It panics for y == 0 (division by zero) and for y <= hi (the quotient does not fit in 64 bits).
@@ -1391,7 +1396,7 @@ A key picks the partition the way the Java client does (murmur2), so a key lands
 - `(c Client) DescribeConfigs(kind Resource, name str) ![]Config`: DescribeConfigs is the configuration of a topic or a broker (a broker by its node id).
 - `(c Client) SetConfig(kind Resource, name str, key str, value str) !`: SetConfig sets one config of a topic or a broker (IncrementalAlterConfigs: the others stay).
 - `(c Client) ResetConfig(kind Resource, name str, key str) !`: ResetConfig removes one config of a topic or a broker, back to its default.
-- `(c Client) Close()`: Close closes this core's connections of the client; the next request connects again. Requests waiting on them fail.
+- `(c Client) Close()`: Close closes this core's connections of the client; the next request connects again. Requests waiting on them fail, including one another task is waiting on (a held fetch).
 - `type Want struct`: Want names a partition and the offset to read it from.
 - `type Part struct`: Part is what a fetch learned about one partition.
 - `type Fetched struct`: Fetched is the records of a FetchAll, in partition order, and what it learned of each partition.
