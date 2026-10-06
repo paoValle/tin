@@ -2885,6 +2885,11 @@ fn sg_prepare(s i64) i64 {
 	if slice_has_i64(sg_loops, s) != 0 {
 		return 0
 	}
+	// The runtime's own loops (its backtrace text) are short and cold: leaving them as they are
+	// keeps rt_str_grow, and a shifted layout, out of programs that do not build strings so.
+	if ck_trusted != 0 && len(ck_pkg) == 0 {
+		return 0
+	}
 	sg_loops = append(sg_loops, s)
 	mut cands = []i64{}
 	sg_collect(sg_loop_body(s), cands)
