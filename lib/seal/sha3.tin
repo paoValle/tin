@@ -1,0 +1,230 @@
+package seal
+
+// ---- SHA-3 and SHAKE (FIPS 202), for ML-KEM (#479) ----
+// Keccak-f[1600] on 25 64-bit lanes, in portable code. A sponge absorbs its input `rate` bytes at
+// a time, little-endian into the lanes, then pads with the domain bits (0x06 for SHA-3, 0x1f for
+// SHAKE) and 0x80 at the end of the block. Every step is data-independent, so secrets (ML-KEM
+// seeds) take the same time whatever their value.
+
+let keccakRC []u64 = []u64{
+	0x0000000000000001, 0x0000000000008082, 0x800000000000808a, 0x8000000080008000,
+	0x000000000000808b, 0x0000000080000001, 0x8000000080008081, 0x8000000000008009,
+	0x000000000000008a, 0x0000000000000088, 0x0000000080008009, 0x000000008000000a,
+	0x000000008000808b, 0x800000000000008b, 0x8000000000008089, 0x8000000000008003,
+	0x8000000000008002, 0x8000000000000080, 0x000000000000800a, 0x800000008000000a,
+	0x8000000080008081, 0x8000000000008080, 0x0000000080000001, 0x8000000080008008,
+}
+
+fn rotl64(x u64, n u64) u64 {
+	return (x << n) | (x >> (64 - n))
+}
+
+// keccak_f permutes the 25 lanes of a (Keccak-f[1600], 24 rounds). The lanes are held in locals:
+// theta, rho and pi, chi and iota as in the reference, with rho's rotations and pi's lane order
+// written out.
+@wrap fn keccak_f(a mut []u64) {
+	mut a00 = a[0]
+	mut a01 = a[1]
+	mut a02 = a[2]
+	mut a03 = a[3]
+	mut a04 = a[4]
+	mut a05 = a[5]
+	mut a06 = a[6]
+	mut a07 = a[7]
+	mut a08 = a[8]
+	mut a09 = a[9]
+	mut a10 = a[10]
+	mut a11 = a[11]
+	mut a12 = a[12]
+	mut a13 = a[13]
+	mut a14 = a[14]
+	mut a15 = a[15]
+	mut a16 = a[16]
+	mut a17 = a[17]
+	mut a18 = a[18]
+	mut a19 = a[19]
+	mut a20 = a[20]
+	mut a21 = a[21]
+	mut a22 = a[22]
+	mut a23 = a[23]
+	mut a24 = a[24]
+	for round in 0..24 {
+		// theta
+		let c0 = a00 ^ a05 ^ a10 ^ a15 ^ a20
+		let c1 = a01 ^ a06 ^ a11 ^ a16 ^ a21
+		let c2 = a02 ^ a07 ^ a12 ^ a17 ^ a22
+		let c3 = a03 ^ a08 ^ a13 ^ a18 ^ a23
+		let c4 = a04 ^ a09 ^ a14 ^ a19 ^ a24
+		let d0 = c4 ^ rotl64(c1, 1)
+		let d1 = c0 ^ rotl64(c2, 1)
+		let d2 = c1 ^ rotl64(c3, 1)
+		let d3 = c2 ^ rotl64(c4, 1)
+		let d4 = c3 ^ rotl64(c0, 1)
+		// rho and pi: b[y][2x+3y] = rotl(a[x][y] ^ d[x], r[x][y]), lanes indexed x + 5y.
+		let b00 = a00 ^ d0
+		let b10 = rotl64(a01^d1, 1)
+		let b20 = rotl64(a02^d2, 62)
+		let b05 = rotl64(a03^d3, 28)
+		let b15 = rotl64(a04^d4, 27)
+		let b16 = rotl64(a05^d0, 36)
+		let b01 = rotl64(a06^d1, 44)
+		let b11 = rotl64(a07^d2, 6)
+		let b21 = rotl64(a08^d3, 55)
+		let b06 = rotl64(a09^d4, 20)
+		let b07 = rotl64(a10^d0, 3)
+		let b17 = rotl64(a11^d1, 10)
+		let b02 = rotl64(a12^d2, 43)
+		let b12 = rotl64(a13^d3, 25)
+		let b22 = rotl64(a14^d4, 39)
+		let b23 = rotl64(a15^d0, 41)
+		let b08 = rotl64(a16^d1, 45)
+		let b18 = rotl64(a17^d2, 15)
+		let b03 = rotl64(a18^d3, 21)
+		let b13 = rotl64(a19^d4, 8)
+		let b14 = rotl64(a20^d0, 18)
+		let b24 = rotl64(a21^d1, 2)
+		let b09 = rotl64(a22^d2, 61)
+		let b19 = rotl64(a23^d3, 56)
+		let b04 = rotl64(a24^d4, 14)
+		// chi and iota
+		a00 = b00 ^ (^b01 & b02) ^ keccakRC[round]
+		a01 = b01 ^ (^b02 & b03)
+		a02 = b02 ^ (^b03 & b04)
+		a03 = b03 ^ (^b04 & b00)
+		a04 = b04 ^ (^b00 & b01)
+		a05 = b05 ^ (^b06 & b07)
+		a06 = b06 ^ (^b07 & b08)
+		a07 = b07 ^ (^b08 & b09)
+		a08 = b08 ^ (^b09 & b05)
+		a09 = b09 ^ (^b05 & b06)
+		a10 = b10 ^ (^b11 & b12)
+		a11 = b11 ^ (^b12 & b13)
+		a12 = b12 ^ (^b13 & b14)
+		a13 = b13 ^ (^b14 & b10)
+		a14 = b14 ^ (^b10 & b11)
+		a15 = b15 ^ (^b16 & b17)
+		a16 = b16 ^ (^b17 & b18)
+		a17 = b17 ^ (^b18 & b19)
+		a18 = b18 ^ (^b19 & b15)
+		a19 = b19 ^ (^b15 & b16)
+		a20 = b20 ^ (^b21 & b22)
+		a21 = b21 ^ (^b22 & b23)
+		a22 = b22 ^ (^b23 & b24)
+		a23 = b23 ^ (^b24 & b20)
+		a24 = b24 ^ (^b20 & b21)
+	}
+	a[0] = a00
+	a[1] = a01
+	a[2] = a02
+	a[3] = a03
+	a[4] = a04
+	a[5] = a05
+	a[6] = a06
+	a[7] = a07
+	a[8] = a08
+	a[9] = a09
+	a[10] = a10
+	a[11] = a11
+	a[12] = a12
+	a[13] = a13
+	a[14] = a14
+	a[15] = a15
+	a[16] = a16
+	a[17] = a17
+	a[18] = a18
+	a[19] = a19
+	a[20] = a20
+	a[21] = a21
+	a[22] = a22
+	a[23] = a23
+	a[24] = a24
+}
+
+// sponge is a Keccak state with its rate in bytes; it absorbs, then squeezes.
+type sponge struct {
+	a    []u64
+	rate i64
+	out  []u8 // the current output block
+	pos  i64  // bytes of out already read
+}
+
+// absorb_block xors rate bytes of p (from at) into the lanes and permutes.
+@wrap fn (s mut sponge) absorb_block(p []u8, at i64) {
+	for i in 0..s.rate/8 {
+		mut w = u64(0)
+		for k in 0..8 {
+			w = w | u64(p[at+8*i+k])<<u64(8*k)
+		}
+		s.a[i] = s.a[i] ^ w
+	}
+	keccak_f(mut s.a)
+}
+
+// sponge_new absorbs msg and pads it with the domain byte: the sponge is ready to squeeze.
+fn sponge_new(rate i64, msg []u8, domain u8) sponge {
+	mut s = sponge{a: make([]u64, 25), rate: rate, out: make([]u8, rate), pos: 0}
+	let full = len(msg) / rate * rate
+	for at in (0..full).step(rate) {
+		s.absorb_block(msg, at)
+	}
+	let last = make([]u8, rate)
+	for i in 0..len(msg)-full {
+		last[i] = msg[full+i]
+	}
+	last[len(msg)-full] = domain
+	last[rate-1] = last[rate-1] | 0x80
+	s.absorb_block(last, 0)
+	s.lanes_out()
+	return s
+}
+
+// lanes_out copies the rate's lanes into out, little-endian, for squeezing.
+@wrap fn (s mut sponge) lanes_out() {
+	for i in 0..s.rate/8 {
+		let w = s.a[i]
+		for k in 0..8 {
+			s.out[8*i+k] = u8(w >> u64(8*k))
+		}
+	}
+	s.pos = 0
+}
+
+// squeeze appends the next n output bytes to dst.
+fn (s mut sponge) squeeze(dst mut []u8, n i64) {
+	for k in 0..n {
+		if s.pos == s.rate {
+			keccak_f(mut s.a)
+			s.lanes_out()
+		}
+		dst = append(dst, s.out[s.pos])
+		s.pos += 1
+	}
+}
+
+// sponge_sum is the first n bytes the sponge of msg gives.
+fn sponge_sum(rate i64, msg []u8, domain u8, n i64) []u8 {
+	mut s = sponge_new(rate, msg, domain)
+	mut out = make([]u8, 0, n)
+	s.squeeze(mut out, n)
+	return out
+}
+
+// Sha3_256 is the SHA3-256 digest of s (32 bytes); s may be secret.
+fn Sha3_256(s secret str) []u8 {
+	return sponge_sum(136, []u8(s), 0x06, 32)
+}
+
+// Sha3_512 is the SHA3-512 digest of s (64 bytes); s may be secret.
+fn Sha3_512(s secret str) []u8 {
+	return sponge_sum(72, []u8(s), 0x06, 64)
+}
+
+// Shake128 is the first n bytes of SHAKE128 of s; s may be secret.
+fn Shake128(s secret str, n i64) []u8 {
+	return sponge_sum(168, []u8(s), 0x1f, n)
+}
+
+// Shake256 is the first n bytes of SHAKE256 of s; s may be secret.
+fn Shake256(s secret str, n i64) []u8 {
+	return sponge_sum(136, []u8(s), 0x1f, n)
+}

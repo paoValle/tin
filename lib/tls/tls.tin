@@ -6,9 +6,10 @@
 // package; LoadServerConfig reads a certificate chain and its key (RSA, ECDSA P-256 or P-384),
 // and Server runs the server side over an accepted wire.Conn. Cipher suites:
 // TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384 and TLS_CHACHA20_POLY1305_SHA256; key exchange
-// X25519, or P-256 by HelloRetryRequest. No 0-RTT, no renegotiation and no TLS 1.2. Every wait
-// lets the core serve other tasks and honours Config.Timeout during the handshake, SetTimeout
-// afterwards and a request's deadline.
+// X25519MLKEM768 (post-quantum hybrid, ML-KEM-768 with X25519) or X25519, or P-256 by
+// HelloRetryRequest. No 0-RTT, no renegotiation and no TLS 1.2. Every wait lets the core serve
+// other tasks and honours Config.Timeout during the handshake, SetTimeout afterwards and a
+// request's deadline.
 //
 //	let c = try tls.Dial("example.com:443", tls.Config{ALPN: []str{"http/1.1"}})
 //	try c.Write("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
@@ -103,10 +104,14 @@ fn (c Conn) CipherSuite() i64 {
 	return c.suite
 }
 
-// Group is the key exchange: "X25519", or "P-256" when the server asked for it.
+// Group is the key exchange: "X25519MLKEM768" (post-quantum hybrid, #479), "X25519", or
+// "P-256" when the server asked for it.
 fn (c Conn) Group() str {
 	if c.group == groupP256 {
 		return "P-256"
+	}
+	if c.group == groupX25519MLKEM768 {
+		return "X25519MLKEM768"
 	}
 	return "X25519"
 }
