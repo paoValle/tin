@@ -8,7 +8,7 @@ access is used by the extension.
 
 Install `tin-language-0.2.2.vsix` using **Extensions: Install from VSIX…**.
 Open a saved `.tin` file. Set **Tin: Toolchain Root** to your Tin checkout or installation
-(for example `/path/to/tin`), containing `bin/tinc` and `lib/`. Build/install the compiler
+(for example `/path/to/tin`), containing `bin/tinc` and the library (`toolchain/std/`, `packages/`, `toolchain/runtime/`). Build/install the compiler
 using Tin's normal installation instructions first.
 
 When editing the Tin repository itself, `bin/tinc` is detected automatically.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate toolchain/docs/STDLIB.md from the comments in lib/*/ (run from the repo root)."""
+"""Generate toolchain/docs/STDLIB.md from the comments in toolchain/std/*/ and packages/*/ (run from the repo root)."""
 import os, re
 
 SKIP = {"runtime", "std", "fmt", "say"}
@@ -25,10 +25,10 @@ ROLE = {"say": "formatting and printing (fmt)", "fault": "fault chains and stand
         "atomic": "counters and flags every core may change (sync/atomic)"}
 
 def package_files(name):
-    """The files of lib/<name>/ that document the package: every .tin file except tests and the
+    """The files of the package directory <name> that document the package: every .tin file except tests and the
     per-OS and per-CPU parts, in name order."""
-    directory = f"lib/{name}"
-    if not os.path.isdir(directory):
+    directory = next((d for d in (f"toolchain/std/{name}", f"packages/{name}") if os.path.isdir(d)), None)
+    if directory is None:
         return []
     return [f"{directory}/{f}" for f in sorted(os.listdir(directory))
             if f.endswith(".tin") and not f.endswith("_test.tin")
@@ -81,7 +81,7 @@ def fence(code):
     out.append("```")
     out.append("")
 
-out = ["# Tin standard library", "", "Generated from the comments in `lib/*/` by `tools/gen/gendoc.py`.", ""]
+out = ["# Tin standard library", "", "Generated from the comments in `toolchain/std/*/` and `packages/*/` by `tools/gen/gendoc.py`.", ""]
 out.append("| package | role (Go equivalent) |")
 out.append("|---|---|")
 for p in ORDER:

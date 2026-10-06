@@ -3666,7 +3666,7 @@ Fix: use a variable for a value that changes; build a new `str` instead of chang
 ### E801 TRUSTED_ONLY
 
 `extern` declarations, raw memory access and the runtime's internals are only allowed in
-the standard library (`lib/`), which is trusted code.
+the standard library (the library (`toolchain/std/`, `packages/`, `toolchain/runtime/`)), which is trusted code.
 
 ```tin edition=1 old-syntax
 package main
@@ -3702,7 +3702,7 @@ example.tin:4:6: error E802 RUNTIME_INTERNAL: 'rt_core_id' is internal to the ru
 ```
 
 Fix: use the standard library function that wraps it (`hearth.Core()` for the core). A
-vendored package whose `tin.mod` declares `caps unsafe` may use them, like `lib/`.
+vendored package whose `tin.mod` declares `caps unsafe` may use them, like the library (`toolchain/std/`, `packages/`, `toolchain/runtime/`).
 
 ### E803 ADDRESS_OF
 
@@ -3724,7 +3724,7 @@ example.tin:6:6: error E803 ADDRESS_OF: cannot take the address of constant 'siz
 ```
 
 Fix: programs pass structs, slices and maps by reference already; there is no `&` outside
-`lib/`.
+the library (`toolchain/std/`, `packages/`, `toolchain/runtime/`).
 
 ### E804 CAPABILITY
 
@@ -3835,7 +3835,7 @@ fn main() {
 ```
 
 ```text
-error E903 NO_RUNTIME: the runtime package is missing: no toolchain/runtime in /nonexistent
+error E903 NO_RUNTIME: the runtime package is missing: no runtime in /nonexistent
 ```
 
 Fix: set `TIN_ROOT` to the Tin checkout or installation, or run the compiler from its

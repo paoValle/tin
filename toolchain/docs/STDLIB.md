@@ -1,6 +1,6 @@
 # Tin standard library
 
-Generated from the comments in `lib/*/` by `tools/gen/gendoc.py`.
+Generated from the comments in `toolchain/std/*/` and `packages/*/` by `tools/gen/gendoc.py`.
 
 | package | role (Go equivalent) |
 |---|---|

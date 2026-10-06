@@ -16,8 +16,8 @@ rejects whole classes of bugs instead of leaving them to tests:
 This document describes **edition 1**, the syntax every Tin program uses: `fn`, `let` and
 `mut`, `match`, `for x in xs`, keyed struct literals, unit literals, and blocks for
 deadlines, budgets and tasks (`within`, `limit`, `guard`, `scope`, `select`). It is written
-from [design/design_syntax.md](../design/design_syntax.md); the semantics are in
-[design/design_semantics.md](../design/design_semantics.md). The Go-like syntax before it,
+from [design/design_syntax.md](../../design/design_syntax.md); the semantics are in
+[design/design_semantics.md](../../design/design_semantics.md). The Go-like syntax before it,
 edition 0, is history (`design/design_syntax.md` replaces it); section 22 maps each
 old form to its replacement.
 
@@ -546,7 +546,7 @@ instances. Calls through shaped type parameters are direct calls on concrete typ
 uses a two-word object/table pair; the checker verifies conversions, and method calls
 dispatch through the table without allocating. `?dyn S`, `[]dyn S`, `keep` of a dynamic
 value or container, and region checks are implemented. Map values and `!dyn` results
-remain deferred; see [the representation and staging note](../design/design_dyn.md). The
+remain deferred; see [the representation and staging note](../../design/design_dyn.md). The
 `io` shapes live in `toolchain/std/io`. `constraints.Any`, `constraints.Comparable` and
 `sift.Ordered` are ordinary library shapes, not language keywords; import their packages
 where used.
@@ -2044,7 +2044,7 @@ type User struct {
 
 ## 20. Standard-library-only features
 
-Files under `lib/` are trusted and may use operations user code cannot. So may a vendored
+Files under the library (`toolchain/std/`, `packages/`, `toolchain/runtime/`) are trusted and may use operations user code cannot. So may a vendored
 package whose `tin.mod` declares `caps unsafe` (toolchain/docs/PACKAGES.md); the packages that call it
 then need `unsafe` too.
 

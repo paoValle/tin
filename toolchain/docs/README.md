@@ -4,7 +4,7 @@
 |---|---|
 | [LANGUAGE.md](LANGUAGE.md) | the language reference: every type, statement, expression, rule and error, plus the grammar |
 | [ERRORS.md](ERRORS.md) | every compiler error code (`E502 TYPE_ARG_COUNT`): its rule, an example and the fix |
-| [STDLIB.md](STDLIB.md) | every standard-library package and exported name (generated from `lib/*.tin`) |
+| [STDLIB.md](STDLIB.md) | every standard-library package and exported name (generated from `toolchain/std/` and `packages/`) |
 | [TOOLING.md](TOOLING.md) | the `tin` command, `tinc`, make targets, tests, Docker, benchmarks, debugging, repository layout |
 | [DISTRIBUTION.md](DISTRIBUTION.md) | release archives, verified installer, builder images and source-to-container builds |
 | [RUNTIME.md](RUNTIME.md) | memory (pools, ingot heap, regions), cores, value layouts, panics, the HTTP server's internals and its router, request tasks, non-blocking I/O and helper threads, how the redis/mysql/websocket clients share a core, the platform layer |
@@ -14,7 +14,7 @@
 | [COVERAGE.md](COVERAGE.md) | every Go standard package and language feature with Tin's status (done, partial, missing, design, n/a) and the order to build the rest in |
 | [AGENT_PRIMER.md](AGENT_PRIMER.md) | a one-page brief to give an AI agent before it writes Tin code |
 
-Design decisions, interfaces and the roadmap live in [`../design/`](../design): the roadmap (`roadmap.md`), the
+Design decisions, interfaces and the roadmap live in [`../../design/`](../../design): the roadmap (`roadmap.md`), the
 decisions for the foundations (`design_foundations.md`), the semantics and syntax of Tin 1 (`design_semantics.md`,
 `design_syntax.md`), the interfaces between the parts (`interface_*.md`), the Linux ABI reference (`linux_abi.md`)
 and the stdlib verification against Go (`stdlib_verified.md`).

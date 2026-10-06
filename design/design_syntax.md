@@ -405,7 +405,7 @@ so the change is mechanical everywhere except the parser:
    again), `switch`→`match`, C-style `for`→ range forms where the shape allows (others become
    `for cond { } ` loops with the step written out), `++`→`+= 1`, positional→keyed literals,
    `tide.Millisecond*n`→`nms` where constant, and exported names unchanged.
-3. **One commit converts the repository:** `lib/` (~29k lines), `toolchain/tests/` (~9.5k), `examples/`,
+3. **One commit converts the repository:** the library (`toolchain/std/`, `packages/`, `toolchain/runtime/`) (~29k lines), `toolchain/tests/` (~9.5k), `examples/`,
    `bench/`, `tools/` fixtures; the strict suite, regressions, bootstrap and Linux benchmarks
    must be unchanged by it (the same syntax tree, so the same binaries — checked by comparing
    `tinc -S` output before and after for every file).

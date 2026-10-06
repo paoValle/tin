@@ -25,7 +25,7 @@ dist: bin/tinc
 # The compiler, built by the checked-in seed compiler: no Go, no cc.
 bin/tinc: $(SEED) $(SELF)
 	@mkdir -p bin
-	$(SEED) -o $@ $(SELF)
+	TIN_ROOT=$(CURDIR) $(SEED) -o $@ $(SELF)
 
 # Rebuild tinc with itself twice; the two binaries must be byte-identical.
 bootstrap: bin/tinc

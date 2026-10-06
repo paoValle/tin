@@ -11,16 +11,17 @@ instead of inventing a new place for it.
 | Path | What lives there | Who may change it |
 |---|---|---|
 | `toolchain/compiler/` | The compiler `tinc`, written in typed edition 1 (trusted code): `lex`, `parse`, `check`, `lower`, `generics`, `region` (the compile-time memory checker), `inline`, `opt`, back ends `gen` (arm64) and `gen_x64`, assemblers `asm` and `asm_x64`, object writers `macho` and `elf`, `elf_x64`, `main`, host parts `host_darwin` and `host_linux`. | Only a task that is about the compiler. Always finish with `make bootstrap` (a fixed point). |
-| `seed/` | Checked-in compiler binaries that build the compiler from source (`tinc-darwin-arm64`, `tinc-linux-arm64`, `tinc-linux-amd64`). | Only through `make seed`, in a PR that says why a new seed is needed. Never edit by hand. |
+| `toolchain/seed/` | Checked-in compiler binaries that build the compiler from source (`tinc-darwin-arm64`, `tinc-linux-arm64`, `tinc-linux-amd64`). | Only through `make seed`, in a PR that says why a new seed is needed. Never edit by hand. |
 | `toolchain/runtime/` | The runtime every program gets: memory (pools, the long-lived heap), strings, slices, maps, formatting, tasks, panics, the OS layer. Not a package: files are loaded together, with `_darwin`, `_linux`, `_linux_arm64`, `_linux_amd64` parts. It imports nothing. | A task about the runtime. Generated parts (`printable.tin`) come from `tools/gen/gen_unicode.py`. |
-| `lib/NAME/` | One standard-library package per directory (`package NAME`), imported as `import "NAME"`. Files split by topic, platform parts end in the platform name, `_test.tin` files are skipped by the loader. See `toolchain/std/README.md`. | Any library task. |
+| `toolchain/std/NAME/`, `packages/NAME/` | One package per directory (`package NAME`), imported as `import "NAME"`: the standard library in `toolchain/std/`, the ecosystem (servers, clients, protocols) in `packages/`. Files split by topic, platform parts end in the platform name, `_test.tin` files are skipped by the loader. See `toolchain/std/README.md`. | Any library task. |
 | `toolchain/tests/v2/` | The strict test suite: `NAME.tin` plus `NAME.out` (expected stdout, sorted bytewise because the suite sorts lines) or `NAME_bad.tin` plus `NAME_bad.err` (expected compile error). Run by `tools/dev/v2test.sh`. | Every task adds tests here. |
 | `toolchain/tests/regressions/` | One reproducer per fixed bug, with its contract in `cases.json`; every entry needs an `issue` number. Run by `tools/ci/regressions.py`. | Every bug fix. |
 | `bench/ref/NAME/` | The Go twin of a Tin test: a Go program printing the same lines. The expected output of the Tin test is Go's. Go is a comparison baseline only, never part of the product. | Library tasks, alongside the Tin test. |
 | `bench/`, `bench/v04`, `bench/http`, `bench/router` | Benchmarks and service benchmarks against Go. | Performance tasks. |
 | `toolchain/docs/` | `LANGUAGE.md` (reference), `RUNTIME.md`, `COMPILER.md`, `TOOLING.md`, `PORTING.md`, `PERFORMANCE.md`, `COVERAGE.md` (the inventory of Go's surface against Tin), `STDLIB.md` (generated), `AGENT_PRIMER.md`. | Whoever changes behavior updates the matching doc in the same PR. |
 | `design/` | `roadmap.md` (the plan), `design_foundations.md` (decided designs), `stdlib_verified.md` (what is verified against Go), the interfaces between parts. | Roadmap boxes and verification rows as work lands. |
-| `tools/` | `v2test.sh`, `gendoc.py` (writes `toolchain/docs/STDLIB.md`), `gen_unicode.py` (writes the Unicode tables), `dist.py`, `ci/` (CI checks). | `tools/ci`: extend existing files only, never add a Python file there. New tooling is written in Tin. |
+| `tools/` | `dev/` (`v2test.sh`, `compare_compilers.sh`, `dist.py`, debugging helpers), `gen/` (`gendoc.py` writes `toolchain/docs/STDLIB.md`, `gen_unicode.py` writes the Unicode tables), `ci/` (CI checks). | `tools/ci`: extend existing files only, never add a Python file there. New tooling is written in Tin. |
+| `products/` | Programs built with Tin that people use: `tinland/` (editor tooling today; the IDE later), `tinos/` later. Each product has its own README and tests and depends only on `toolchain/` and `packages/`. | The product's own tasks. |
 | `examples/`, `docker/`, `install.sh`, `Makefile`, `VERSION`, `.github/` | Examples, container images, installer, build entry points, CI and the PR template. | Only tasks about distribution or CI. |
 | `go.mod` | Left from the retired Go stage; Go remains only as a baseline for twins and the HTTP conformance tools until those are rewritten in Tin. | Do not add Go code to the product. |
 
@@ -28,7 +29,7 @@ Generated files are never edited by hand: `toolchain/docs/STDLIB.md`, `toolchain
 
 ## 2. How a program is built
 
-`tin FILE.tin` (or `bin/tinc`) lexes and parses the program and the packages it imports (`package_files` loads `lib/NAME.tin` or every `.tin` file of `lib/NAME/`, sorted, skipping tests and other platforms), checks types and the region rules, lowers to an intermediate form, monomorphizes generics, inlines and optimizes, generates machine code for arm64 or amd64, and writes a Mach-O or ELF executable directly. There is no linker, no C compiler and no libc dependency to add (libc removal is in the roadmap). The runtime is compiled in with the program; unused functions and data are dropped.
+`tin FILE.tin` (or `bin/tinc`) lexes and parses the program and the packages it imports (`package_files` loads `NAME.tin` or every `.tin` file of `NAME/` under `toolchain/std/` or `packages/`, sorted, skipping tests and other platforms), checks types and the region rules, lowers to an intermediate form, monomorphizes generics, inlines and optimizes, generates machine code for arm64 or amd64, and writes a Mach-O or ELF executable directly. There is no linker, no C compiler and no libc dependency to add (libc removal is in the roadmap). The runtime is compiled in with the program; unused functions and data are dropped.
 
 ## 3. Rules that every change keeps
 
@@ -45,7 +46,7 @@ Process:
 8. Every bug found gets an issue, a regression case in `toolchain/tests/regressions/` tied to it, and a fix in the same PR (or its own PR). Fix bugs you find along the way.
 9. A PR is big enough to be complete: the code, the tests, the twin, the docs and the roadmap boxes it closes. No two-line PRs, no half features.
 10. Behavior changes update `toolchain/docs/LANGUAGE.md` or the matching doc, regenerate `toolchain/docs/STDLIB.md` (`python3 tools/gen/gendoc.py`) and `toolchain/docs/COVERAGE.md`, and add the row to `design/stdlib_verified.md`.
-11. Names follow the role of the thing, not a language prefix. A package directory is `lib/<name>/`; Tin's package names are short nouns (`twine` for strings, `link` for net/url).
+11. Names follow the role of the thing, not a language prefix. A package directory is `toolchain/std/<name>/` or `packages/<name>/`; Tin's package names are short nouns (`twine` for strings, `link` for net/url).
 12. Do not add new Python files under `tools/ci`. Do not add dependencies. Do not weaken or delete a test to make it pass.
 
 ## 4. What to run before opening a PR
@@ -65,7 +66,7 @@ Run long commands (benchmarks, watches) in the background. The PR description us
 
 | Kind of work | Place | Also |
 |---|---|---|
-| A Go package or function | `lib/<tin name>/` (see `toolchain/docs/COVERAGE.md` for the Tin name, or pick a short noun and record it there) | `toolchain/tests/v2/<name>.tin` + `.out`, `bench/ref/<name>/main.go`, `toolchain/docs/COVERAGE.md` row, `design/stdlib_verified.md` row |
+| A Go package or function | `toolchain/std/<tin name>/` or `packages/<tin name>/` (see `toolchain/docs/COVERAGE.md` for the Tin name, or pick a short noun and record it there) | `toolchain/tests/v2/<name>.tin` + `.out`, `bench/ref/<name>/main.go`, `toolchain/docs/COVERAGE.md` row, `design/stdlib_verified.md` row |
 | A language feature | `toolchain/compiler/` (lex, parse, check, lower, back ends) following the nine-step template in roadmap section 12.1 | `toolchain/tests/v2/<feature>.tin`, `_bad.tin` + `.err` cases, `toolchain/docs/LANGUAGE.md`, design note first |
 | A runtime feature | `toolchain/runtime/` with platform parts | `toolchain/docs/RUNTIME.md`, a runtime test, Linux behavior covered |
 | A compiler optimization | `toolchain/compiler/inline.tin`, `opt.tin`, `gen*.tin` | a benchmark before and after in `toolchain/docs/PERFORMANCE.md`, `make bootstrap` |

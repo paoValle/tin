@@ -32,7 +32,7 @@ development platform (toolchain/docs/PORTING.md, "Platform roles").
 For libc-removal work (the libc removal), use both native Linux
 jobs in `bench-linux.yml`. Each job retains Tin-versus-Go measurements and adds a
 base-versus-head comparison with identical benchmark source. Each compiler loads its
-own revision's `lib/` through an explicit `TIN_ROOT`; copying two compiler binaries
+own revision's the library (`toolchain/std/`, `packages/`, `toolchain/runtime/`) through an explicit `TIN_ROOT`; copying two compiler binaries
 into one source tree is not an allocator/runtime comparison.
 
 CPU measurements use at least seven alternating runs per side, check stdout and stderr
@@ -496,7 +496,7 @@ Safepoints are on by default in a program that starts cores, in its own code onl
 the standard library and programs without cores (the CPU benchmarks below) have none, so
 their cost there is zero. `--nopolls` turns them off, `--polls` puts them everywhere outside
 `toolchain/runtime/`, and a function opts out with `@nopoll`. The cost below is for polls in every
-loop (the `--polls` form): a tight loop in a handler pays it; anvil and the rest of `lib/` do not.
+loop (the `--polls` form): a tight loop in a handler pays it; anvil and the rest of the library (`toolchain/std/`, `packages/`, `toolchain/runtime/`) do not.
 
 The default form was measured in [run 37340338604](https://github.com/yasserreslan/tin/actions/runs/37340338604)
 (#341, head against main on the same runners, Linux 6.17.0-1022-azure, AMD EPYC and

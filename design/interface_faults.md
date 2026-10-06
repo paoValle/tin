@@ -59,7 +59,7 @@ p+8   bytes     > a plain str: the FULL message, "outer: inner" for a wrapped fa
   `fault.Is` matches both `Canceled` and the reason; `DeadlineExceeded` when nothing
   cancelled the boundary. `rt_bnd_check` cancels a passed deadline with
   `rt_fault_deadline()`, and a boundary out of task budget fails with `rt_fault_limit()`.
-  Reasons are compared by identity, never by message. So every deadline wait in lib/
+  Reasons are compared by identity, never by message. So every deadline wait in the library 
   (tide, wire, DNS, seal, redis, mysql, postgres, websocket, the runtime's helper jobs)
   fails with `fault.DeadlineExceeded`. A drain should cancel with `rt_fault_draining()`.
 - **Package-level sentinels**: `var ErrNotFound = fault("not found")`. The checker numbers

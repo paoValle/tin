@@ -114,10 +114,10 @@ that code may touch. A vendored package's `tin.mod` declares its capabilities:
 | `files` | opening, creating, renaming and removing files and directories: `quarry`'s file functions, `flume` files |
 | `spawn` | starting another process |
 | `exec` | replacing the process with another program |
-| `unsafe` | the raw operations and runtime functions of trusted code (`cast`, `load8`, `rt_*`, LANGUAGE.md §18), as in `lib/` |
+| `unsafe` | the raw operations and runtime functions of trusted code (`cast`, `load8`, `rt_*`, LANGUAGE.md §18), as in the library (`toolchain/std/`, `packages/`, `toolchain/runtime/`) |
 
 The standard library's entry points to the operating system are tagged with the capability
-they need: the runtime's `rt_sys_*` calls and the C functions `lib/` declares `extern` that
+they need: the runtime's `rt_sys_*` calls and the C functions the library (`toolchain/std/`, `packages/`, `toolchain/runtime/`) declares `extern` that
 open a socket (`socket`, `connect`, `bind`, `listen`, `accept`, `getaddrinfo`) or a file
 (`open`, `creat`, `opendir`, `mkdir`, `rmdir`, `unlink`, `rename`, `stat`, `lstat`,
 `chdir`, `readlink`), start a process (`fork`, `posix_spawn`) or replace it (`execve`).

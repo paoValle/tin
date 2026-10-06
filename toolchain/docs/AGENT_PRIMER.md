@@ -20,7 +20,7 @@ packages/hearth/, Makefile or seed/ unless your task says so. If you hit a compi
 the compiler: write a minimal repro as a test, open an issue and work around it.
 
 ## Language (strict, edition 1)
-- Files start `package main` (programs) or `package NAME` (lib/NAME/, imported with
+- Files start `package main` (programs) or `package NAME` (toolchain/std/NAME/ or packages/NAME/, imported with
   `import "NAME"`, called as `NAME.Func`). One `import "path"` per line, before any declaration;
   `import "./geom"` imports a local file or directory package; no aliases. Capitalized names,
   methods and fields are exported; lower-case ones are private to their package. Names are camelCase.
@@ -199,7 +199,7 @@ Include edge cases: empty inputs, max/min integers, invalid input producing faul
 Anything that touches the OS must also run on Linux (cross-compile and run in tin-debian-arm64).
 
 ## Deliverables per package
-- lib/NAME/NAME.tin (package NAME) with a one-line comment on every exported function.
+- toolchain/std/NAME/NAME.tin (package NAME) with a one-line comment on every exported function.
 - toolchain/tests/v2/NAME.tin: a `package main` program exercising every function, printing results with
   say.Line (deterministic output; temporary files under /tmp/tin-test-*). Then save the expected
   output: run it, sort the output, and write it to toolchain/tests/v2/NAME.out

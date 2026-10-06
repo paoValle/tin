@@ -224,15 +224,16 @@ binary-trees uses 917 MB against Go's 37 MB: a plain program never resets its po
 ## Layout
 
 ```text
-toolchain/compiler/    the compiler: lex, parse, check, lower, generics, region, inline, opt,
-             gen + asm (arm64), gen_x64 + asm_x64, macho, elf, elf_x64
-lib/         the runtime and the standard library, one directory per package (see toolchain/std/README.md)
-toolchain/tests/v2/    strict tests with expected outputs (*_bad.tin: expected compile errors)
-bench/       CPU benchmarks vs Go (v2/), HTTP benchmarks (http/), Go reference programs (ref/)
-seed/        tinc-darwin-arm64, tinc-linux-arm64: the compilers that start a build
-tools/       test runners (v2test.sh, linuxtest.sh), debugging helpers, gendoc.py
-toolchain/docs/        the documentation (index: toolchain/docs/README.md)
-design/      design decisions, interfaces, verification, roadmap
+toolchain/     the language: compiler/ (lex, parse, check, lower, generics, region, inline, opt, gen + asm
+               for arm64, gen_x64 + asm_x64, macho, elf, elf_x64), runtime/, std/ (the standard library, one
+               directory per package, see std/README.md), seed/ (the compilers that start a build),
+               tests/ (v2: strict tests with expected outputs, *_bad.tin: expected compile errors), docs/
+packages/      the ecosystem: anvil, postgres, mysql, redis, kafka, tls, wire, websocket, ...
+products/      tinland (the editor tooling; the IDE and tinos follow)
+bench/         CPU benchmarks vs Go (v2/), HTTP benchmarks (http/), Go reference programs (ref/)
+examples/      programs to read and run
+tools/         ci/ (CI checks), gen/ (generators), dev/ (test runners, debugging helpers)
+design/        design decisions, interfaces, verification, roadmap
 ```
 
 ## Status and next steps
