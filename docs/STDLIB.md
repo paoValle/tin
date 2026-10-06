@@ -324,6 +324,7 @@ try c.Write("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
 - `(c mut Conn) CloseNotifyRaw() []u8`: CloseNotifyRaw is the close_notify alert record to send before closing.
 - `(c Conn) PendingRaw() bool`: PendingRaw reports whether the Conn holds input ReadRaw has not returned yet: decrypted data, or bytes of a record read from the socket. An event loop that stopped reading (its output was blocked) calls ReadRaw again when this is true, since the socket will not report that input.
 - `(c mut Conn) ReleaseRaw()`: ReleaseRaw ends a Conn kept in long-lived memory before its owner drops it: it marks it closed and resets the failure text, which a failed Read or Write made in a request's pool, so releasing the Conn never follows a pointer into a pool that is gone. Nothing is sent.
+- `SetTicketSecret(key secret []u8) !`: SetTicketSecret sets the 32-byte secret the server's session-ticket keys are derived from. Servers that share it (several processes behind one load balancer) resume each other's sessions. Call it before the server starts; the default is a random secret per process, or the 64 hex digits of TIN_TLS_TICKET_SECRET.
 - `type Config struct`: Config configures a client connection; the zero value verifies the server against the system's roots for the name in the address.
 - `Dial(addr str, cfg Config) !Conn`: Dial connects to "host:port" and runs the handshake. ServerName defaults to host.
 - `Client(conn wire.Conn, cfg Config) !Conn`: Client runs the handshake over an established connection, for protocols that switch to TLS mid-stream (MySQL, PostgreSQL). cfg.ServerName is required unless InsecureSkipVerify is set. The Conn owns conn from then on: its Close closes conn.
@@ -580,7 +581,7 @@ Package bits counts, rotates and reverses the bits of fixed-width unsigned integ
 - `Add32(x u32, y u32, carry u32) (u32, u32)`: Add32 returns the sum x + y + carry and the carry out (0 or 1).
 - `Sub64(x u64, y u64, borrow u64) (u64, u64)`: Sub64 returns the difference x - y - borrow and the borrow out. borrow must be 0 or 1, otherwise the behavior is undefined.
 - `Sub32(x u32, y u32, borrow u32) (u32, u32)`: Sub32 returns the difference x - y - borrow and the borrow out (0 or 1).
-- `Mul64(x u64, y u64) (u64, u64)`: Mul64 returns the 128-bit product of x and y as (high word, low word).
+- `Mul64(x u64, y u64) (u64, u64)`: Mul64 returns the 128-bit product of x and y as (high word, low word): two instructions, umulh and mul on arm64, one mul on x86-64 (#474).
 - `Mul32(x u32, y u32) (u32, u32)`: Mul32 returns the 64-bit product of x and y as (high word, low word).
 - `const Div64Mask32 = two32 - 1`
 - `Div64(hi u64, lo u64, y u64) (u64, u64)`: Div64 returns the quotient and remainder of (hi, lo) divided by y. It panics for y == 0 (division by zero) and for y <= hi (the quotient does not fit in 64 bits).

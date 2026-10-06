@@ -826,6 +826,20 @@ HTTP/1.1 over TLS 1.3 on the same per-core event loops (`lib/anvil/serve_tls.tin
   `TIN_HANDSHAKE_TIMEOUT_MS` (default: the header timeout, 10 s), and a core runs at most 4096
   handshakes at once (more connections are closed at accept). The CPU work (the key share, the
   key schedule and the CertificateVerify signature) runs on the core.
+- **Resumption (#472).** After a full handshake the server sends one NewSessionTicket. The ticket
+  is stateless: it holds the resumption PSK, the cipher suite, the ALPN protocol and the issue
+  time, sealed with AES-256-GCM under the key of its issue day. Each day's key is derived (HKDF)
+  from one 32-byte secret per process, so any core opens any core's ticket. A core derives a
+  day's key the first time it needs it, and nothing is shared or written between cores. A
+  returning client's first PSK identity is accepted when it opens, is younger than
+  `TIN_TLS_TICKET_LIFETIME_S` (default and most: 7 days), names a cipher suite with the
+  negotiated hash and the protocol ALPN chose now, and its binder verifies (a bad binder ends
+  the handshake with decrypt_error). The resumed handshake skips Certificate and
+  CertificateVerify, so it needs no signature. Only psk_dhe_ke is accepted, so a new key
+  exchange still gives forward secrecy, and there is no 0-RTT. The secret is random per process
+  unless `TIN_TLS_TICKET_SECRET` (64 hex digits) or `tls.SetTicketSecret` sets it, which lets
+  processes behind one load balancer resume each other's sessions. `TIN_TLS_TICKETS=0` turns
+  tickets off.
 - **After the handshake** the `tls.Conn` is copied into long-lived memory: the per-core map
   `tlsConns` holds it by connection record (deleting the entry when the record is freed releases
   it through the long-lived reference counts, #176) and the record's `cTls` word its address.
@@ -867,8 +881,8 @@ HTTP/1.1 over TLS 1.3 on the same per-core event loops (`lib/anvil/serve_tls.tin
 - **Linking.** `anvil.tin` reaches `serve_tls.tin` only through function hooks (`gTlsRead`,
   `gTlsSeal`, ...) that `ServeTLS` sets, each behind a test of `cTls`: a server that never calls
   `ServeTLS` links no TLS code (`examples/api.tin` grew by 335 bytes) and its loop is unchanged.
-- **Not supported:** session tickets and resumption on the server, 0-RTT, client certificates,
-  certificate selection by SNI (one chain per server), Ed25519 server keys, and TLS 1.2. A
+- **Not supported:** 0-RTT, client certificates (#475), certificate selection by SNI (one chain
+  per server, #476), Ed25519 server keys (#477), and TLS 1.2 (#473). A
   `TIN_REPLAY_CAPSULE` replay sends plain HTTP and cannot replay into a TLS server.
 
 ### Pooled clients: mysql (v0.4)
@@ -1117,14 +1131,14 @@ functions keep that rule, and grows as phase 1 lands.
 | `Hmac`, `HmacSha256` | the key and message bytes | their lengths |
 | `HkdfExtract`, `HkdfExpand`, `HkdfExpandLabel` | the key material | lengths, `info`, labels |
 | `ConstantTimeEq`, `Equal` | the bytes | the lengths |
-| `X25519`, `X25519PublicKey` | the scalar and the point (ladder with masked swaps; ten-limb field) | the final all-zero check, whose result is public |
+| `X25519`, `X25519PublicKey` | the scalar and the point (ladder with masked swaps; five 51-bit limbs, products through `__mulhu`) | the final all-zero check, whose result is public |
 | `ChaCha20`, `AEAD.Seal`, `AEAD.SealTo` and `AEAD.Open` for ChaCha20-Poly1305 | the key, the data and the tag (the tag is compared with `ConstantTimeEq`) | the lengths |
 | `NewAESGCM`, `AEAD.Seal`, `AEAD.SealTo` and `AEAD.Open` for AES-GCM: on the CPU's AES-NI/PCLMULQDQ or ARMv8 AESE/AESMC/PMULL instructions when it has them (`selfhost/aes_hw.tin`), else bitsliced AES with the S-box as GF(2^8) inversion and GHASH by multiplication with holes | the key, the data and the tag | the lengths, and which path the CPU allows |
-| `P256PublicKey`, `P256ECDH` and the field and point code under them (`field.tin`, `p256.tin`) | the private key and every coordinate | the validity checks of the key and the peer's point, whose results are public |
+| `P256PublicKey`, `P256ECDH` and the field and point code under them (`field.tin`: 64-bit limbs, carries by cset, high words by `__mulhu`; `p256.tin`: k·G from the per-core table of j·16^i·G read by touching every entry) | the private key and every coordinate | the validity checks of the key and the peer's point, whose results are public |
 
 | `monty_new` (`bignum.tin`: Montgomery constants for a modulus given at run time) | the modulus's value | its limb count and bit length |
-| `SignPKCS1v15`, `SignPSS` (`rsa_sign.tin`: CRT, base blinding by r^e, r^-1 by Fermat inversion in each prime, a public-key check of every signature) and `monty_exp_ct`, `monty_reduce`, `nat_mul_ct` under them | the private key, the message representative and r | the key's size; PSS's salt is random and public |
-| `SignECDSA`, `PrivateKey.SignTLS` (`ecdsa_sign.tin`: RFC 6979 nonces by `Hmac`, k·G by `p256_mul` or `ec_mul_ct`, k^-1 as k^(n-2) with the public exponent) | the private scalar and the nonce | the digest, and the (negligibly rare, public) retry when a nonce candidate is not below n |
+| `SignPKCS1v15`, `SignPSS` (`rsa_sign.tin`: CRT; base blinding by a pair (r^e, r^-1) kept with the key, squared after each signature and made fresh every 32, r^-1 by Fermat inversion in each prime; a public-key check of every signature) and `monty_exp_ct`, `monty_reduce`, `nat_mul_ct` under them | the private key, the message representative and r | the key's size; PSS's salt is random and public |
+| `SignECDSA`, `PrivateKey.SignTLS` (`ecdsa_sign.tin`: RFC 6979 nonces by `Hmac`, k·G by `p256_mul_base` or `ec_mul_ct`, k^-1 as k^(n-2) with the public exponent) | the private scalar and the nonce | the digest, and the (negligibly rare, public) retry when a nonce candidate is not below n |
 | `ParsePrivateKeyPEM`, `ParsePrivateKeyDER` | nothing: the key's encoding (lengths, tags) is parsed with ordinary branches | |
 
 `Sha1`, `Pbkdf2Sha256`, the hex and base64 codecs and the RSA-OAEP code are not
