@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate docs/STDLIB.md from the comments in lib/*/ (run from the repo root)."""
+"""Generate toolchain/docs/STDLIB.md from the comments in lib/*/ (run from the repo root)."""
 import os, re
 
 SKIP = {"runtime", "std", "fmt", "say"}
@@ -91,7 +91,7 @@ out.append("## say")
 out.append("")
 out.append("Built into the compiler (formatting by static type, no reflection): `say.Line(a, b...)`, `say.Text(...)`, "
            "`say.Out(format, ...)`, `say.Fmt(format, ...) str`, `say.Str(x) str`, `say.Fault(format, ...) fault`, "
-           "`say.To(fd, ...)`, `say.LineTo(fd, ...)`. See docs/LANGUAGE.md.")
+           "`say.To(fd, ...)`, `say.LineTo(fd, ...)`. See toolchain/docs/LANGUAGE.md.")
 out.append("")
 for p in ORDER:
     if p == "say":
@@ -135,5 +135,5 @@ for p in ORDER:
     for kind, sig, cm in items:
         out.append(f"- `{sig}`" + (f": {cm}" if cm else ""))
     out.append("")
-open("docs/STDLIB.md", "w").write("\n".join(out))
+open("toolchain/docs/STDLIB.md", "w").write("\n".join(out))
 print(sum(1 for l in out if l.startswith("- ")), "entries")
