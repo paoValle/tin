@@ -33,7 +33,7 @@ shared mut dyn_tables []i64 // [concrete type, dyn type, keep function, methods,
 shared mut ck_escaping_cells []str // variable names that must be allocated in heap cells
 
 fn sym_new(kind i64, name str, pos i64) Sym {
-	let s = cast(Sym, calloc(36, 8))
+	let s = cast(Sym, calloc(37, 8))
 	s.kind = kind
 	s.name = name
 	s.pos = pos
@@ -2534,6 +2534,7 @@ fn capture_sym(f Fn, os Sym) i64 {
 		cs.type_ = os.type_
 		cs.captured = 1
 		cs.cap_idx = ci
+		cs.fixed = os.fixed
 		cs.reads = 1
 		cs.scope_at = os.scope_at
 		sc_syms = append(sc_syms, cast(Sym, cs))
@@ -2545,6 +2546,7 @@ fn capture_sym(f Fn, os Sym) i64 {
 	cs.cap_idx = ci
 	cs.reads = 1
 	cs.scope_at = os.scope_at
+	cs.fixed = os.fixed
 	return cast(i64, cs)
 }
 
@@ -4898,6 +4900,10 @@ fn check_let(s i64) {
 		return
 	}
 	cast(LetStmt, s).sym = declare_local(pos, cast(LetStmt, s).name, t)
+	// Names starting with $ are the compiler's own (desugared select, ranges...), which it may set.
+	if cast(LetStmt, s).mut_ == 0 && byte_at(cast(LetStmt, s).name, 0) != '$' {
+		cast(Sym, cast(LetStmt, s).sym).fixed = 1
+	}
 	if cast(i64, init) != 0 && init.kind == EX_IDENT && ck_trusted == 0 {
 		alias_link(cast(Sym, cast(LetStmt, s).sym), lookup_name(cast(IdentExpr, init).name))
 	}
@@ -4981,6 +4987,7 @@ fn check_target(t i64) i64 {
 fn check_assign(s i64) {
 	mut target = cast(AssignStmt, s).target
 	let v = cast(Node, cast(AssignStmt, s).value)
+	let_assign_check(target)
 	// Assigning to a variable narrowed from ?number: the value is boxed and the box replaces the
 	// old one. x op= v shares the target node with v, and reading x there loads the number from
 	// the box, so the store gets a node of its own.
@@ -5170,6 +5177,7 @@ fn check_value(pos i64, t i64) {
 }
 
 fn check_multi(s i64) {
+	bind_fixed = i64(cast(MultiStmt, s).define != 0 && cast(MultiStmt, s).mut_ == 0)
 	// Multi-assignment lowers through generated temporaries and can rebind either a
 	// remembered length or its source slice. Drop these local facts conservatively.
 	len_aliases = []i64{}
@@ -5281,6 +5289,45 @@ fn splice_list(s Node, block i64) {
 }
 
 // bind_targets assigns (or, for :=, declares) each target from its temp.
+shared mut bind_fixed i64 // the names bind_targets declares are a let's (#526)
+
+// let_assign_check reports an assignment to a name declared with let: a local, a tuple binding,
+// a variable a closure captured, or a package-level let (E711, #526). Fields, elements and map
+// entries reached through the name stay assignable.
+fn let_assign_check(target i64) {
+	if cast(Node, target).kind != EX_IDENT {
+		return
+	}
+	let name = cast(IdentExpr, target).name
+	let sym = lookup_name(name)
+	if cast(i64, sym) == 0 {
+		return
+	}
+	mut fixed = sym.fixed
+	if sym.kind == SYM_GLOBAL && sym.index >= 0 && sym.index < len(prog_vars) {
+		let v = prog_vars[sym.index]
+		// A shared let is E603's; a per-core let is set once, by its initializer.
+		fixed = i64(v.mut_ == 0 && v.shared_ == 0)
+	}
+	if fixed == 0 {
+		return
+	}
+	if let_fix != 0 {
+		if cast(i64, let_fix_decls) == 0 {
+			let_fix_decls = []i64{}
+		}
+		let_fix_decls = append(let_fix_decls, sym.pos)
+		return
+	}
+	let m = err_code(cast(Node, target).pos, "E711 LET_ASSIGN")
+	buf_str(m, "cannot assign to ")
+	buf_str(m, name)
+	buf_str(m, ": it is declared with let, which is not reassigned (declare it with mut to change it; declared at ")
+	buf_pos(m, sym.pos)
+	buf_str(m, ")")
+	err_end(cast([]u8, m))
+}
+
 fn bind_targets(pos i64, targets []i64, temps []Sym, define i64, stmts []i64) {
 	mut i = 0
 	for i < len(targets) {
@@ -5302,6 +5349,7 @@ fn bind_targets(pos i64, targets []i64, temps []Sym, define i64, stmts []i64) {
 				l.init = sym_ref_node(pos, ts)
 				let sym = cast(Sym, declare_local(pos, cast(IdentExpr, tg).name, ts.type_))
 				l.sym = cast(i64, sym)
+				sym.fixed = bind_fixed
 				if sym.cell != 0 {
 					let csym = sym.cell_sym
 					let alloc_call = rt_call(pos, "rt_alloc", args1(mk_int(pos, 8, ty_int)), ty_int)
@@ -5609,6 +5657,7 @@ fn lower_try_stmt(s i64, tr_in i64, mode i64, declared i64) {
 			vals = append(vals, cast(i64, temps[i]))
 			i = i + 1
 		}
+		bind_fixed = i64(cast(MultiStmt, s).define != 0 && cast(MultiStmt, s).mut_ == 0)
 		bind_targets(pos, targets, cast([]Sym, cast([]i64, vals)), cast(MultiStmt, s).define, stmts)
 	} else if mode == 4 && hasf == 0 {
 		// return f() catch ... in a function that cannot fail: return just the values.
