@@ -714,19 +714,21 @@ def tls12_server(openssl, exe, client, certs, work):
         try:
             for cipher in SUITES12['rsa' if kind == 'rsa' else 'ecdsa']:
                 # TLS 1.2 also needs the certificate's curve among the groups (RFC 8422).
-                for groups, temp in (('X25519:P-256:P-384', 'X25519'), ('P-256:P-384', 'ECDH, prime256v1')):
+                for groups, temp in (('X25519:P-256:P-384', r'X25519'), ('P-256:P-384', r'ECDH, (?:prime256v1|P-256)')):
                     rc, out = s_client12(openssl, srv.port, ['-cipher', cipher, '-groups', groups], get('/fast'), cafile=cert[0])
+                    # OpenSSL 3.0 labels the line "Server Temp Key", 3.2 and later "Peer Temp Key".
                     assert f'New, TLSv1.2, Cipher is {cipher}' in out and '\r\n\r\nfast' in out and \
-                        'Verify return code: 0 (ok)' in out and f'Peer Temp Key: {temp}' in out, (kind, cipher, groups, out[-1500:])
+                        'Verify return code: 0 (ok)' in out and re.search(rf'(?:Peer|Server) Temp Key: {temp}\b', out), (kind, cipher, groups, out[-1500:])
                     runs += 1
             if kind == 'rsa':
                 rc, out = s_client12(openssl, srv.port, ['-sigalgs', 'RSA+SHA256'], get('/fast'), cafile=cert[0])
-                assert '\r\n\r\nfast' in out and 'Peer signature type: rsa_pkcs1_sha256' in out, ('PKCS #1 v1.5', out[-1500:])
+                # OpenSSL 3.0 names PKCS #1 v1.5 "RSA" (RSA-PSS is "RSA-PSS"), 3.2 and later "rsa_pkcs1_sha256".
+                assert '\r\n\r\nfast' in out and re.search(r'Peer signature type: (?:rsa_pkcs1_sha256|RSA)\s*$', out, re.M), ('PKCS #1 v1.5', out[-1500:])
             if kind == 'ecdsa':
                 r = subprocess.run([openssl, 's_client', '-tls1_2', '-connect', f'127.0.0.1:{srv.port}', '-alpn', 'h2'],
                                    input=b'', capture_output=True, timeout=30)
                 out = (r.stdout + r.stderr).decode('latin1')
-                assert 'ALPN protocol: h2' in out and 'Protocol: TLSv1.2' in out, ('h2 over TLS 1.2', out[-1500:])
+                assert 'ALPN protocol: h2' in out and re.search(r'Protocol\s*: TLSv1.2', out), ('h2 over TLS 1.2', out[-1500:])
                 for cipher in ('ECDHE-ECDSA-AES128-SHA256', 'AES128-GCM-SHA256'):
                     rc, out = s_client12(openssl, srv.port, ['-cipher', cipher], get('/fast'))
                     assert rc != 0 and 'alert number 40' in out, (cipher, out[-1500:])
