@@ -5322,6 +5322,11 @@ fn let_assign_check(target i64) {
 	let m = err_code(cast(Node, target).pos, "E711 LET_ASSIGN")
 	buf_str(m, "cannot assign to ")
 	buf_str(m, name)
+	if fixed == 2 {
+		buf_str(m, ": it is a loop's variable, which the loop sets (copy it into a mut local to change it, or loop with for cond {{ }})")
+		err_end(cast([]u8, m))
+		return
+	}
 	buf_str(m, ": it is declared with let, which is not reassigned (declare it with mut to change it; declared at ")
 	buf_pos(m, sym.pos)
 	buf_str(m, ")")
@@ -5980,6 +5985,8 @@ fn range_bind(pos i64, target i64, value i64, t i64, define i64) i64 {
 		l.init = value
 		l.sym = cast(i64, sym_new(SYM_LOCAL, cast(IdentExpr, target).name, pos))
 		cast(Sym, l.sym).type_ = t
+		// for x in xs: x is each element in turn, not a variable to set (#526).
+		cast(Sym, l.sym).fixed = 2
 		cast(Sym, l.sym).slot = cast(Fn, ck_fn).slots
 		cast(Fn, ck_fn).slots = cast(Fn, ck_fn).slots + 1
 		cast(Fn, ck_fn).locals = append(cast(Fn, ck_fn).locals, cast(Sym, l.sym))
@@ -7696,6 +7703,12 @@ fn lower_for_init(s i64) {
 	replace_node(s, cast(i64, b))
 	push_scope()
 	check_stmt(init)
+	// for i in a..b: the body reads i, and only the loop's own step sets it (#526).
+	mut counter = cast(Sym, 0)
+	if cast(Node, init).kind == ST_LET && cast(LetStmt, init).sym != 0 && byte_at(cast(LetStmt, init).name, 0) != '$' {
+		counter = cast(Sym, cast(LetStmt, init).sym)
+		counter.fixed = 2
+	}
 	check_cond(cast(Node, inner.cond))
 	let saved = len(safe_pairs)
 	let bound = len_bound(inner.cond)
@@ -7717,6 +7730,9 @@ fn lower_for_init(s i64) {
 	ck_labels = append(ck_labels, inner.label)
 	check_scoped(cast(Block, inner.body))
 	slice_truncate(safe_pairs, saved)
+	if cast(i64, counter) != 0 {
+		counter.fixed = 0
+	}
 	if inner.post != 0 {
 		push_scope()
 		check_stmt(inner.post)
