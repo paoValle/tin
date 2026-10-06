@@ -825,7 +825,7 @@ def ed25519_server(openssl, exe, client, certs, work):
         rc, out = s_client(openssl, srv.port, [], get('/fast'), cafile=cert[0])
         assert rc == 0 and '\r\n\r\nfast' in out and 'peer signature type: ed25519' in out.lower(), out[-1500:]
         r = subprocess.run([str(client), 'resume', srv.addr(), '1', str(cert[0])], capture_output=True, text=True, timeout=60)
-        assert re.fullmatch(r'resumed false TLS_\w+ X25519 1 true\n', r.stdout), r.stdout
+        assert re.fullmatch(r'resumed false TLS_\w+ X25519MLKEM768 1 true\n', r.stdout), r.stdout
     finally:
         srv.stop()
     print('PASS Ed25519 certificate: OpenSSL and the Tin client verify the chain and the Ed25519 CertificateVerify')
