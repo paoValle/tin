@@ -1,0 +1,57 @@
+package main
+
+import "say"
+import "seal"
+
+// 100 RSA-2048 signatures (PKCS #1 v1.5, SHA-256) of 100 messages with one key: a TLS server's
+// RSA handshake cost (#488). The signatures are deterministic, so Tin and Go print the same.
+let pem = "-----BEGIN RSA PRIVATE KEY-----\n" +
+	"MIIEowIBAAKCAQEAt2Iy/B15ZGUz6f2+YaTZ96KNnVZ9a7BK1D8/fMLnMys4GFyr\n" +
+	"VJftOSR5y8TkUZTHt98eyhCtSuTRfc2EhQ53bzQ1dmW4oNrmWwlF9xIcWBPk+wjI\n" +
+	"M6n36TtqPPLVKnTeJCvpQ7GAWUDSEiA49MAdwqV7k0mY9LWUuXWjMEP2jiQfcWXp\n" +
+	"3EdnTptcfjC+NizyrCWKr9yysPdGQshgTe+NuBcrX2SoOSQNXugIGnjI+nVE7w/U\n" +
+	"IHCd0OSoSN4Z5xb4qJB9xzCIqEuE/ZbZ4RKCLyD6sxkNOwdwIh3a10ssrvxwvQYK\n" +
+	"TjwS6wzWxZhPMAbFN4i/w4+IVaSmdWv6Z1otiQIDAQABAoIBADM4FbZuAwhD7e6G\n" +
+	"ZSS/lvN/7t7Jl+k6iYPjkHdntoyHnzjKtT3A20yRAAWmXgDdNbUI+AAHDWe0JkDl\n" +
+	"ZISHSFuCcQY7Hgiraxh1LBn4cHs3P0bQKp6nc+ssIZ2ZU2lyz9K5gwLZslf7b1EJ\n" +
+	"t+7AM++4KZ43OaXri3kLPsONz/Dd86YvNkfU39zapvqsGej7JwQf/yBjwnnWh7Vr\n" +
+	"LlWboqu1n+Ryq/cko9TidimU+sBiVnUeJA4LTFyq2IkXDqwI3MCO4S+QGADMndxs\n" +
+	"XXCON1kTLB8JBMJTWMUDLz5xiAJASrQknBoPOtJK8WekLOpBORyk36etU75O8kTw\n" +
+	"ttRkQIsCgYEA6IefUbwr/ixbozMZONIoIWzQ6334BfGX8U1ZIDFrmLhs1SDITwux\n" +
+	"1z0VQpjv2JhTd39BLTFdN2cwYmrI42NHvXuzC9sCOBlSUVAvMna06N5LhCiaSZeY\n" +
+	"As8AHG+gT9JZoA/Yk5gPhPP7EBNeZ6DJrw8AI9kZGeqvSMvpLGwWIT8CgYEAyeSu\n" +
+	"EF3EfodSp9sPEMqU4ibySQ1O9eJQvoQYt8EiPhUxL1evosBkRm6ZsEEUhJdKST7D\n" +
+	"5taxooJ4R1nTkVYXCU+DOGS7sAFDKaKXQYgBiGcuvpzwtUGh25/T+RRy9nyQgjJv\n" +
+	"cADNwS4gjmOMhFGGbA2OOFguHqYbqE4YFyjrtzcCgYBzHuHzl1O4bMGZlKzCAtm3\n" +
+	"YqY0UJNAbhGpd3/OfmkknPnUsnw5FjMfurAR3qGv/AomuSvNcgkSatX7g56dZQOZ\n" +
+	"fepwzibVG0Qz2ZzkQPzj5VpBvdBU6uZpTY5ihak6m4ufwPiaacgVLK15kf1FFMeF\n" +
+	"Ecoh9VOGDzhks/9m7MQwBQKBgQCzh/0ZZKik82UXCv9cqSi36nYta/45POUcZY8t\n" +
+	"aDsxBdtVBB6VFYyV7SgRye2a8oYGmB/QmD4iCu82U7SFWw7lIqXHchxMqPK2hXUH\n" +
+	"uw/R4h95NUn/hLuP95KhvgN1GNPQU1UxPiW5kXE17WQ5Dd4BHBTKGe/5JTEW+0sE\n" +
+	"3UivBQKBgHI2J9JJlnTXhVobpnTaBQZufjrPkS3SwjkOJ8A0hUoJPekpxjUusWmE\n" +
+	"UQ+J0ngfHBX/LcpeRbirZDNZBmtNQAoJG7fcmRATyErcnwiVdtPGfKCixrmKetkA\n" +
+	"pQMwL8os5x/DTYjLInzNiYIAbs1lQDrxfURwdUXKAkmu+oCtlRCk\n" +
+	"-----END RSA PRIVATE KEY-----\n"
+
+fn main() {
+	let pk = seal.ParsePrivateKeyPEM(pem) catch e {
+		say.Line(e)
+		return
+	}
+	let opt = pk.RSA
+	if opt == nil {
+		say.Line("not an RSA key")
+		return
+	}
+	mut key = opt
+	mut acc = seal.Sha256("")
+	for i in 0..100 {
+		let digest = seal.Sha256(say.Fmt("message %d", i))
+		let sig = seal.SignPKCS1v15(mut key, seal.Hash.SHA256, digest) catch e {
+			say.Line(e)
+			return
+		}
+		acc = seal.Sha256(str(acc) + str(sig))
+	}
+	say.Line(seal.Hex(acc))
+}
