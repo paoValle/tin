@@ -795,8 +795,17 @@ over TLS with ALPN `h2`.
   `read`/`write` with `rt_task_wait` on `EAGAIN`, as for `wire`, so a handshake or a read waits
   without holding the core; `Config.Timeout` bounds connect plus handshake, `SetTimeout` each
   later wait, `SetDeadline` all of them, and a request's deadline or cancellation ends any of
-  them with `rt_wait_fault()`. The CPU work of a handshake (one X25519 or P-256 operation,
-  key derivation) runs on the core.
+  them with `rt_wait_fault()`. The CPU work of a handshake (an ML-KEM-768 key pair and
+  decapsulation with X25519 for X25519MLKEM768, or one X25519 or P-256 operation; key
+  derivation) runs on the core.
+- Key exchange (#479): the client offers X25519MLKEM768 (draft-ietf-tls-ecdhe-mlkem: an
+  ML-KEM-768 encapsulation key and an X25519 key, 1216 bytes) and X25519 with the same X25519
+  key, and lists P-256 for a HelloRetryRequest. A server that has the hybrid group takes it,
+  so a recorded session stays secret against a future quantum computer ("harvest now, decrypt
+  later"); one that does not takes X25519. The server side (anvil.ServeTLS) takes the hybrid
+  group whenever the client sent its share, then X25519, then P-256, and asks by
+  HelloRetryRequest for the first of those the client lists when it sent none. Chrome,
+  Firefox, Safari, Go 1.24+ and OpenSSL 3.5+ offer it first. `Conn.Group()` names the group.
 - Memory: a `Conn` makes its record buffers (16 KiB + 256 bytes in, 16 KiB of decrypted data)
   at the handshake and afterwards changes only in place: KeyUpdate rewrites the AEAD's keys
   with `seal.AEAD.Rekey`, IVs and secrets are copied into the slices it has. So a `Conn` is
@@ -967,8 +976,21 @@ HTTP/1.1 over TLS 1.3 on the same per-core event loops (`lib/anvil/serve_tls.tin
   (`TLSCert.CertFile`, `KeyFile`) is read again by core 0 every `TIN_TLS_RELOAD_S` seconds
   (default 60), and reloaded when the contents changed. A renewal on disk, from Let's Encrypt or
   cert-manager, needs no restart; a broken pair is reported and the set in use stays.
-- **Not supported:** 0-RTT, and TLS 1.2 (#473). A
-  `TIN_REPLAY_CAPSULE` replay sends plain HTTP and cannot replay into a TLS server.
+- **TLS 1.2 (#473)**, for clients and servers that stop there: the six ECDHE suites of
+  Mozilla's "intermediate" profile (ECDSA or RSA certificates, and Ed25519 by RFC 8422; X25519
+  or P-256; AES-128-GCM, AES-256-GCM or ChaCha20-Poly1305), with the extended master secret
+  (RFC 7627) whenever the peer offers it. Both sides prefer 1.3. A server answering a client
+  that offered 1.3 puts the downgrade sentinel in its random, and the client refuses it, so a
+  man in the middle cannot force 1.2 on two peers that speak 1.3. An ECDSA certificate is chosen
+  only when its curve is in the client's supported_groups. Client certificates, ALPN (h2
+  included), SNI selection, SSLKEYLOGFILE (`CLIENT_RANDOM`) and `Conn.Version()` work as in
+  1.3. Left out: RSA key exchange and CBC (no forward secrecy, padding oracles),
+  renegotiation (a ClientHello after the handshake gets no_renegotiation; a client ignores a
+  HelloRequest), session resumption (a 1.2 client gets a full handshake each time), and
+  anything older than 1.2. `TLSConfig.MinVersion` and `tls.Config.MinVersion` set to
+  `tls.VersionTLS13` turn 1.2 off (protocol_version).
+- **Not supported:** 0-RTT. A `TIN_REPLAY_CAPSULE` replay sends plain HTTP and cannot replay
+  into a TLS server.
 
 ### Pooled clients: mysql (v0.4)
 
@@ -1211,8 +1233,10 @@ functions keep that rule, and grows as phase 1 lands.
 | function | constant-time in | not constant-time in |
 |---|---|---|
 | `Sha256`, `Sha384`, `Sha512`, `Sum` | the message bytes | its length |
+| `Sha3_256`, `Sha3_512`, `Shake128`, `Shake256` (`sha3.tin`, #479: Keccak-f[1600] on 25 lanes in locals) | the message bytes | its length and the output length |
+| `MLKEM768KeyFromSeed`, `MLKEM768GenerateKey`, `MLKEM768Encapsulate`, `MLKEM768Decapsulate` (`mlkem.tin`, #479: Barrett reductions with branch-free corrections, rounding by multiplication, the re-encryption compared and the key chosen by masks) | the seed, s, the message and the shared key, and whether a ciphertext was valid (implicit rejection) | the public matrix's rejection sampling, which reads only the public seed rho; the encapsulation key's validity check |
 | `tls`: record protection (`SealRawTo` too), the Finished checks (`ConstantTimeEq`), the key schedule, on both sides | keys, secrets, data and MACs | lengths, and the padding length of a received record |
-| `tls` server: its key share (`X25519` or `P256ECDH` below) and its CertificateVerify, signed by `PrivateKey.SignTLS` (below: RFC 6979 ECDSA, blinded RSA CRT for PSS) with each core's own copy of the key | the private key, the ephemeral key and the shared secret | which scheme and group the client offered, which are public |
+| `tls` server: its key share (`MLKEM768Encapsulate` and `X25519` for X25519MLKEM768, or `X25519` or `P256ECDH` below) and its CertificateVerify, signed by `PrivateKey.SignTLS` (below: RFC 6979 ECDSA, blinded RSA CRT for PSS) with each core's own copy of the key | the private key, the ephemeral key and the shared secret | which scheme and group the client offered, which are public |
 | `Hmac`, `HmacSha256` | the key and message bytes | their lengths |
 | `HkdfExtract`, `HkdfExpand`, `HkdfExpandLabel` | the key material | lengths, `info`, labels |
 | `ConstantTimeEq`, `Equal` | the bytes | the lengths |
