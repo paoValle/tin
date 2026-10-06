@@ -12,8 +12,9 @@ Generated from the comments in `lib/*/` by `tools/gendoc.py`.
 | [hearth](#hearth) | cores and threads (runtime) |
 | [relay](#relay) | messages between cores (channels) |
 | [task](#task) | deadline and cancellation of the running code (context) |
-| [wire](#wire) | TCP and HTTP client (net) |
+| [wire](#wire) | TCP and HTTP/1.1 and HTTP/2 client (net, net/http) |
 | [tls](#tls) | TLS 1.3 client and server (crypto/tls) |
+| [hpack](#hpack) | HTTP/2 header compression (golang.org/x/net/http2/hpack) |
 | [twine](#twine) | strings (strings) |
 | [glyph](#glyph) | UTF-8 and Unicode (unicode/utf8, unicode) |
 | [mint](#mint) | number and string conversion (strconv) |
@@ -200,6 +201,7 @@ ServeTLS (and Router.ServeTLS) serve HTTPS: TLS 1.3 with a PEM certificate chain
 - `(r mut Router) Head(pattern str, h fn(Req, mut Out))`: Head routes HEAD requests for pattern to h (without it, they go to the GET route).
 - `(r mut Router) Options(pattern str, h fn(Req, mut Out))`: Options routes OPTIONS requests for pattern to h.
 - `(r mut Router) Handle(method str, pattern str, h fn(Req, mut Out))`: Handle routes requests with method (any HTTP method name, like "PROPFIND") for pattern to h.
+- `(r mut Router) Stream(method str, pattern str, h fn(Req, mut Out))`: Stream routes method requests for pattern to h, which runs as soon as the request's headers are in and reads the body as it arrives with q.BodyStream() (#481): large uploads in bounded memory, gRPC client and bidirectional streams. TIN_MAX_BODY does not bound such a body.
 - `(r mut Router) Any(pattern str, h fn(Req, mut Out))`: Any routes requests for pattern with every method to h; a route for the request's own method on the same pattern wins over it.
 - `(r mut Router) Use(mw fn(Req, mut Out, fn(Req, mut Out)))`: Use adds middleware mw to r. Middleware run in the order added, around every route of r and of the routers mounted in it, and around their 404 and 405 answers. Each gets next, the rest of the chain, and decides whether and when to call it.
 - `(r mut Router) Route(prefix str, build fn(mut Router))`: Route groups routes under prefix ("/api"): build adds them to a new router mounted there.
@@ -221,6 +223,9 @@ ServeTLS (and Router.ServeTLS) serve HTTPS: TLS 1.3 with a PEM certificate chain
 - `ServeTLSConfig(addr str, cfg TLSConfig, h fn(Req, mut Out)) !`: ServeTLSConfig is ServeTLS with a TLSConfig. With ClientAuth set, every full handshake asks for a client certificate: RequireClientCert refuses a client without one (certificate_required), and both refuse one that does not chain to ClientCAs for client authentication. A handler finds the verified chain in q.TLSConn().PeerCertificates().
 - `(r Router) ServeTLSConfig(addr str, cfg TLSConfig) !`: ServeTLSConfig is Serve over TLS with a TLSConfig, as anvil.ServeTLSConfig.
 - `(q Req) TLSConn() ?tls.Conn`: TLSConn is the TLS connection the request arrived on, or nil over plain TCP: for its ALPN(), CipherSuite() and Group(). After Hijack every byte must go through it (Read, Write, Close), since the descriptor carries records.
+- `type BodyReader struct`: BodyReader reads a request body: Read fills buf with the next bytes. It is q.BodyStream().
+- `(q Req) BodyStream() BodyReader`: BodyStream is the request body as a stream: on a route registered with Router.Stream it arrives as the handler reads it; elsewhere it has arrived whole (and Body has it too). Read the body either with Body or with BodyStream, not with both.
+- `(r BodyReader) Read(buf mut []u8) !i64`: Read fills buf with the body's next bytes, waiting for them, and returns how many it wrote: 0 at the end of the body. It fails when the client ends the connection or resets the stream before the end of the body, when no byte comes within the read timeout, and at the request's deadline.
 
 ## hearth
 
@@ -268,7 +273,7 @@ Package task reads the deadline and cancellation of the running code, which belo
 
 ## wire
 
-Package wire is TCP networking and a small HTTP/1.1 client. Calls block the calling core (servers should use anvil); every connection can carry a read/write timeout.
+Package wire is TCP networking and an HTTP client: HTTP/1.1, and HTTP/2 to servers that choose it by ALPN or with Options.H2C (#480). Calls inside a request wait without blocking the core; every connection can carry a read/write timeout.
 
 ```tin body
 let c = try wire.Dial("127.0.0.1:6379")
@@ -303,6 +308,7 @@ let r = try wire.Get("http://127.0.0.1:8080/json")
 - `Do(method str, url str, headers []str, body str) !Resp`: Do sends one request: headers is a list of name, value pairs. The method and header names must be tokens, and the URL and header values must not hold CR, LF, NUL or other control bytes (the URL no spaces either), or Do fails instead of sending a request an input could have split. Response bodies over DefaultMaxBody fail; DoWith sets a timeout and the limit.  Connections are kept alive: after a response that ends cleanly (HTTP/1.1, framed by a length or chunks, no "Connection: close") the connection waits in a per-core pool, by scheme, host and port (and TLS settings), and the next call to that host uses it instead of dialing and, for https, doing a TLS handshake. A kept connection is checked before it is used, dropped after 30 s idle, and at most Options.MaxIdle are kept per host. One the server closed meanwhile is replaced by a new connection without the caller seeing it, for a GET, HEAD, PUT, DELETE, OPTIONS or TRACE; any other method (a POST) fails instead of being sent twice.
 - `DoWith(method str, url str, headers []str, body str, opt Options) !Resp`: DoWith is Do with options: an overall timeout and a response size limit.
 - `(r Resp) Header(name str) str`: Header returns the response header name (any case), or "".
+- `(r Resp) Trailer(name str) str`: Trailer returns the response trailer name (any case), or "": HTTP/2 responses carry trailers (gRPC's grpc-status, for one; #480).
 
 ## tls
 
@@ -357,6 +363,24 @@ try c.Write("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
 - `(c mut Conn) WriteBytes(b []u8) !`: WriteBytes sends all of b.
 - `(c mut Conn) Write(s str) !`: Write sends all of s.
 - `(c mut Conn) Close()`: Close sends close_notify and closes the connection; closing twice does nothing.
+
+## hpack
+
+Package hpack is HPACK (RFC 7541), HTTP/2's header compression, for HTTP/2 clients (wire, #480): a Decoder that keeps one connection's dynamic table and decodes Huffman-coded strings, and Encode, which writes a header list with static-table names and plain literals that are never indexed, so it keeps no state and adds nothing to the peer's table. anvil's server has its own decoder, which hands fields over without copying them.
+
+```tin body
+mut block = make([]u8, 0, 64)
+hpack.Encode(mut block, []hpack.Field{hpack.Field{Name: ":status", Value: "200"}})
+let d = hpack.NewDecoder(4096, 65536)
+let fields = try d.Decode(block)
+```
+
+- `type Field struct`: Field is one header field.
+- `type Decoder struct`: Decoder decodes the header blocks one peer sends on a connection, in order: its dynamic table carries from block to block. The table is in malloc'd memory, so a decoder kept with a connection outlives the requests that used it; Free releases it.
+- `NewDecoder(tableSize i64, listMax i64) Decoder`: NewDecoder is a decoder for a peer allowed a table of tableSize bytes (4096 unless the connection's settings say otherwise, at most 8192) whose header lists stay within listMax bytes.
+- `(d Decoder) Free()`: Free releases the decoder's table; the decoder must not be used again.
+- `(d Decoder) Decode(block []u8) ![]Field`: Decode decodes one header block (the fragments of a HEADERS frame and its CONTINUATIONs, joined). An error is a COMPRESSION_ERROR: the connection must end, since the table is no longer the peer's.
+- `Encode(b mut []u8, fields []Field)`: Encode appends the header block of fields to b: a static entry where one matches name and value exactly, else a literal without indexing (with a static name where there is one). Names must be lowercase, as HTTP/2 requires.
 
 ## twine
 

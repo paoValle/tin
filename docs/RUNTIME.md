@@ -367,6 +367,19 @@ reading resumes and buffered input is served.
   query; an empty path is `/`.
 - Bodies are limited to 64 MiB by default (413), a chunked body by its decoded length (and
   its chunk framing by the limit plus 64 KiB); `anvil.Limits` or `TIN_MAX_BODY` changes it.
+- **Bodies read as they arrive (#481):** a route registered with `Router.Stream(method, pattern,
+  h)` runs its handler as soon as the request's headers are in, and `q.BodyStream().Read(mut buf)`
+  waits in the request's task for the next bytes, so an upload is processed in the memory of one
+  read buffer and a gRPC client or bidirectional stream gets each message as it comes. The task
+  takes the socket out of the event loop (as a streamed response does) and reads it directly: a
+  Content-Length body up to its length (at most 1 TiB), a chunked one through a decoder of its
+  framing, with bytes read past its end (a pipelined request) given back to the connection. A
+  slow handler reads slowly, so TCP holds the client back. `100 Continue` goes out at the first
+  read that needs the socket. A handler that ends before the body does closes the connection
+  after its response, since what is left cannot be told from a next request. `TIN_MAX_BODY` does
+  not bound such a body (the handler decides what it keeps); each read waits at most the read
+  timeout, and the request deadline applies. On other routes the body has arrived whole when the
+  handler runs, and `BodyStream` reads it from memory.
 - **Timeouts** (`anvil.Timeouts`, or the environment): a request's line and headers must
   arrive within 10 s of its first byte (`TIN_HEADER_TIMEOUT_MS`), and the whole request
   within 60 s (`TIN_READ_TIMEOUT_MS`); a keep-alive connection with no request in progress
@@ -722,7 +735,12 @@ and `expect: 100-continue` gets an interim `:status 100`. The stream and connect
 windows are opened again once half is used. When the client ends its side the request goes
 through the admission checks of `serve_one` and runs in its own task on the connection's core
 (`tArg` the connection, `tUser+2` the stream), with the request deadline and memory budget.
-Many streams of one connection run at once: one that waits does not hold the others.
+Many streams of one connection run at once: one that waits does not hold the others. On a `Router.Stream` route
+(#481) the handler starts at the request's HEADERS instead, and the stream's DATA waits in a buffer
+of at most one stream window (1 MiB) that `BodyStream` reads from: its WINDOW_UPDATE goes out as
+the handler reads, so a slow handler slows its client and not the connection's other streams. A
+handler that ends before the client's END_STREAM resets the stream with NO_ERROR after its
+response.
 
 **Responses.** HEADERS (`:status`, `server`, `date`, `content-type` and `content-length` unless
 the status has no body, then the handler's fields with lower-case names; connection-specific
@@ -809,10 +827,42 @@ over TLS with ALPN `h2`.
   is generic over a private `stream` shape, so the same code reads a `wire.Conn` and a
   `tls.Conn`. `websocket.Dial` takes `wss://` (`DialTLS` with a `tls.Config`): the
   connection's `fill` and `write_raw` go through the `tls.Conn` held in its state.
-- ALPN (#478): `wire` offers `http/1.1` unless `Options.TLS` names other protocols, and fails a
-  connection on which the server chose a protocol other than HTTP/1.1. `websocket` always offers
-  `http/1.1` alone, since its upgrade is an HTTP/1.1 request. Some gateways refuse a client
-  that offers no ALPN.
+- ALPN (#478, #480): `wire` offers `h2` and `http/1.1` unless `Options.NoH2` (then `http/1.1`
+  alone) or `Options.TLS` names other protocols, and fails a connection on which the server
+  chose another protocol. `websocket` always offers `http/1.1` alone, since its upgrade is an
+  HTTP/1.1 request. Some gateways refuse a client that offers no ALPN.
+- HTTP/2 client (#480, `lib/wire/h2.tin`). `wire` speaks HTTP/2 to an https:// origin whose
+  server chooses h2, and over cleartext when `Options.H2C` asks (prior knowledge, as gRPC
+  servers expect).
+  - Connections: each core keeps one connection per origin (the pool key: scheme, host and TLS
+    settings), and every concurrent call to it is a stream, up to the server's
+    SETTINGS_MAX_CONCURRENT_STREAMS. Past that, a new connection takes the new calls, and the
+    full one closes when its streams end. An idle connection is checked before it is used (what
+    the server sent meanwhile is handled) and closed after 30 s.
+  - Sharing: the calls of a core share the socket the way the redis and kafka clients do. One
+    task at a time drives it: it writes the queued frames, reads, and hands each frame to its
+    stream. The others wait on their stream, and a call whose stream ends passes the driving to
+    one still waiting. Connection and stream state are malloc'd records, so a connection
+    outlives the requests that used it. The HPACK decoder (package `hpack`) keeps its dynamic
+    table in malloc'd memory too.
+  - Requests: header blocks use static-table names and plain literals, never indexed, so the
+    encoder keeps no state; header names are lowercased, and the connection-specific ones
+    (Connection, Keep-Alive, Transfer-Encoding, Upgrade, Host; TE except `trailers`) are left
+    out. A block larger than the server's frame size goes in CONTINUATION frames.
+  - Flow control: this client announces 4 MiB per stream and raises the connection's window to
+    16 MiB; each is given back by WINDOW_UPDATE once half is read. A request body is sent as the
+    server's windows allow, and SETTINGS_INITIAL_WINDOW_SIZE changes move the open streams'
+    windows.
+  - Responses are read whole, up to `Options.MaxBody` (past it the stream is reset with CANCEL),
+    with their trailers (`Resp.Trailer`). 1xx responses are skipped.
+  - Failures: a call that runs out of time (its deadline, `Options.Timeout`, cancellation)
+    resets its stream with RST_STREAM CANCEL and leaves the connection to the other calls. A call
+    the server did not process (past a GOAWAY's last stream id, or REFUSED_STREAM) is sent again
+    on a new connection, as is one whose connection failed before any answer when its method can
+    be repeated. A protocol error from the server (a frame too large, bad padding, a broken header
+    block, PUSH_PROMISE although push is off) ends the connection with a GOAWAY.
+  - Not done: streaming a response body as it arrives (a whole body is returned), PRIORITY, and
+    server push (refused with SETTINGS_ENABLE_PUSH 0).
 - `SSLKEYLOGFILE` (#478): when it names a file, every handshake, client or server, appends its
   four traffic secrets in the NSS key log format (`CLIENT_HANDSHAKE_TRAFFIC_SECRET`,
   `SERVER_HANDSHAKE_TRAFFIC_SECRET`, `CLIENT_TRAFFIC_SECRET_0`, `SERVER_TRAFFIC_SECRET_0`), which
