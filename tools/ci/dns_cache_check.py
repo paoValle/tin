@@ -13,7 +13,7 @@ from suite import ROOT
 from task_check import free_port
 from lifetime_check import request, response
 from dns_check import DNS
-from treeutil import copy_lib
+from treeutil import copy_tree
 
 
 def main():
@@ -23,7 +23,7 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix='dnscache-', dir=out) as tmp:
             work = Path(tmp)
-            copy_lib(ROOT, work / 'lib')
+            copy_tree(ROOT, work)
             shutil.copy(ROOT / 'tools/ci/fixtures/dns_probe.tin', work / 'packages/wire/probe.tin')
             hosts, resolv = work / 'hosts', work / 'resolv.conf'
             hosts.write_text('127.0.0.7 hosts.test\n')
