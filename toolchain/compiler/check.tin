@@ -7762,14 +7762,21 @@ fn range_hoist(w WhileStmt, init i64) []i64 {
 		}
 		return pre
 	}
-	pre = append(pre, range_let(pos, "$range_step", step))
-	let post = cast(AssignStmt, w.post)
-	cast(Binary, post.value).r = range_ident(pos, "$range_step")
-	// if $range_step <= 0 { panic("...") }
+	// A local step the body never assigns is read where it is (no copy: one register fewer for
+	// the loop); any other step is evaluated once into $range_step.
+	mut sname = "$range_step"
+	if range_fixed_local(step, w.body) != 0 && cast(IdentExpr, step).name != cast(LetStmt, init).name {
+		sname = cast(IdentExpr, step).name
+	} else {
+		pre = append(pre, range_let(pos, "$range_step", step))
+		let post = cast(AssignStmt, w.post)
+		cast(Binary, post.value).r = range_ident(pos, "$range_step")
+	}
+	// if step <= 0 { panic("...") }
 	let check = cast(IfStmt, node_new(ST_IF, pos))
 	let zero = cast(IntLit, node_new(EX_INT, pos))
 	zero.val = 0
-	check.cond = binary_new(pos, "<=", range_ident(pos, "$range_step"), cast(i64, zero))
+	check.cond = binary_new(pos, "<=", range_ident(pos, sname), cast(i64, zero))
 	let msg = cast(StrLit, node_new(EX_STR, pos))
 	msg.ptr = "range step must be positive"
 	msg.len = len(msg.ptr)
