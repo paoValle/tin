@@ -392,14 +392,17 @@ type sponge struct {
 	pos  i64  // bytes of out already read
 }
 
-// absorb_block xors rate bytes of p (from at) into the lanes and permutes.
+// absorb_block xors rate bytes of p (from at) into the lanes and permutes. Lanes are
+// little-endian, as both CPUs are, so each is one 8-byte load (unaligned loads are allowed on both).
 @wrap fn (s mut sponge) absorb_block(p []u8, at i64) {
-	for i in 0..s.rate/8 {
-		mut w = u64(0)
-		for k in 0..8 {
-			w = w | u64(p[at+8*i+k])<<u64(8*k)
-		}
-		s.a[i] = s.a[i] ^ w
+	let n = s.rate / 8
+	if at < 0 || at+8*n > len(p) || len(s.a) != 25 || n > 25 {
+		rt_panic("seal: a Keccak block is out of range")
+	}
+	let pp = cast(i64, p)[2] + at
+	let ap = cast(i64, s.a)[2]
+	for i in 0..n {
+		__st(ap+8*i, __ld(ap+8*i, 3) ^ __ld(pp+8*i, 3), 3)
 	}
 	keccak_f(mut s.a)
 }
@@ -422,13 +425,16 @@ fn sponge_new(rate i64, msg []u8, domain u8) sponge {
 	return s
 }
 
-// lanes_out copies the rate's lanes into out, little-endian, for squeezing.
+// lanes_out copies the rate's lanes into out, little-endian (the CPUs' order), for squeezing.
 @wrap fn (s mut sponge) lanes_out() {
-	for i in 0..s.rate/8 {
-		let w = s.a[i]
-		for k in 0..8 {
-			s.out[8*i+k] = u8(w >> u64(8*k))
-		}
+	let n = s.rate / 8
+	if 8*n > len(s.out) || len(s.a) != 25 || n > 25 {
+		rt_panic("seal: a Keccak block is out of range")
+	}
+	let op = cast(i64, s.out)[2]
+	let ap = cast(i64, s.a)[2]
+	for i in 0..n {
+		__st(op+8*i, __ld(ap+8*i, 3), 3)
 	}
 	s.pos = 0
 }
