@@ -22,7 +22,7 @@ import threading
 import time
 from pathlib import Path
 from suite import ROOT
-from treeutil import copy_lib
+from treeutil import copy_tree
 
 SUITES = ['TLS_AES_128_GCM_SHA256', 'TLS_AES_256_GCM_SHA384', 'TLS_CHACHA20_POLY1305_SHA256']
 GROUPS = {'X25519': 'X25519', 'P-256': 'P-256'}
@@ -117,7 +117,7 @@ def serve_in_thread(target):
 def rfc8448(compiler, work):
     """Build the client with the probe in a private copy of packages/tls and run the trace."""
     root = work / 'probe-root'
-    copy_lib(ROOT, root / 'lib')
+    copy_tree(ROOT, root)
     shutil.copy(ROOT / 'tools/ci/fixtures/tls_rfc8448_probe.tin', root / 'packages/tls/probe_rfc8448.tin')
     exe = work / 'rfc8448'
     subprocess.run([str(compiler), '-o', str(exe), 'tools/ci/fixtures/tls_rfc8448.tin'], check=True, cwd=ROOT,

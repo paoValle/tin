@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 from suite import ROOT
-from treeutil import copy_lib
+from treeutil import copy_tree
 
 WANT = 'defer;fault true;cleaned 2;after 0; task end cleaned 21\n'
 
@@ -23,7 +23,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='guard-', dir=out) as tmp:
         directory = Path(tmp)
-        copy_lib(ROOT, directory / 'lib')
+        copy_tree(ROOT, directory)
         fixtures = ROOT / 'tools/ci/fixtures'
         with (directory / 'toolchain/std/tide/tide.tin').open('a') as f:
             f.write('\n' + (fixtures / 'guard_probe.tin').read_text())

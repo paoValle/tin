@@ -21,7 +21,7 @@ import time
 from suite import ROOT
 from lifetime_check import request, response, eventually, server_ready
 import websocket_check as ws
-from treeutil import copy_lib
+from treeutil import copy_tree
 
 
 class Hole:
@@ -273,7 +273,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='cancel-', dir=out) as tmp:
         directory = Path(tmp)
-        copy_lib(ROOT, directory / 'lib')
+        copy_tree(ROOT, directory)
         fixtures = ROOT / 'tools/ci/fixtures'
         with (directory / 'toolchain/std/tide/tide.tin').open('a') as f:
             f.write('\n' + (fixtures / 'cancel_probe.tin').read_text())
