@@ -3,8 +3,9 @@
 server core each, interleaved rounds, medians with the Tin/Go ratio.
 
 Scenarios (TLS 1.3, certificates generated per run with openssl):
-  handshakes ECDSA P-256 / RSA-2048   wrk, every request on a new connection (Connection: close):
-                                      full handshakes per second (wrk keeps no sessions)
+  handshakes ECDSA P-256 / RSA-2048   bin/tlsload: every connection a full handshake (no session
+                                      cache; wrk would resume sessions now that both servers issue
+                                      tickets), one GET each
   resumed handshakes ECDSA P-256      bin/tlsload -resume: every connection resumes the session of
                                       the one before (a ticket, no certificate or signature, #472)
   keep-alive /plaintext               wrk: requests per second on established connections
@@ -92,8 +93,11 @@ def measure(name, server, cert, path, conns, close, args, log_dir, label):
         proc = subprocess.Popen(cmd, env=env, stdout=log, stderr=log)
         try:
             ready(port)
-            if '-resumed-' in label:
-                load = [str(ROOT / 'bin/tlsload'), '-addr', f'127.0.0.1:{port}', '-path', path, '-c', str(conns), '-resume']
+            if '-resumed-' in label or '-handshakes-' in label:
+                resume = '-resumed-' in label
+                load = [str(ROOT / 'bin/tlsload'), '-addr', f'127.0.0.1:{port}', '-path', path, '-c', str(conns)]
+                if resume:
+                    load.append('-resume')
                 subprocess.run(load + ['-d', '1'], capture_output=True, text=True, check=True, timeout=30)
                 r = subprocess.run(load + ['-d', str(args.seconds)], capture_output=True, text=True, check=True,
                                    timeout=args.seconds + 30)
@@ -101,7 +105,8 @@ def measure(name, server, cert, path, conns, close, args, log_dir, label):
                 if proc.poll() is not None:
                     raise RuntimeError(f'{name} exited during {label}')
                 m = json.loads(r.stdout)
-                if m['errors'] or m['handshakes'] == 0 or m['resumed'] < 0.9 * m['handshakes']:
+                if m['errors'] or m['handshakes'] == 0 or (resume and m['resumed'] < 0.9 * m['handshakes']) or \
+                        (not resume and m['resumed'] != 0):
                     raise ValueError(f'{name} {label}: {r.stdout}')
                 return m['rate'], 0.0
             wrk = ['wrk', '-t2', f'-c{conns}']
