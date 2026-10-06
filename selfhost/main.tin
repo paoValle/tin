@@ -7,7 +7,7 @@ shared mut project_lock []u8
 shared mut compiler_edition i64
 shared mut load_unsafe i64 // the file being loaded is a vendored package granted unsafe: trusted, same edition
 shared mut compiler_fix i64
-shared mut compiler_parse_only i64 // -parse-only: like -fix, a file under <root>/lib/ reads trusted
+shared mut compiler_parse_only i64 // -parse-only: like -fix, a library file reads trusted
 
 // read_file returns a buffer holding the whole file, or 0 if it cannot be opened.
 fn try_read_file(path str) i64 {
@@ -130,12 +130,80 @@ fn find_root() str {
 	return real[:i + 1]
 }
 
+// The library layouts. The source tree keeps the standard library in toolchain/std, the packages in
+// packages/ and the runtime in toolchain/runtime; an installed copy keeps all of them in lib/ (the
+// runtime in lib/runtime).
+shared mut layout_tree i64 = -1
+
+fn tree_layout() i64 {
+	if layout_tree < 0 {
+		layout_tree = i64(len(real_path(cat_path(find_root(), "/toolchain/runtime"))) != 0)
+	}
+	return layout_tree
+}
+
+// import_dirs are the directories under the root an import is looked up in after vendor/.
+fn import_dirs() []str {
+	let d = []str{}
+	if tree_layout() != 0 {
+		d = append(d, "/toolchain/std/")
+		d = append(d, "/packages/")
+	} else {
+		d = append(d, "/lib/")
+	}
+	return d
+}
+
+// lib_dirs are the directories under the root whose files are the library's: imports, packages and the
+// runtime. They read trusted and are not pinned by tin.lock.
+fn lib_dirs() []str {
+	let d = import_dirs()
+	if tree_layout() != 0 {
+		d = append(d, "/toolchain/runtime/")
+	}
+	return d
+}
+
+// runtime_dir is the directory of the runtime package under the root.
+fn runtime_dir() str {
+	if tree_layout() != 0 {
+		return "/toolchain/runtime"
+	}
+	return "/lib/runtime"
+}
+
+// in_lib reports whether path (as the compiler names it) is a library file.
+fn in_lib(path str) i64 {
+	let d = lib_dirs()
+	mut i = 0
+	for i < len(d) {
+		if starts_with(path, cat_path(lib_root, d[i])) != 0 {
+			return 1
+		}
+		i = i + 1
+	}
+	return 0
+}
+
+// real_in_lib reports whether the file at path, resolved, is a library file of the tree find_root locates.
+fn real_in_lib(path str) i64 {
+	let d = lib_dirs()
+	mut i = 0
+	for i < len(d) {
+		if path_in_root_dir(path, d[i]) != 0 {
+			return 1
+		}
+		i = i + 1
+	}
+	return 0
+}
+
 fn load_file(path str) {
-	// The compiler's own files (selfhost/) and the tree's development tools (tools/) use raw words and
-	// cast like the runtime does.
+	// The compiler's own files (selfhost/ or toolchain/compiler/) and the tree's development tools (tools/)
+	// use raw words and cast like the runtime does.
 	// 2 marks the compiler's own files: their stores are not reference counted (rc_assign), the
 	// compiler's records live as long as the process.
-	mut trusted = path_in_root_dir(path, "/selfhost/") * 2
+	mut trusted = (path_in_root_dir(path, "/selfhost/") | path_in_root_dir(path, "/toolchain/compiler/")) * 2
 	if trusted == 0 {
 		trusted = path_in_root_dir(path, "/tools/")
 	}
@@ -202,14 +270,7 @@ fn load_file_trusted(path str, trusted_in i64) {
 // fix_in_lib reports a standard library file (under <root>/lib/): -fix reads it trusted, as an
 // import loads it, so its edition 0 secret types parse.
 fn fix_in_lib(path str) i64 {
-	let real = real_path(path)
-	let root = real_path(find_root())
-	if len(real) == 0 || len(root) == 0 {
-		return 0
-	}
-	let lib = cat_path(root, "/lib/")
-	let n = len(lib)
-	return i64(len(real) > n && real[:n] == lib)
+	return real_in_lib(path)
 }
 
 fn is_loaded(path str) i64 {
@@ -322,9 +383,14 @@ fn resolve_import(ipath str, from str) i64 {
 	if vendored != 0 {
 		return vendored
 	}
-	let std = package_files(cat_path(cat_path(lib_root, "/lib/"), ipath))
-	if std != 0 {
-		return std
+	let dirs = import_dirs()
+	mut di = 0
+	for di < len(dirs) {
+		let std = package_files(cat_path(cat_path(lib_root, dirs[di]), ipath))
+		if std != 0 {
+			return std
+		}
+		di = di + 1
 	}
 	return package_files(cat_path(cat_path(dir_of(files[0]), "/"), ipath))
 }
@@ -424,7 +490,7 @@ fn load_imports() {
 			for k < len(found) {
 				let path = found[k]
 				if is_loaded(path) == 0 {
-					let std = starts_with(path, cat_path(lib_root, "/lib/"))
+					let std = in_lib(path)
 					// A changed dependency is reported by its hash before it is parsed.
 					if std == 0 {
 						lock_has(path)
@@ -576,7 +642,7 @@ fn verify_lock() {
 	mut i = 0
 	for i < len(files) {
 		let path = files[i]
-		if starts_with(path, cat_path(lib_root, "/lib/")) == 0 {
+		if in_lib(path) == 0 {
 			lock_has(path)
 		}
 		i = i + 1
@@ -719,11 +785,11 @@ fn compiler_main(argc i64, argv i64) i64 {
 	lib_root = find_root()
 	project_root = dir_of(files[0])
 	project_lock = cast([]u8, cast([]i64, try_read_file(cat_path(project_root, "/tin.lock"))))
-	// The runtime is the package lib/runtime: every file of it for this OS and CPU.
-	let rtfiles = cast([]str, package_files(cat_path(lib_root, "/lib/runtime")))
+	// The runtime is a package (lib/runtime, or toolchain/runtime in the tree): every file of it for this OS and CPU.
+	let rtfiles = cast([]str, package_files(cat_path(lib_root, runtime_dir())))
 	if cast(i64, rtfiles) == 0 {
 		let e = cast([]i64, err_code(NO_POS, "E903 NO_RUNTIME"))
-		buf_str(cast([]u8, e), "the runtime package is missing: no lib/runtime in ")
+		buf_str(cast([]u8, e), "the runtime package is missing: no runtime in ")
 		buf_str(cast([]u8, e), lib_root)
 		fatal(cast([]u8, e))
 	}
