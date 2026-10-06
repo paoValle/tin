@@ -15,7 +15,7 @@ fn aes_hw_arm64(name str) i64 {
 	if len(hex) == 0 {
 		return 0
 	}
-	let v = []i64{}
+	mut v = []i64{}
 	mut i = 0
 	for i < len(hex) {
 		raw(cast([]i64, v), hex_word(hex, i))
