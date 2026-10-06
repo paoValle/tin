@@ -4344,7 +4344,7 @@ fn fn_polls(f Fn) i64 {
 	mut i = 0
 	let n = len(path)
 	for i < n {
-		if file_trusted[f.file] != 0 && (str_has_at(path, i, "/toolchain/runtime/") || str_has_at(path, i, "/toolchain/runtime/") || (i == 0 && (str_has_at(path, 0, "toolchain/runtime/") || str_has_at(path, 0, "toolchain/runtime/")))) {
+		if file_trusted[f.file] != 0 && (str_has_at(path, i, "/lib/runtime/") || str_has_at(path, i, "/toolchain/runtime/") || (i == 0 && (str_has_at(path, 0, "lib/runtime/") || str_has_at(path, 0, "toolchain/runtime/")))) {
 			return 0
 		}
 		i = i + 1
