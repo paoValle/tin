@@ -215,6 +215,9 @@ ServeTLS (and Router.ServeTLS) serve HTTPS: TLS 1.3 with a PEM certificate chain
 - `StuckFor() i64`: StuckFor is how long, in milliseconds, the most stuck core's event loop has not turned (0: every core turns). A service can export it and alert before a stuck core is an outage.
 - `ServeTLS(addr str, certPEM str, keyPEM str, h fn(Req, mut Out)) !`: ServeTLS is Serve over TLS 1.3 (HTTPS): certPEM is the certificate chain (leaf first) and keyPEM the leaf's private key (RSA, or ECDSA P-256 or P-384), as PEM text. The pair is checked before listening. ALPN offers "h2" (HTTP/2) and then "http/1.1"; a client without ALPN gets HTTP/1.1. Each handshake runs in a task, so slow clients never hold a core; it must finish within TIN_HANDSHAKE_TIMEOUT_MS (default: the header timeout, 10 s). Clients without TLS 1.3 are refused with a protocol_version alert, and those whose ALPN offers neither protocol with no_application_protocol.
 - `(r Router) ServeTLS(addr str, certPEM str, keyPEM str) !`: ServeTLS is Serve over TLS 1.3, as anvil.ServeTLS: the routes are checked first, then the certificate and key.
+- `type TLSConfig struct`: TLSConfig configures ServeTLSConfig: the certificate chain and private key, as ServeTLS takes them, and client certificates (mutual TLS, #475).
+- `ServeTLSConfig(addr str, cfg TLSConfig, h fn(Req, mut Out)) !`: ServeTLSConfig is ServeTLS with a TLSConfig. With ClientAuth set, every full handshake asks for a client certificate: RequireClientCert refuses a client without one (certificate_required), and both refuse one that does not chain to ClientCAs for client authentication. A handler finds the verified chain in q.TLSConn().PeerCertificates().
+- `(r Router) ServeTLSConfig(addr str, cfg TLSConfig) !`: ServeTLSConfig is Serve over TLS with a TLSConfig, as anvil.ServeTLSConfig.
 - `(q Req) TLSConn() ?tls.Conn`: TLSConn is the TLS connection the request arrived on, or nil over plain TCP: for its ALPN(), CipherSuite() and Group(). After Hijack every byte must go through it (Read, Write, Close), since the descriptor carries records.
 
 ## hearth
@@ -308,6 +311,10 @@ let c = try tls.Dial("example.com:443", tls.Config{ALPN: []str{"http/1.1"}})
 try c.Write("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
 ```
 
+- `const NoClientCert = 0`: NoClientCert, RequestClientCert and RequireClientCert are ServerConfig.ClientAuth: ask for no client certificate; ask for one and verify it when the client sends one; require a verified one.
+- `const RequestClientCert = 1`
+- `const RequireClientCert = 2`
+- `CheckServerConfig(cfg ServerConfig) !`: CheckServerConfig checks the client-certificate settings of cfg before a server starts: a known ClientAuth, and ClientCAs that hold certificates when it asks for any.
 - `type Conn struct`: Conn is a TLS 1.3 connection over a wire.Conn. After the handshake its memory only changes in place (record buffers made once, keys rewritten by seal.AEAD.Rekey), so a Conn stays valid wherever it lives: a request's pool, or keep()'s long-lived heap for a client that holds connections across requests.
 - `const TLS_AES_128_GCM_SHA256 = 0x1301`: TLS_AES_128_GCM_SHA256 is cipher suite 0x1301 (Conn.CipherSuite).
 - `const TLS_AES_256_GCM_SHA384 = 0x1302`: TLS_AES_256_GCM_SHA384 is cipher suite 0x1302.
@@ -336,11 +343,12 @@ try c.Write("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
 - `const VersionTLS13 = 0x0304`: VersionTLS13 is TLS 1.3's protocol version (Conn.Version).
 - `(c Conn) Version() i64`: Version is the negotiated protocol version: VersionTLS13.
 - `(c Conn) Resumed() bool`: Resumed reports whether the handshake resumed an earlier session with a ticket: the server's certificate was checked on that session, and PeerCertificates is empty.
-- `(c Conn) PeerCertificates() [][]u8`: PeerCertificates is the server's certificate chain as sent (DER, leaf first).
+- `(c Conn) PeerCertificates() [][]u8`: PeerCertificates is the peer's certificate chain as sent (DER, leaf first): on a client the server's, on a server the client's when it sent one (mutual TLS, #475).
 - `(c Conn) Fd() i64`: Fd is the connection's descriptor (for waiting on it; never read or write it directly).
 - `(c Conn) Buffered() i64`: Buffered is how many decrypted bytes a Read returns without waiting.
 - `(c mut Conn) Read(buf mut []u8, max i64) !i64`: Read appends up to max bytes of application data to buf and returns how many; after the server's close_notify it fails with EOF (wire.IsEOF), and a connection the server drops without close_notify is a fault, not EOF (a truncation would otherwise look complete).
 - `(c mut Conn) ReadNow(buf mut []u8, max i64) !i64`: ReadNow is Read without waiting: it returns 0 when no application data can be had without waiting for the socket (then wait until Fd is readable and call it again). For clients that run their own non-blocking loop; data TLS has already buffered is always returned first.
+- `(c mut Conn) ReadNowTo(p i64, max i64) !i64`: ReadNowTo is ReadNow into the raw buffer at p, at most max bytes: for trusted code that keeps its own buffers (the kafka client reads frames of many megabytes this way, with no copy per record).
 - `(c mut Conn) ReadFull(n i64) !str`: ReadFull reads exactly n bytes.
 - `(c mut Conn) WriteBytes(b []u8) !`: WriteBytes sends all of b.
 - `(c mut Conn) Write(s str) !`: Write sends all of s.
@@ -1054,6 +1062,9 @@ Package seal has cryptographic hashes (SHA-256, SHA-384, SHA-512, SHA-1, SHA3-25
 - `SignECDSA(k ECPrivateKey, h Hash, digest []u8) ![]u8`: SignECDSA signs digest (a hash of the message, made with h) with k and returns a DER ECDSA-Sig-Value. The nonce is RFC 6979's, derived with HMAC over h, so equal inputs give equal signatures.
 - `(k PrivateKey) SignTLS(scheme i64, msg []u8) ![]u8`: SignTLS signs msg (the bytes a TLS 1.3 CertificateVerify covers) with k under scheme: RSA-PSS 0x0804-0x0806 for RSA keys, 0x0403 for P-256 and 0x0503 for P-384.
 - `VerifyEd25519(pub []u8, msg []u8, sig []u8) !`: VerifyEd25519 checks an Ed25519 signature (64 bytes) of msg by the public key pub (32 bytes).
+- `type Ed25519PrivateKey struct`: Ed25519PrivateKey is an Ed25519 key: the 32-byte seed and the public key it gives.
+- `Ed25519PublicKey(seed secret []u8) ![]u8`: Ed25519PublicKey is the 32-byte public key of a 32-byte Ed25519 seed.
+- `SignEd25519(seed secret []u8, msg []u8) ![]u8`: SignEd25519 is the 64-byte Ed25519 signature of msg by the key with the 32-byte seed (pure Ed25519: msg is not hashed first).
 - `type Hash enum { SHA256, SHA384, SHA512 }`: Hash names a SHA-2 function for Hmac and HKDF.
 - `Sum(h Hash, s secret str) []u8`: Sum is the digest of s under h; s may be secret.
 - `Size(h Hash) i64`: Size is the length in bytes of h's digest.
@@ -1064,7 +1075,7 @@ Package seal has cryptographic hashes (SHA-256, SHA-384, SHA-512, SHA-1, SHA3-25
 - `HkdfExpandLabel(h Hash, key secret str, label str, context str, n i64) ![]u8`: HkdfExpandLabel is TLS 1.3's HKDF-Expand-Label(secret, label, context, n) (RFC 8446 section 7.1); label is given without the "tls13 " prefix. key may be secret.
 - `type RSAPrivateKey struct`: RSAPrivateKey is an RSA key with its CRT values; the private parts can only be read by seal.
 - `type ECPrivateKey struct`: ECPrivateKey is an ECDSA key on P-256 or P-384: the curve, the scalar and the uncompressed public point.
-- `type PrivateKey struct`: PrivateKey is an RSA or ECDSA private key, as ParsePrivateKeyPEM reads it.
+- `type PrivateKey struct`: PrivateKey is an RSA, ECDSA or Ed25519 private key, as ParsePrivateKeyPEM reads it.
 - `ParsePrivateKeyDER(der []u8) !PrivateKey`: ParsePrivateKeyDER reads a PKCS #8 PrivateKeyInfo, a PKCS #1 RSAPrivateKey or a SEC 1 ECPrivateKey.
 - `ParsePrivateKeyPEM(pem str) !PrivateKey`: ParsePrivateKeyPEM reads the first "PRIVATE KEY", "RSA PRIVATE KEY" or "EC PRIVATE KEY" block of pem.
 - `(k PrivateKey) MatchesCertificate(c Certificate) bool`: MatchesCertificate reports whether k is the private key of c's public key.
@@ -1380,7 +1391,7 @@ A key picks the partition the way the Java client does (murmur2), so a key lands
 - `(c Client) DescribeConfigs(kind Resource, name str) ![]Config`: DescribeConfigs is the configuration of a topic or a broker (a broker by its node id).
 - `(c Client) SetConfig(kind Resource, name str, key str, value str) !`: SetConfig sets one config of a topic or a broker (IncrementalAlterConfigs: the others stay).
 - `(c Client) ResetConfig(kind Resource, name str, key str) !`: ResetConfig removes one config of a topic or a broker, back to its default.
-- `(c Client) Close()`: Close closes this core's connections of the client; the next request connects again. Requests waiting on them fail.
+- `(c Client) Close()`: Close closes this core's connections of the client; the next request connects again. Requests waiting on them fail, including one another task is waiting on (a held fetch).
 - `type Want struct`: Want names a partition and the offset to read it from.
 - `type Part struct`: Part is what a fetch learned about one partition.
 - `type Fetched struct`: Fetched is the records of a FetchAll, in partition order, and what it learned of each partition.
