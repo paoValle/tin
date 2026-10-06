@@ -27,6 +27,7 @@ import base64
 import hashlib
 import os
 import re
+import shutil
 import signal
 import socket
 import ssl
@@ -472,6 +473,186 @@ def resumption(openssl, exe, client, certs, work):
           'TIN_TLS_TICKETS=0 and a ticket past TIN_TLS_TICKET_LIFETIME_S do not')
 
 
+# ---- client certificates (mutual TLS, #475) ----
+
+def make_pki(work):
+    """The client-certificate test PKI (tools/ci/fixtures/mtlspki.go): CA, alice, rsa, bob (server
+    only), carol (expired), mallory (another CA)."""
+    pki = work / 'pki'
+    pki.mkdir(exist_ok=True)
+    subprocess.run(['go', 'run', str(ROOT / 'tools/ci/fixtures/mtlspki.go'), str(pki)], cwd=ROOT, check=True, timeout=300)
+    return pki
+
+
+def mtls(openssl, exe, client, certs, work):
+    pki = make_pki(work)
+    cert = certs['ecdsa']
+
+    def who(name):
+        return ['-cert', str(pki / f'{name}.pem'), '-key', str(pki / f'{name}.key')]
+
+    sess = work / 'mtls-sess.pem'
+    srv = Server(exe, cert, work, env={'TLS_CLIENT_AUTH': '2', 'TLS_CLIENT_CAS': str(pki / 'ca.pem')}, cores=2)
+    try:
+        for name, cn in (('alice', 'alice'), ('dave', 'dave'), ('rsa', 'rsa-client')):
+            rc, out = s_client(openssl, srv.port, who(name) + ['-sess_out', str(sess)], get('/whoami'), cafile=cert[0])
+            assert rc == 0 and f'cn={cn} chain=1 resumed=false' in out, (name, out[-1500:])
+        # A resumed session keeps the client's identity (the ticket carries the chain).
+        rc, out = s_client(openssl, srv.port, ['-sess_in', str(sess)], get('/whoami'), cafile=cert[0])
+        assert rc == 0 and 'Reused, TLSv1.3' in out and 'cn=rsa-client chain=1 resumed=true' in out, out[-1500:]
+        for name, alert in ((None, 116), ('bob', 42), ('carol', 45), ('mallory', 48)):
+            args = who(name) if name else []
+            rc, out = s_client(openssl, srv.port, args, get('/whoami'), cafile=cert[0])
+            assert f'alert number {alert}' in out and 'cn=' not in out, (name, alert, out[-1500:])
+        r = subprocess.run([str(client), 'mtls', srv.addr(), '2', str(cert[0]), str(pki / 'alice.pem'), str(pki / 'alice.key')],
+                           capture_output=True, text=True, timeout=60)
+        assert r.stdout == 'mtls false cn=alice chain=1 resumed=false\nmtls true cn=alice chain=1 resumed=true\n', r.stdout
+        r = subprocess.run([str(client), 'mtls', srv.addr(), '1', str(cert[0])], capture_output=True, text=True, timeout=60)
+        assert r.stdout == 'fault tls: remote error: certificate required\n', r.stdout
+        # wire with client certificates: alice, then dave, then alice again; a kept connection is
+        # never lent to the other identity.
+        r = subprocess.run([str(client), 'wiremtls', f'https://localhost:{srv.port}/whoami', str(cert[0]),
+                            str(pki / 'alice.pem'), str(pki / 'alice.key'), str(pki / 'rsa.pem'), str(pki / 'rsa.key')],
+                           capture_output=True, text=True, timeout=60)
+        lines = r.stdout.splitlines()
+        assert len(lines) == 3 and lines[0].startswith('wire 200 cn=alice ') and lines[1].startswith('wire 200 cn=rsa-client ') \
+            and lines[2].startswith('wire 200 cn=alice '), r.stdout
+        if PY_TLS13:
+            ctx = py_ctx(cert)
+            ctx.load_cert_chain(str(pki / 'alice.pem'), str(pki / 'alice.key'))
+            s = py_connect(srv, ctx)
+            s.sendall(get('/whoami'))
+            assert read_to_close(s).endswith(b'cn=alice chain=1 resumed=false'), 'Python client certificate'
+            s.close()
+    finally:
+        srv.stop()
+    # RequestClientCert: a client without a certificate is served; one that sends a bad one is not.
+    srv = Server(exe, cert, work, env={'TLS_CLIENT_AUTH': '1', 'TLS_CLIENT_CAS': str(pki / 'ca.pem')})
+    try:
+        rc, out = s_client(openssl, srv.port, [], get('/whoami'), cafile=cert[0])
+        assert rc == 0 and '\r\n\r\nnone' in out, out[-1500:]
+        rc, out = s_client(openssl, srv.port, who('alice'), get('/whoami'), cafile=cert[0])
+        assert rc == 0 and 'cn=alice' in out, out[-1500:]
+        rc, out = s_client(openssl, srv.port, who('mallory'), get('/whoami'), cafile=cert[0])
+        assert 'alert number 48' in out and 'cn=' not in out, out[-1500:]
+    finally:
+        srv.stop()
+    # A server without ClientCAs does not start.
+    p = subprocess.run([str(exe)], env=dict(os.environ, PORT=str(free_port()), TLS_CERT=str(cert[0]), TLS_KEY=str(cert[1]),
+                                            TLS_CLIENT_AUTH='2', TLS_CLIENT_CAS=str(cert[1])),
+                       capture_output=True, text=True, timeout=30)
+    assert p.returncode == 0 and 'server:' in p.stdout and 'ClientCAs' in p.stdout, p.stdout + p.stderr
+    print('PASS client certificates: openssl (ECDSA, Ed25519 and RSA keys), Python and the Tin client verified; a resumed session keeps '
+          'the identity; certificate_required, bad_certificate (server-only usage), certificate_expired and unknown_ca '
+          'refusals; RequestClientCert serves a client without one; ClientCAs without a certificate fail at start')
+
+
+# ---- certificates chosen by server name, and reloads (#476) ----
+
+def named_cert(openssl, work, name, sans, kind='ecdsa', org='tin tests'):
+    """A self-signed certificate for sans (DNS names) with common name name: (cert, key)."""
+    args = {'ecdsa': ['-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256'], 'rsa': ['-newkey', 'rsa:2048']}[kind]
+    cert, key = work / f'{name}-{kind}.pem', work / f'{name}-{kind}.key'
+    r = subprocess.run([openssl, 'req', '-x509', *args, '-keyout', str(key), '-out', str(cert), '-days', '30', '-nodes',
+                        '-subj', f'/CN={name}/O={org}', '-addext', 'subjectAltName=' + ','.join('DNS:' + n for n in sans)],
+                       capture_output=True)
+    assert r.returncode == 0, r.stderr
+    return cert, key
+
+
+def served_cert(openssl, port, servername=None, extra=()):
+    """The subject line and peer signature type s_client reports for one handshake."""
+    args = list(extra) + (['-servername', servername] if servername else ['-noservername'])
+    cmd = [openssl, 's_client', '-tls1_3', '-connect', f'127.0.0.1:{port}', '-ign_eof', *args]
+    r = subprocess.run(cmd, input=get('/fast'), capture_output=True, timeout=30)
+    out = r.stdout.decode('latin1') + r.stderr.decode('latin1')
+    assert '\r\n\r\nfast' in out, out[-1500:]
+    subj = re.search(r'^subject=(.*)$', out, re.M).group(1).replace(' ', '')
+    sig = re.search(r'Peer signature type: (\S+)', out).group(1)
+    return subj, sig
+
+
+def sni_reload(openssl, exe, certs, work):
+    d = work / 'sni'
+    d.mkdir(exist_ok=True)
+    default = named_cert(openssl, d, 'default', ['localhost'])
+    a = named_cert(openssl, d, 'a.test', ['a.test'])
+    a_rsa = named_cert(openssl, d, 'a.test', ['a.test'], kind='rsa')
+    wild = named_cert(openssl, d, 'wild', ['*.c.test'])
+    spec = ';'.join(f'{c},{k}' for c, k in (default, a, wild, a_rsa))
+    srv = Server(exe, certs['ecdsa'], work, env={'TLS_CERTS': spec, 'TIN_TLS_RELOAD_S': '1'}, cores=2)
+    try:
+        for name, cn in (('a.test', 'a.test'), ('x.c.test', 'wild'), ('c.test', 'default'), ('nobody.test', 'default'),
+                         (None, 'default'), ('A.TEST', 'a.test')):
+            subj, sig = served_cert(openssl, srv.port, name)
+            assert subj.startswith(f'CN={cn},'), (name, subj)
+        # A client that verifies only RSA-PSS gets a.test's RSA certificate.
+        subj, sig = served_cert(openssl, srv.port, 'a.test', ['-sigalgs', 'rsa_pss_rsae_sha256'])
+        assert subj.startswith('CN=a.test,') and sig.lower().replace('-', '_').startswith('rsa_pss'), (subj, sig)
+        # A reload while handshakes run: none fails, and new connections get the new set.
+        b = named_cert(openssl, d, 'b.test', ['b.test', 'localhost'])
+        stop, errors, done = threading.Event(), [], [0]
+
+        def hammer():
+            while not stop.is_set():
+                try:
+                    served_cert(openssl, srv.port, 'localhost')
+                    done[0] += 1
+                except Exception as e:
+                    errors.append(e)
+
+        threads = [threading.Thread(target=hammer) for _ in range(4)]
+        for t in threads:
+            t.start()
+        time.sleep(0.5)
+        for spec2 in (f'{b[0]},{b[1]};{a[0]},{a[1]}', spec, f'{b[0]},{b[1]};{a[0]},{a[1]}'):
+            rc, out = s_client(openssl, srv.port, [], get('/reload?set=' + spec2), cafile=None)
+            assert 'reloaded' in out, out[-800:]
+            time.sleep(0.3)
+        stop.set()
+        for t in threads:
+            t.join()
+        assert not errors and done[0] > 10, (errors[:3], done[0])
+        subj, _ = served_cert(openssl, srv.port, 'localhost')
+        assert subj.startswith('CN=b.test,'), subj
+        # A pair whose key belongs to another certificate is refused; the set in use stays.
+        rc, out = s_client(openssl, srv.port, [], get(f'/reload?set={a[0]},{b[1]}'))
+        assert 'refused: anvil: certificate 1:' in out, out[-800:]
+        subj, _ = served_cert(openssl, srv.port, 'localhost')
+        assert subj.startswith('CN=b.test,'), subj
+    finally:
+        srv.stop()
+    # Certificates served from files: a renewal written to disk is picked up within the check
+    # interval (TIN_TLS_RELOAD_S=1), and a broken pair on disk is refused.
+    live_c, live_k = d / 'live.pem', d / 'live.key'
+    shutil.copy(a[0], live_c)
+    shutil.copy(a[1], live_k)
+    srv = Server(exe, certs['ecdsa'], work, env={'TLS_CERTS': f'{live_c},{live_k}', 'TIN_TLS_RELOAD_S': '1'})
+    try:
+        subj, _ = served_cert(openssl, srv.port, 'a.test')
+        assert 'O=tintests' in subj, subj
+        renewed = named_cert(openssl, d, 'a.test', ['a.test'], org='renewed')
+        os.replace(renewed[1], live_k)
+        os.replace(renewed[0], live_c)
+        until = time.monotonic() + 10
+        while time.monotonic() < until:
+            subj, _ = served_cert(openssl, srv.port, 'a.test')
+            if 'O=renewed' in subj:
+                break
+            time.sleep(0.3)
+        assert 'O=renewed' in subj, subj
+        shutil.copy(b[1], live_k)  # a key that is not the certificate's
+        time.sleep(2.5)
+        subj, _ = served_cert(openssl, srv.port, 'a.test')
+        assert 'O=renewed' in subj, subj
+        assert 'certificate reload refused' in srv.output(), srv.output()[-800:]
+    finally:
+        srv.stop()
+    print('PASS server names: exact, wildcard, unknown and no SNI choose their certificate, an RSA-only client gets the RSA '
+          'one; three reloads under handshake load fail none and switch the set, a mismatched pair is refused; a renewed '
+          'certificate file is served within the check interval and a broken one is refused')
+
+
 # ---- malformed handshakes and timeouts ----
 
 def exchange(port, data, wait=5.0):
@@ -702,8 +883,7 @@ def server_keylog(openssl, exe, certs, work):
 
 
 def bad_config(exe, certs, work):
-    for name, pair, want in (('a key of another certificate', (certs['ecdsa'][0], certs['rsa'][1]), 'does not belong'),
-                             ('an Ed25519 key', certs['ed25519'], 'server: ')):
+    for name, pair, want in (('a key of another certificate', (certs['ecdsa'][0], certs['rsa'][1]), 'does not belong'),):
         srv = Server(exe, pair, work, wait=False)
         try:
             code = srv.p.wait(timeout=20)
@@ -711,7 +891,22 @@ def bad_config(exe, certs, work):
             assert code == 0 and out.startswith('server: ') and want in out, (name, code, out)
         finally:
             srv.stop()
-    print('PASS configuration: a key that does not match the certificate, and an Ed25519 key, fail ServeTLS before it listens')
+    print('PASS configuration: a key that does not match the certificate fails ServeTLS before it listens')
+
+
+def ed25519_server(openssl, exe, client, certs, work):
+    """An Ed25519 certificate (#477): OpenSSL verifies the chain and the Ed25519 CertificateVerify,
+    and so does the Tin client."""
+    cert = certs['ed25519']
+    srv = Server(exe, cert, work)
+    try:
+        rc, out = s_client(openssl, srv.port, [], get('/fast'), cafile=cert[0])
+        assert rc == 0 and '\r\n\r\nfast' in out and 'peer signature type: ed25519' in out.lower(), out[-1500:]
+        r = subprocess.run([str(client), 'resume', srv.addr(), '1', str(cert[0])], capture_output=True, text=True, timeout=60)
+        assert re.fullmatch(r'resumed false TLS_\w+ X25519 1 true\n', r.stdout), r.stdout
+    finally:
+        srv.stop()
+    print('PASS Ed25519 certificate: OpenSSL and the Tin client verify the chain and the Ed25519 CertificateVerify')
 
 
 def main():
@@ -741,11 +936,14 @@ def main():
         openssl_interop(openssl, exe, certs, work)
         tin_clients(exe, client, certs, work)
         resumption(openssl, exe, client, certs, work)
+        mtls(openssl, exe, client, certs, work)
+        sni_reload(openssl, exe, certs, work)
         malformed(exe, client, certs, work)
         one_core(exe, client, certs, work)
         memory(openssl, exe, certs, work)
         example(openssl, compiler, client, certs, work)
         bad_config(exe, certs, work)
+        ed25519_server(openssl, exe, client, certs, work)
         server_keylog(openssl, exe, certs, work)
         if PY_TLS13:
             python_clients(exe, certs, work)

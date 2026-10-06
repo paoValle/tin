@@ -367,6 +367,19 @@ reading resumes and buffered input is served.
   query; an empty path is `/`.
 - Bodies are limited to 64 MiB by default (413), a chunked body by its decoded length (and
   its chunk framing by the limit plus 64 KiB); `anvil.Limits` or `TIN_MAX_BODY` changes it.
+- **Bodies read as they arrive (#481):** a route registered with `Router.Stream(method, pattern,
+  h)` runs its handler as soon as the request's headers are in, and `q.BodyStream().Read(mut buf)`
+  waits in the request's task for the next bytes, so an upload is processed in the memory of one
+  read buffer and a gRPC client or bidirectional stream gets each message as it comes. The task
+  takes the socket out of the event loop (as a streamed response does) and reads it directly: a
+  Content-Length body up to its length (at most 1 TiB), a chunked one through a decoder of its
+  framing, with bytes read past its end (a pipelined request) given back to the connection. A
+  slow handler reads slowly, so TCP holds the client back. `100 Continue` goes out at the first
+  read that needs the socket. A handler that ends before the body does closes the connection
+  after its response, since what is left cannot be told from a next request. `TIN_MAX_BODY` does
+  not bound such a body (the handler decides what it keeps); each read waits at most the read
+  timeout, and the request deadline applies. On other routes the body has arrived whole when the
+  handler runs, and `BodyStream` reads it from memory.
 - **Timeouts** (`anvil.Timeouts`, or the environment): a request's line and headers must
   arrive within 10 s of its first byte (`TIN_HEADER_TIMEOUT_MS`), and the whole request
   within 60 s (`TIN_READ_TIMEOUT_MS`); a keep-alive connection with no request in progress
@@ -722,7 +735,12 @@ and `expect: 100-continue` gets an interim `:status 100`. The stream and connect
 windows are opened again once half is used. When the client ends its side the request goes
 through the admission checks of `serve_one` and runs in its own task on the connection's core
 (`tArg` the connection, `tUser+2` the stream), with the request deadline and memory budget.
-Many streams of one connection run at once: one that waits does not hold the others.
+Many streams of one connection run at once: one that waits does not hold the others. On a `Router.Stream` route
+(#481) the handler starts at the request's HEADERS instead, and the stream's DATA waits in a buffer
+of at most one stream window (1 MiB) that `BodyStream` reads from: its WINDOW_UPDATE goes out as
+the handler reads, so a slow handler slows its client and not the connection's other streams. A
+handler that ends before the client's END_STREAM resets the stream with NO_ERROR after its
+response.
 
 **Responses.** HEADERS (`:status`, `server`, `date`, `content-type` and `content-length` unless
 the status has no body, then the handler's fields with lower-case names; connection-specific
@@ -913,8 +931,36 @@ HTTP/1.1 over TLS 1.3 on the same per-core event loops (`lib/anvil/serve_tls.tin
 - **Linking.** `anvil.tin` reaches `serve_tls.tin` only through function hooks (`gTlsRead`,
   `gTlsSeal`, ...) that `ServeTLS` sets, each behind a test of `cTls`: a server that never calls
   `ServeTLS` links no TLS code (`examples/api.tin` grew by 335 bytes) and its loop is unchanged.
-- **Not supported:** 0-RTT, client certificates (#475), certificate selection by SNI (one chain
-  per server, #476), Ed25519 server keys (#477), and TLS 1.2 (#473). A
+- **Client certificates (#475).** `ServeTLSConfig` with `TLSConfig.ClientAuth`
+  (`tls.RequestClientCert` or `tls.RequireClientCert`) and `ClientCAs` makes every full
+  handshake send a CertificateRequest. It lists the schemes the server verifies (ECDSA and
+  RSA-PSS; TLS 1.3 forbids PKCS #1 v1.5 there) and the subjects of the CAs
+  (certificate_authorities). The client's chain is verified against `ClientCAs` alone (not the
+  system's roots) for the clientAuth extended key usage, then its CertificateVerify. Refusals
+  have their own alerts: certificate_required for none when required, unknown_ca, and
+  certificate_expired; bad_certificate for anything else, such as a certificate for servers
+  only. A handler reads the verified chain in `q.TLSConn().PeerCertificates()`. A session
+  ticket carries the client's chain, so a resumed session keeps its identity. A server that
+  requires a certificate resumes only a session that had one, and only while the certificate is
+  still valid. The client side: `tls.Config.Certificate` and `Key` (PEM, parsed once per core)
+  are sent when a server asks, with a CertificateVerify in a scheme the server accepts, or an
+  empty Certificate when there is none. The database clients pass them through `Options.TLS`
+  (PostgreSQL `clientcert=verify-full`, MySQL `REQUIRE X509`, Redis `tls-auth-clients`).
+- **Keys.** RSA (PSS), ECDSA P-256 and P-384, and Ed25519 (#477; RFC 8410 PKCS #8 keys), for the
+  server's certificate and for a client's.
+- **Several certificates, and reloads (#476).** `TLSConfig.Certificates` adds certificates to
+  the default. A ClientHello's server_name chooses the first one whose leaf names it (exactly, or
+  by a one-label wildcard) and whose key signs a scheme the client accepts: an ECDSA and an RSA
+  certificate for one name serve both kinds of client. No SNI, or an unknown name, gets the
+  default. `anvil.ReloadCertificates` replaces the set from any core: every pair is checked
+  first, the set is published to the cores through a generation counter, and each core parses
+  its copy at its next handshake. The configuration a core replaces stays alive while handshakes
+  that use it run (the reclamation limbo), and the published PEM text is never freed, because
+  another core may still be reading an older set. A set given entirely as files
+  (`TLSCert.CertFile`, `KeyFile`) is read again by core 0 every `TIN_TLS_RELOAD_S` seconds
+  (default 60), and reloaded when the contents changed. A renewal on disk, from Let's Encrypt or
+  cert-manager, needs no restart; a broken pair is reported and the set in use stays.
+- **Not supported:** 0-RTT, and TLS 1.2 (#473). A
   `TIN_REPLAY_CAPSULE` replay sends plain HTTP and cannot replay into a TLS server.
 
 ### Pooled clients: mysql (v0.4)
@@ -1171,6 +1217,7 @@ functions keep that rule, and grows as phase 1 lands.
 | `monty_new` (`bignum.tin`: Montgomery constants for a modulus given at run time) | the modulus's value | its limb count and bit length |
 | `SignPKCS1v15`, `SignPSS` (`rsa_sign.tin`: CRT; base blinding by a pair (r^e, r^-1) kept with the key, squared after each signature and made fresh every 32, r^-1 by Fermat inversion in each prime; a public-key check of every signature) and `monty_exp_ct`, `monty_reduce`, `nat_mul_ct` under them | the private key, the message representative and r | the key's size; PSS's salt is random and public |
 | `SignECDSA`, `PrivateKey.SignTLS` (`ecdsa_sign.tin`: RFC 6979 nonces by `Hmac`, k·G by `p256_mul_base` or `ec_mul_ct`, k^-1 as k^(n-2) with the public exponent) | the private scalar and the nonce | the digest, and the (negligibly rare, public) retry when a nonce candidate is not below n |
+| `SignEd25519`, `Ed25519PublicKey`, `PrivateKey.SignTLS` with scheme 0x0807 (`ed25519_sign.tin`, #477: the clamped scalar and the nonce from SHA-512 of the seed, r·B and a·B from a per-core table of j·16^i·B read by copying every entry and swapping with a mask, S = r + k·a mod L in Montgomery arithmetic) | the seed, the scalar and the nonce | the message and its length |
 | `ParsePrivateKeyPEM`, `ParsePrivateKeyDER` | nothing: the key's encoding (lengths, tags) is parsed with ordinary branches | |
 
 `Sha1`, `Pbkdf2Sha256`, the hex and base64 codecs and the RSA-OAEP code are not
