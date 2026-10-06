@@ -1,3 +1,7 @@
+<p align="center">
+  <img src=".github/assets/tin-mascot.svg" width="200" alt="Tin, the tin-can mascot, waving">
+</p>
+
 # Tin
 
 Tin is a compiled language for servers and tools, with Go's packages and blocks and a syntax
