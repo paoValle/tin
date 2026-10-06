@@ -89,10 +89,13 @@ fn (f monty) size() i64 {
 		lo2 += lo
 		hi2 += lt(lo2, lo)
 		mut c2 = hi2
+		mut px = xp + 8
+		mut pt = tp + 8
+		mut pm = mp + 8
 		for j in 1..n {
-			let xj = u64(__ld(xp+8*j, 3))
-			let tj = u64(__ld(tp+8*j, 3))
-			let mj = u64(__ld(mp+8*j, 3))
+			let xj = u64(__ld(px, 3))
+			let tj = u64(__ld(pt, 3))
+			let mj = u64(__ld(pm, 3))
 			lo = xj * yi
 			hi = mulhi(xj, yi)
 			lo += tj
@@ -107,7 +110,10 @@ fn (f monty) size() i64 {
 			lo2 += c2
 			hi2 += lt(lo2, c2)
 			c2 = hi2
-			__st(tp+8*(j-1), i64(lo2), 3)
+			__st(pt-8, i64(lo2), 3)
+			px += 8
+			pt += 8
+			pm += 8
 		}
 		let tn = u64(__ld(tp+8*n, 3))
 		let s1 = tn + c1
@@ -148,9 +154,11 @@ fn (f monty) size() i64 {
 	for i in 0..n-1 {
 		let xi = u64(__ld(xp+8*i, 3))
 		mut c = u64(0)
+		mut px = xp + 8*(i+1)
+		mut pw = wp + 8*(2*i+1)
 		for j in i+1..n {
-			let xj = u64(__ld(xp+8*j, 3))
-			let wk = u64(__ld(wp+8*(i+j), 3))
+			let xj = u64(__ld(px, 3))
+			let wk = u64(__ld(pw, 3))
 			mut lo = xi * xj
 			mut hi = mulhi(xi, xj)
 			lo += wk
@@ -158,7 +166,9 @@ fn (f monty) size() i64 {
 			lo += c
 			hi += lt(lo, c)
 			c = hi
-			__st(wp+8*(i+j), i64(lo), 3)
+			__st(pw, i64(lo), 3)
+			px += 8
+			pw += 8
 		}
 		__st(wp+8*(i+n), i64(c), 3)
 	}
@@ -194,9 +204,11 @@ fn (f monty) size() i64 {
 	for i in 0..n {
 		let mm = u64(__ld(wp+8*i, 3)) * minv
 		mut c2 = u64(0)
+		mut pm = mp
+		mut pw = wp + 8*i
 		for j in 0..n {
-			let mj = u64(__ld(mp+8*j, 3))
-			let wk = u64(__ld(wp+8*(i+j), 3))
+			let mj = u64(__ld(pm, 3))
+			let wk = u64(__ld(pw, 3))
 			mut lo = mm * mj
 			mut hi = mulhi(mm, mj)
 			lo += wk
@@ -204,7 +216,9 @@ fn (f monty) size() i64 {
 			lo += c2
 			hi += lt(lo, c2)
 			c2 = hi
-			__st(wp+8*(i+j), i64(lo), 3)
+			__st(pw, i64(lo), 3)
+			pm += 8
+			pw += 8
 		}
 		let wn = u64(__ld(wp+8*(i+n), 3))
 		let s1 = wn + c2
