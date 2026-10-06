@@ -873,7 +873,7 @@ fn chk_binary(e i64, want i64) i64 {
 		let grow = sg_record(e)
 		if grow != 0 {
 			// s = s + e in a loop that only appends to s (#520).
-			let ga = cast([]i64, args2(l, r))
+			mut ga = cast([]i64, args2(l, r))
 			ga = append(ga, sym_ref_node(pos, cast(Sym, grow)))
 			replace_node(e, rt_call(pos, "rt_str_grow", cast(i64, ga), ty_string))
 		} else {
