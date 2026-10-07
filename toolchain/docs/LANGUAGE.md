@@ -585,6 +585,18 @@ const Timeout = 200ms          // a unit literal is an integer constant
   2^63-1 are treated as unsigned for `>>`, `/`, `%` and comparisons. A constant shift count
   is between 0 and the width less one (E224). `+%`, `-%` and `*%` fold modulo 2^64.
 - A constant used where no type is known becomes an `i64` (integers) or `f64` (floats).
+- Float, string and bool constant expressions (#566). `+ - * /` and comparisons on float
+  constants, `+` on string constants, comparisons, `&&`, `||` and `!` on integer and bool
+  constants, and `len` of a string constant are constant:
+  `const TwoPi = 2 * Pi`, `const Base = "https://" + Host`, `const Debug = Level > 2`,
+  `const N = len("abcd")` (usable as an array length). An untyped integer meeting an untyped
+  float is a float (`4 * 2.5`, `C * 2.5`), in constants and elsewhere. Float constant
+  arithmetic is `f64` with every operation rounded, as at run time (section 23); dividing by
+  zero (E222) or a result that is not finite (E223) is an error.
+- An untyped float constant takes the float type its use needs: `let x f32 = Pi`.
+- Constants of other packages are constants here too: `const Grace = 1.5 * tide.Second` is a
+  float, and the conversion `i64(1.5 * tide.Second)` is an integer constant when the value is
+  whole and in range (E223 otherwise).
 
 ---
 
@@ -2254,5 +2266,6 @@ OLD_SYNTAX, E091 ONE_PER_DECLARATION in [ERRORS.md](ERRORS.md)).
 | `time.Millisecond * 200` | `200ms` |
 | `goto`, `fallthrough` | not available |
 | integer arithmetic wraps; shift counts of any size; `int64(1e300)` is implementation-defined | `+ - *` panic on overflow, `+% -% *%` and `@wrap` wrap; shift counts below the width; float to integer panics out of range |
+| untyped float constants are exact (`0.1 + 0.2` is 0.3) | float constant arithmetic rounds each operation to `f64`, as at run time (`0.1 + 0.2` is 0.30000000000000004) |
 
 <!-- docs-check: old-syntax end -->

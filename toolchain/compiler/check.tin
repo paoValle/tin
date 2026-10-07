@@ -1056,7 +1056,16 @@ fn check_const_value(c Decl) {
 		want = resolve_type(c.type_)
 	}
 	let init = cast(Node, c.init)
-	if is_int_const_expr(cast(i64, init)) != 0 {
+	if is_int_const_expr(cast(i64, init)) != 0 && const_bool_valued(cast(i64, init)) != 0 {
+		// A comparison of integer constants is a bool constant: const Debug = Level > 2 (#566).
+		const_bool_check(cast(i64, init))
+		s.val = i64(const_value(cast(i64, init), c.iota) != 0)
+		s.type_ = ty_bool
+		if want != 0 && kind_of(cast(Ty, want)) != K_BOOL {
+			err_code_type(c.pos, "E221 CONST_TYPE", "cannot use a bool constant as ", want, "")
+		}
+	} else if is_int_const_expr(cast(i64, init)) != 0 {
+		const_bool_check(cast(i64, init))
 		let v = const_value(cast(i64, init), c.iota)
 		s.big = cv_big
 		s.val = v
@@ -1073,24 +1082,331 @@ fn check_const_value(c Decl) {
 			}
 		}
 	} else {
+		let before = error_count
 		let copy_ = expr_clone(cast(i64, init))
+		fold_str_init(copy_)
 		let t = chk(cast(Node, copy_), want)
 		if want != 0 {
 			check_assignable(cast(Node, copy_), t, cast(Ty, want))
 		}
-		if is_const_value(copy_) == 0 {
+		fold_const_init(copy_)
+		if is_const_value(copy_) == 0 && error_count == before {
 			err_code_at(init.pos, "E220 NOT_CONSTANT", "expression is not a constant")
 		}
 		s.expr = copy_
 		s.type_ = t
+		if c.type_ == 0 && cast(Node, copy_).kind == EX_FLOAT && is_f32(cast(Ty, t)) == 0 {
+			// An untyped float constant: each use takes the float type it needs (#566).
+			s.type_ = ty_ufloat
+		}
 	}
 	s.done = 1
+}
+
+// fold_str_init joins + of string literals and string constants before checking, which
+// would make the concatenation a call: const URL = Host + "/api" (#566).
+fn fold_str_init(e i64) {
+	if cast(Node, e).kind != EX_BINARY || cast(Binary, e).op != "+" {
+		return
+	}
+	let l = cast(Binary, e).l
+	let r = cast(Binary, e).r
+	fold_str_init(l)
+	fold_str_init(r)
+	let a = const_str_of(l)
+	let b = const_str_of(r)
+	if a == 0 || b == 0 {
+		return
+	}
+	replace_node(e, lit_string(cast(Node, e).pos, cast(StrLit, a).ptr + cast(StrLit, b).ptr))
+	cast(Node, e).type_ = 0
+}
+
+// const_str_of is the string literal e is or names (a string constant), or 0.
+fn const_str_of(e i64) i64 {
+	if cast(Node, e).kind == EX_STR {
+		return e
+	}
+	if cast(Node, e).kind != EX_IDENT {
+		return 0
+	}
+	let s = lookup_name(cast(IdentExpr, e).name)
+	if cast(i64, s) == 0 || s.kind != SYM_CONST || s.done == 0 || s.expr == 0 || cast(Node, s.expr).kind != EX_STR {
+		return 0
+	}
+	return s.expr
+}
+
+// const_bool_valued reports a constant expression whose value is a truth value: true, false,
+// a bool constant, a comparison, && or ||, or ! (#566).
+fn const_bool_valued(e i64) i64 {
+	let k = cast(Node, e).kind
+	if k == EX_IDENT || k == EX_SELECT {
+		mut s = pkg_const(e)
+		if k == EX_IDENT {
+			let n = cast(IdentExpr, e).name
+			s = lookup_name(n)
+			if cast(i64, s) == 0 {
+				return i64(n == "true" || n == "false")
+			}
+		}
+		return i64(cast(i64, s) != 0 && s.kind == SYM_CONST && kind_of(cast(Ty, s.type_)) == K_BOOL)
+	}
+	return const_is_bool(e)
+}
+
+// const_bool_check keeps truth values and numbers apart in an integer constant expression,
+// which evaluates both as integers: && || ! take truth values, arithmetic takes numbers.
+fn const_bool_check(e i64) {
+	let k = cast(Node, e).kind
+	if k == EX_UNARY {
+		let x = cast(Unary, e).x
+		if cast(Unary, e).op == "!" && const_bool_valued(x) == 0 {
+			err_code_at(cast(Node, e).pos, "E236 OPERATOR", "operand of ! must be bool")
+		} else if cast(Unary, e).op != "!" && const_bool_valued(x) != 0 {
+			err_code_at(cast(Node, e).pos, "E236 OPERATOR", "a bool is not a number")
+		}
+		const_bool_check(x)
+		return
+	}
+	if k != EX_BINARY {
+		return
+	}
+	let op = cast(Binary, e).op
+	let l = cast(Binary, e).l
+	let r = cast(Binary, e).r
+	if op == "&&" || op == "||" {
+		if const_bool_valued(l) == 0 || const_bool_valued(r) == 0 {
+			err_code_at(cast(Node, e).pos, "E236 OPERATOR", "operands of && and || must be bool")
+		}
+	} else if op != "==" && op != "!=" && (const_bool_valued(l) != 0 || const_bool_valued(r) != 0) {
+		err_code_at(cast(Node, e).pos, "E236 OPERATOR", "a bool is not a number")
+	}
+	const_bool_check(l)
+	const_bool_check(r)
+}
+
+// const_is_bool reports an integer constant expression whose value is a truth value: a
+// comparison, && or ||, or ! (#566).
+fn const_is_bool(e i64) i64 {
+	let k = cast(Node, e).kind
+	if k == EX_BINARY {
+		let op = cast(Binary, e).op
+		return i64(op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "&&" || op == "||")
+	}
+	if k == EX_UNARY {
+		return i64(cast(Unary, e).op == "!")
+	}
+	return 0
+}
+
+// fold_const_init folds a checked constant initializer in place (#566): + - * / and comparisons on
+// float literals, + and comparisons on string literals, and - on a float. Float arithmetic is
+// f64 with every operation rounded, as at run time (an f32 constant is rounded once more at
+// each step); a division by zero or a result that is not finite is an error.
+fn fold_const_init(e i64) {
+	let k = cast(Node, e).kind
+	let pos = cast(Node, e).pos
+	let t = cast(Node, e).type_
+	if k == EX_UNARY {
+		fold_const_init(cast(Unary, e).x)
+		let x = cast(Unary, e).x
+		if cast(Unary, e).op == "-" && cast(Node, x).kind == EX_FLOAT {
+			let f = node_new(EX_FLOAT, pos)
+			cast(FloatLit, f).bits = cast(FloatLit, x).bits ^ (1 << 63)
+			replace_node(e, f)
+			cast(Node, e).type_ = t
+		}
+		return
+	}
+	if k == EX_CONV {
+		// i64(1.5 * tide.Second), f64(C): a conversion of a constant is constant when exact.
+		fold_const_init(cast(Conv, e).x)
+		let x = cast(Conv, e).x
+		let ck = cast(Conv, e).kind
+		if ck == CV_F2I && cast(Node, x).kind == EX_FLOAT {
+			let f = cast(f64, cast(FloatLit, x).bits)
+			let iv = i64(f)
+			if f != f || f >= 9223372036854775807.0 || f < -9223372036854775808.0 || f64(iv) != f {
+				err_code_at(pos, "E223 CONST_OVERFLOW", "a float constant converted to an integer must be a whole number in range")
+				return
+			}
+			replace_node(e, mk_int(pos, iv, t))
+			cast(Node, e).type_ = t
+		} else if ck == CV_I2F && cast(Node, x).kind == EX_INT && cast(IntLit, x).big == 0 {
+			let fl = node_new(EX_FLOAT, pos)
+			mut bits = int_to_float_bits(cast(IntLit, x).val)
+			if is_f32(cast(Ty, t)) != 0 {
+				bits = round_f32_bits(bits)
+			}
+			cast(FloatLit, fl).bits = bits
+			replace_node(e, fl)
+			cast(Node, e).type_ = t
+		} else if (ck == CV_SAME || ck == CV_ROUND32) && cast(Node, x).kind == EX_FLOAT {
+			let fl2 = node_new(EX_FLOAT, pos)
+			mut bits2 = cast(FloatLit, x).bits
+			if is_f32(cast(Ty, t)) != 0 {
+				bits2 = round_f32_bits(bits2)
+			}
+			cast(FloatLit, fl2).bits = bits2
+			replace_node(e, fl2)
+			cast(Node, e).type_ = t
+		}
+		return
+	}
+	if k != EX_BINARY {
+		return
+	}
+	let l = cast(Binary, e).l
+	let r = cast(Binary, e).r
+	fold_const_init(l)
+	fold_const_init(r)
+	let op = cast(Binary, e).op
+	let cmp = i64(op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=")
+	if cast(Node, l).kind == EX_FLOAT && cast(Node, r).kind == EX_FLOAT {
+		let a = cast(f64, cast(FloatLit, l).bits)
+		let b = cast(f64, cast(FloatLit, r).bits)
+		if cmp != 0 {
+			mut v = false
+			if op == "==" {
+				v = a == b
+			} else if op == "!=" {
+				v = a != b
+			} else if op == "<" {
+				v = a < b
+			} else if op == "<=" {
+				v = a <= b
+			} else if op == ">" {
+				v = a > b
+			} else {
+				v = a >= b
+			}
+			replace_node(e, mk_int(pos, i64(v), ty_bool))
+			cast(Node, e).type_ = t
+			return
+		}
+		mut res = 0.0
+		if op == "+" {
+			res = a + b
+		} else if op == "-" {
+			res = a - b
+		} else if op == "*" {
+			res = a * b
+		} else if op == "/" {
+			if b == 0.0 {
+				err_code_at(pos, "E222 DIVISION_BY_ZERO", "division by zero in constant expression")
+				return
+			}
+			res = a / b
+		} else {
+			return
+		}
+		mut bits = cast(i64, res)
+		if is_f32(cast(Ty, t)) != 0 {
+			bits = round_f32_bits(bits)
+		}
+		if ((bits >> 52) & 0x7ff) == 0x7ff {
+			err_code_at(pos, "E223 CONST_OVERFLOW", "constant arithmetic overflows: the result is not a finite float")
+			return
+		}
+		let f = node_new(EX_FLOAT, pos)
+		cast(FloatLit, f).bits = bits
+		replace_node(e, f)
+		cast(Node, e).type_ = t
+		return
+	}
+	if cast(Node, l).kind == EX_STR && cast(Node, r).kind == EX_STR {
+		let a = cast(StrLit, l).ptr
+		let b = cast(StrLit, r).ptr
+		if op == "+" {
+			replace_node(e, lit_string(pos, a + b))
+			cast(Node, e).type_ = t
+			return
+		}
+		if cmp != 0 {
+			mut v = false
+			if op == "==" {
+				v = a == b
+			} else if op == "!=" {
+				v = a != b
+			} else if op == "<" {
+				v = a < b
+			} else if op == "<=" {
+				v = a <= b
+			} else if op == ">" {
+				v = a > b
+			} else {
+				v = a >= b
+			}
+			replace_node(e, mk_int(pos, i64(v), ty_bool))
+			cast(Node, e).type_ = t
+		}
+	}
 }
 
 // is_const_value accepts the checked forms a non-integer constant may take.
 fn is_const_value(e i64) i64 {
 	let k = cast(Node, e).kind
 	return i64(k == EX_FLOAT || k == EX_STR || k == EX_INT || (k == EX_UNARY && is_const_value(cast(Unary, e).x) != 0))
+}
+
+shared mut const_busy []i64 // constant declarations being checked out of order (#566)
+
+// const_ready gives constant s from another package its value now. The constants are checked
+// in load order, the program's before its packages', so const T = 2 * tide.Second would find
+// tide.Second unset (#566). Within a package the declaration order still applies (E130).
+fn const_ready(s Sym) {
+	if cast(i64, s) == 0 || s.kind != SYM_CONST || s.done != 0 || s.decl == 0 {
+		return
+	}
+	let d = cast(Decl, s.decl)
+	if file_pkgs[d.file] == ck_pkg {
+		return
+	}
+	if cast(i64, const_busy) == 0 {
+		const_busy = []i64{}
+	}
+	for b in const_busy {
+		if b == cast(i64, d) {
+			return
+		}
+	}
+	const_busy = append(const_busy, cast(i64, d))
+	let file = ck_file
+	let f = ck_fn
+	check_const(d)
+	set_file(file)
+	ck_fn = f
+	const_busy = const_busy[:len(const_busy)-1]
+}
+
+// pkg_const is the constant a selector pkg.Name names, made ready, or 0.
+fn pkg_const(e i64) Sym {
+	if cast(Node, e).kind != EX_SELECT || cast(Node, cast(SelectExpr, e).x).kind != EX_IDENT || lookup_name_local(cast(IdentExpr, cast(SelectExpr, e).x).name) != 0 {
+		return cast(Sym, 0)
+	}
+	let pkg = import_pkg(cast(IdentExpr, cast(SelectExpr, e).x).name)
+	if len(pkg) == 0 {
+		return cast(Sym, 0)
+	}
+	let s = cast(Sym, pkg_member(pkg, cast(SelectExpr, e).name))
+	if cast(i64, s) == 0 || s.kind != SYM_CONST {
+		return cast(Sym, 0)
+	}
+	const_ready(s)
+	return s
+}
+
+// const_len_arg is the string literal of len("...") or len(Name) on a string constant, or 0:
+// the length of a constant string is an integer constant (#566).
+fn const_len_arg(e i64) i64 {
+	if cast(Node, e).kind != EX_CALL || cast(Call, e).name != "len" || len(cast(Call, e).args) != 1 {
+		return 0
+	}
+	if cast(i64, lookup_name("len")) != 0 {
+		return 0
+	}
+	return const_str_of(cast(Call, e).args[0])
 }
 
 // is_int_const_expr reports whether e is built only from integer literals and constants.
@@ -1105,10 +1421,17 @@ fn is_int_const_expr(e i64) i64 {
 		}
 		let s = lookup_name(cast(IdentExpr, e).name)
 		if cast(i64, s) != 0 && s.kind == SYM_CONST {
-			let d = s.decl
+			const_ready(s)
 			return i64(s.done == 0 || s.expr == 0)
 		}
-		return 0
+		return i64(cast(i64, s) == 0 && (cast(IdentExpr, e).name == "true" || cast(IdentExpr, e).name == "false"))
+	}
+	if k == EX_SELECT {
+		let ps = pkg_const(e)
+		return i64(cast(i64, ps) != 0 && ps.done != 0 && ps.expr == 0)
+	}
+	if k == EX_CALL {
+		return i64(const_len_arg(e) != 0)
 	}
 	if k == EX_UNARY {
 		return i64(cast(Unary, e).op != "&" && is_int_const_expr(cast(Unary, e).x) != 0)
@@ -1171,10 +1494,14 @@ fn const_value_b(e i64, iota i64) i64 {
 			return iota
 		}
 		let s = lookup_name(cast(IdentExpr, e).name)
+		if cast(i64, s) == 0 && (cast(IdentExpr, e).name == "true" || cast(IdentExpr, e).name == "false") {
+			return i64(cast(IdentExpr, e).name == "true")
+		}
 		if cast(i64, s) == 0 || s.kind != SYM_CONST {
 			err_code_quoted(cast(Node, e).pos, "E220 NOT_CONSTANT", "", cast(IdentExpr, e).name, " is not a constant")
 			return 0
 		}
+		const_ready(s)
 		if s.done == 0 {
 			err_code_quoted(cast(Node, e).pos, "E130 INIT_ORDER", "constant ", cast(IdentExpr, e).name, " used before its definition")
 			return 0
@@ -1182,6 +1509,23 @@ fn const_value_b(e i64, iota i64) i64 {
 		cast(IdentExpr, e).ref = cast(i64, s)
 		cv_big = s.big
 		return s.val
+	}
+	if k == EX_SELECT {
+		let ps = pkg_const(e)
+		if cast(i64, ps) == 0 || ps.done == 0 {
+			err_code_at(cast(Node, e).pos, "E220 NOT_CONSTANT", "expression is not a constant")
+			return 0
+		}
+		cv_big = ps.big
+		return ps.val
+	}
+	if k == EX_CALL {
+		let ls = const_len_arg(e)
+		if ls == 0 {
+			err_code_at(cast(Node, e).pos, "E220 NOT_CONSTANT", "expression is not a constant")
+			return 0
+		}
+		return cast(StrLit, ls).len
 	}
 	if k == EX_UNARY && cast(Unary, e).op != "-" && cast(Unary, e).op != "&" {
 		let uv = eval_unary(cast(Unary, e).op, const_value_b(cast(Unary, e).x, iota))

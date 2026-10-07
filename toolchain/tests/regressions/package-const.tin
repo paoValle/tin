@@ -1,0 +1,13 @@
+package main
+
+import "say"
+import "tide"
+
+// A constant made from another package's constant failed with E130 'used before its
+// definition': the packages' constants were checked after the program's (#566).
+const Timeout = 2 * tide.Second
+const Tick = tide.Millisecond
+
+fn main() {
+	say.Line(Timeout, Tick)
+}

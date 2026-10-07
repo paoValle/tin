@@ -1,0 +1,8 @@
+toolchain/tests/v2/const_exprs_bad.tin:9:17: error E222 DIVISION_BY_ZERO: division by zero in constant expression
+toolchain/tests/v2/const_exprs_bad.tin:10:20: error E223 CONST_OVERFLOW: constant arithmetic overflows: the result is not a finite float
+toolchain/tests/v2/const_exprs_bad.tin:11:14: error E223 CONST_OVERFLOW: a float constant converted to an integer must be a whole number in range
+toolchain/tests/v2/const_exprs_bad.tin:12:15: error E230 TYPE_MISMATCH: mismatched types str and untyped int
+toolchain/tests/v2/const_exprs_bad.tin:13:23: error E236 OPERATOR: a bool is not a number
+toolchain/tests/v2/const_exprs_bad.tin:14:19: error E236 OPERATOR: operands of && and || must be bool
+toolchain/tests/v2/const_exprs_bad.tin:15:13: error E230 TYPE_MISMATCH: mismatched types i64 and f64
+toolchain/tests/v2/const_exprs_bad.tin:16:7: error E221 CONST_TYPE: cannot use a bool constant as i64

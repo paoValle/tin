@@ -886,5 +886,15 @@
       "exit": 1,
       "stderr_contains": "E102 BUILTIN_NAME: 'min' is a builtin and cannot be redeclared"
     }
+  },
+  {
+    "source": "package-const.tin",
+    "issue": 566,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "2000000000 1000000\n",
+      "stderr": ""
+    }
   }
 ]

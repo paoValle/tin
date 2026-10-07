@@ -1,0 +1,55 @@
+package main
+
+import "say"
+import "tide"
+
+// Constant expressions over floats, strings and bools, constants from other packages, and
+// len of a constant string (#566). An untyped integer meeting an untyped float is a float.
+
+const Pi = 3.141592653589793
+const TwoPi = 2 * Pi
+const Half = 1 / 2.0
+const Neg = -Pi
+const A = 1.5 * 2.0
+const C = 4
+const D = C * 2.5
+const Third = 1.0 / 3.0
+const Sum = 0.1 + 0.2
+const Host = "example.com"
+const Base = "https://" + Host + "/api"
+const Level = 3
+const Debug = Level > 2
+const Quiet = Level >= 5 || !Debug
+const On = true
+const N = len("abcd")
+const M = len(Host)
+const Timeout = 2 * tide.Second
+const HalfSec = tide.Second / 2
+const Grace = 1.5 * tide.Second
+const GraceNs = i64(1.5 * tide.Second)
+const CF = f64(C)
+const X f32 = 1.5 * 2
+const Y f32 = 0.1
+
+fn main() {
+	say.Line("float", A, TwoPi, Half, Neg, D, Third, Sum)
+	say.Line("string", Base, len(Base))
+	say.Line("bool", Debug, Quiet, Debug && On)
+	if Debug && !Quiet {
+		say.Line("debug on")
+	}
+	let buf = [N]u8{}
+	say.Line("len", N, M, len(buf))
+	say.Line("package", Timeout, HalfSec, Grace, GraceNs, CF)
+	let x f32 = Pi
+	let y f32 = X
+	say.Line("f32", x, y, Y)
+	let r = 4 * 2.5
+	let s = C * 0.5
+	let t = Pi * 2
+	say.Line("expressions", r, s, t)
+	match Level {
+		3 => say.Line("level", Level)
+		_ => say.Line("other")
+	}
+}

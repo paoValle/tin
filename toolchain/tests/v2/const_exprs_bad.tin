@@ -1,0 +1,19 @@
+package main
+
+// Constant expressions are checked like the operations they fold (#566): a float division by
+// zero, a result that is not finite, a float constant converted to an integer when it is not
+// whole, mixing a string with a number, a bool with arithmetic, and a non-constant operand.
+
+let g = 3
+
+const Div = 1.0 / 0.0
+const Huge = 1e308 * 10.0
+const Part = i64(2.5)
+const Mixed = "a" + 1
+const Truth = (1 < 2) + 1
+const NotBool = 3 && true
+const Var = g * 2.0
+const Typed i64 = 1 < 2
+
+fn main() {
+}

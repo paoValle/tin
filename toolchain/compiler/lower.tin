@@ -493,12 +493,17 @@ fn use_sym(e i64, s Sym, want i64) i64 {
 		return f.type_
 	}
 	if k == SYM_CONST {
+		const_ready(s)
 		if s.done == 0 {
 			err_code_quoted(cast(Node, e).pos, "E130 INIT_ORDER", "constant ", cast(IdentExpr, e).name, " used before its definition")
 			return ty_int
 		}
 		if s.expr != 0 {
 			replace_node(e, expr_clone(s.expr))
+			if kind_of(cast(Ty, s.type_)) == K_UFLOAT {
+				// An untyped float constant takes the float type the context wants (#566).
+				return chk_kind(e, want)
+			}
 			return s.type_
 		}
 		let v = s.val
@@ -644,12 +649,73 @@ fn is_untyped_lit(e i64) i64 {
 	return i64(k == EX_INT || k == EX_NIL || k == EX_FLOAT || (k == EX_UNARY && is_untyped_lit(cast(Unary, e).x) != 0) || (k == EX_BINARY && is_untyped_lit(cast(Binary, e).l) != 0 && is_untyped_lit(cast(Binary, e).r) != 0))
 }
 
+// untyped_int_expr reports an untyped integer: a literal, an integer constant without a type,
+// or arithmetic on those.
+fn untyped_int_expr(e i64) i64 {
+	let k = cast(Node, e).kind
+	if k == EX_INT {
+		return 1
+	}
+	if k == EX_IDENT || k == EX_SELECT {
+		mut s = pkg_const(e)
+		if k == EX_IDENT {
+			s = lookup_name(cast(IdentExpr, e).name)
+		}
+		return i64(cast(i64, s) != 0 && s.kind == SYM_CONST && s.done != 0 && s.expr == 0 && kind_of(cast(Ty, s.type_)) == K_UINT)
+	}
+	if k == EX_UNARY {
+		return i64(cast(Unary, e).op == "-" && untyped_int_expr(cast(Unary, e).x) != 0)
+	}
+	if k == EX_BINARY {
+		let op = cast(Binary, e).op
+		return i64((op == "+" || op == "-" || op == "*" || op == "/" || op == "%") && untyped_int_expr(cast(Binary, e).l) != 0 && untyped_int_expr(cast(Binary, e).r) != 0)
+	}
+	return 0
+}
+
+// untyped_float_expr reports an untyped float: a float literal, a float constant without a
+// type, or arithmetic in which one of those meets untyped integers.
+fn untyped_float_expr(e i64) i64 {
+	let k = cast(Node, e).kind
+	if k == EX_FLOAT {
+		return 1
+	}
+	if k == EX_IDENT || k == EX_SELECT {
+		mut s = pkg_const(e)
+		if k == EX_IDENT {
+			s = lookup_name(cast(IdentExpr, e).name)
+		}
+		return i64(cast(i64, s) != 0 && s.kind == SYM_CONST && s.done != 0 && s.expr != 0 && kind_of(cast(Ty, s.type_)) == K_UFLOAT)
+	}
+	if k == EX_UNARY {
+		return i64(cast(Unary, e).op == "-" && untyped_float_expr(cast(Unary, e).x) != 0)
+	}
+	if k == EX_BINARY {
+		let op = cast(Binary, e).op
+		if op != "+" && op != "-" && op != "*" && op != "/" {
+			return 0
+		}
+		let l = cast(Binary, e).l
+		let r = cast(Binary, e).r
+		return i64((untyped_float_expr(l) != 0 && (untyped_float_expr(r) != 0 || untyped_int_expr(r) != 0)) || (untyped_int_expr(l) != 0 && untyped_float_expr(r) != 0))
+	}
+	return 0
+}
+
 // unify checks both operands of a binary operator and returns their common type:
 // identical types, or an untyped constant adapted to the other side.
 fn unify(l Node, r i64, want i64) i64 {
 	mut lt = 0
 	mut rt = 0
-	if is_untyped_lit(cast(i64, l)) == 0 || is_untyped_lit(r) != 0 {
+	if (untyped_float_expr(cast(i64, l)) != 0 && untyped_int_expr(r) != 0) || (untyped_float_expr(r) != 0 && untyped_int_expr(cast(i64, l)) != 0) {
+		// An untyped integer with an untyped float is a float, as in Go: 4 * 2.5, C * 2.5 (#566).
+		mut fw = ty_float
+		if is_float_t(want) != 0 {
+			fw = want
+		}
+		lt = chk(l, fw)
+		rt = chk(cast(Node, r), fw)
+	} else if is_untyped_lit(cast(i64, l)) == 0 || is_untyped_lit(r) != 0 {
 		lt = chk(l, want)
 		rt = chk(cast(Node, r), default_or(lt, want))
 	} else {
