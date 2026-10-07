@@ -1,0 +1,12 @@
+package main
+
+import "appkit"
+import "say"
+
+// Drawing without a window: fill a bitmap through CoreGraphics (a context pointer, four doubles for the color,
+// four doubles for the rectangle) and read a pixel back.
+fn main() {
+	let b = appkit.NewBitmap(4, 4)
+	appkit.FillRect(b, 0.0, 0.0, 4.0, 4.0, 1.0, 0.0, 0.0, 1.0)
+	say.Line("pixel:", appkit.Pixel(b, 0), appkit.Pixel(b, 1), appkit.Pixel(b, 2), appkit.Pixel(b, 3))
+}

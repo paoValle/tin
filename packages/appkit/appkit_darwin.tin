@@ -3,10 +3,458 @@
 // tools import it; libraries and servers never do (AGENTS.md, "Platforms").
 package appkit
 
+import "twine"
+
 @framework("CoreGraphics")
 extern fn CGMainDisplayID() i64
 
 // MainDisplayID is the id of the main display (CoreGraphics' CGMainDisplayID, a 32-bit value).
 fn MainDisplayID() i64 {
 	return CGMainDisplayID() & 0xffffffff
+}
+
+// The Objective-C runtime, in libobjc. Messages with integer and pointer arguments and
+// results go through objc_msgSend directly; the double and struct results need their own entry points
+// (not bound yet).
+@framework("/usr/lib/libobjc.A.dylib")
+extern fn objc_getClass(name i64) i64
+
+@framework("/usr/lib/libobjc.A.dylib")
+extern fn sel_registerName(name i64) i64
+
+@framework("/usr/lib/libobjc.A.dylib")
+extern fn objc_msgSend(recv i64, sel i64) i64
+
+// Class is the Objective-C class named name, or 0 when no loaded image defines it.
+fn Class(name str) i64 {
+	return objc_getClass(rt_cstr(name))
+}
+
+// Send sends the message name with no arguments to recv and returns its pointer or integer result.
+fn Send(recv i64, name str) i64 {
+	return objc_msgSend(recv, sel_registerName(rt_cstr(name)))
+}
+
+// Load registers AppKit's classes with the Objective-C runtime (NSApplicationLoad, which the framework
+// exports for this purpose). Call it before Class("NSApplication") or any other AppKit class.
+@framework("AppKit")
+extern fn NSApplicationLoad() i64
+
+// LoadAppKit reports whether AppKit loaded.
+fn LoadAppKit() bool {
+	return NSApplicationLoad() & 0xff != 0
+}
+
+// Double results and arguments. On arm64 both go through plain objc_msgSend: a double result comes back in
+// d0 and a double argument goes in d0 (the _fpret and _stret entry points are x86-64 only, and an arm64
+// struct result is returned through x8, which objc_msgSend passes on).
+@framework("/usr/lib/libobjc.A.dylib")
+@symbol("objc_msgSend")
+extern fn msgDouble(recv i64, sel i64) f64
+
+@framework("/usr/lib/libobjc.A.dylib")
+@symbol("objc_msgSend")
+extern fn msgWithDouble(recv i64, sel i64, v f64) i64
+
+// NumberWith returns an NSNumber holding v (+[NSNumber numberWithDouble:]).
+fn NumberWith(v f64) i64 {
+	return msgWithDouble(Class("NSNumber"), sel_registerName(rt_cstr("numberWithDouble:")), v)
+}
+
+// DoubleValue is the value of the NSNumber n (-[NSNumber doubleValue]).
+fn DoubleValue(n i64) f64 {
+	return msgDouble(n, sel_registerName(rt_cstr("doubleValue")))
+}
+
+// Foundation supplies NSNumber, NSString and the rest of the basic classes. NSHomeDirectory is a C function
+// Foundation exports; calling it loads the framework, so its classes are registered.
+@framework("Foundation")
+extern fn NSHomeDirectory() i64
+
+// LoadFoundation reports whether Foundation loaded.
+fn LoadFoundation() bool {
+	return NSHomeDirectory() != 0
+}
+
+// Messages with more arguments. Each shape is its own declaration of objc_msgSend, because the calling
+// convention depends on the argument types: integers and pointers fill x2, x3, ... and doubles fill d0, d1, ...
+// independently of each other.
+@framework("/usr/lib/libobjc.A.dylib")
+@symbol("objc_msgSend")
+extern fn msg1(recv i64, sel i64, a i64) i64
+
+@framework("/usr/lib/libobjc.A.dylib")
+@symbol("objc_msgSend")
+extern fn msg2(recv i64, sel i64, a i64, b i64) i64
+
+@framework("/usr/lib/libobjc.A.dylib")
+@symbol("objc_msgSend")
+extern fn msg3(recv i64, sel i64, a i64, b i64, c i64) i64
+
+@framework("/usr/lib/libobjc.A.dylib")
+@symbol("objc_msgSend")
+extern fn msg4(recv i64, sel i64, a i64, b i64, c i64, d i64) i64
+
+// A message whose first argument is an NSRect (four doubles, passed in d0 to d3) followed by three integers:
+// -[NSWindow initWithContentRect:styleMask:backing:defer:].
+@framework("/usr/lib/libobjc.A.dylib")
+@symbol("objc_msgSend")
+extern fn msgRect3(recv i64, sel i64, x f64, y f64, w f64, h f64, a i64, b i64, c i64) i64
+
+// Sel is the selector named name.
+fn Sel(name str) i64 {
+	return sel_registerName(rt_cstr(name))
+}
+
+// Send1 to Send4 send the message name with one to four integer or pointer arguments.
+fn Send1(recv i64, name str, a i64) i64 {
+	return msg1(recv, Sel(name), a)
+}
+
+fn Send2(recv i64, name str, a i64, b i64) i64 {
+	return msg2(recv, Sel(name), a, b)
+}
+
+fn Send3(recv i64, name str, a i64, b i64, c i64) i64 {
+	return msg3(recv, Sel(name), a, b, c)
+}
+
+fn Send4(recv i64, name str, a i64, b i64, c i64, d i64) i64 {
+	return msg4(recv, Sel(name), a, b, c, d)
+}
+
+// SendRect3 sends a message whose arguments are an NSRect and three integers.
+fn SendRect3(recv i64, name str, x f64, y f64, w f64, h f64, a i64, b i64, c i64) i64 {
+	return msgRect3(recv, Sel(name), x, y, w, h, a, b, c)
+}
+
+// NewString makes an NSString from s (+[NSString stringWithUTF8String:]); Foundation must be loaded.
+fn NewString(s str) i64 {
+	return Send1(Class("NSString"), "stringWithUTF8String:", rt_cstr(s))
+}
+
+// CoreGraphics: a bitmap to draw into. The functions that take a CGRect, CGPoint or CGFloat take doubles in
+// d0, d1, ...; the context, pointers and sizes are integers in x0, x1, ...
+@framework("CoreGraphics")
+extern fn CGColorSpaceCreateDeviceRGB() i64
+
+@framework("CoreGraphics")
+extern fn CGBitmapContextCreate(data i64, w i64, h i64, bitsPerComponent i64, bytesPerRow i64, space i64, info i64) i64
+
+@framework("CoreGraphics")
+extern fn CGContextSetRGBFillColor(ctx i64, r f64, g f64, b f64, a f64)
+
+@framework("CoreGraphics")
+extern fn CGContextFillRect(ctx i64, x f64, y f64, w f64, h f64)
+
+@framework("CoreGraphics")
+extern fn CGBitmapContextCreateImage(ctx i64) i64
+
+@framework("CoreGraphics")
+extern fn CGContextSelectFont(ctx i64, name i64, size f64, encoding i64)
+
+@framework("CoreGraphics")
+extern fn CGContextSetTextPosition(ctx i64, x f64, y f64)
+
+@framework("CoreGraphics")
+extern fn CGContextSetTextDrawingMode(ctx i64, mode i64)
+
+@framework("CoreGraphics")
+extern fn CGContextSetTextMatrix(ctx i64, a f64, b f64, c f64, d f64, tx f64, ty f64)
+
+@framework("CoreGraphics")
+extern fn CGColorCreateGenericRGB(r f64, g f64, b f64, a f64) i64
+
+@framework("CoreGraphics")
+extern fn CGColorRelease(color i64)
+
+@framework("CoreText")
+extern fn CTFontCreateWithName(name i64, size f64, matrix i64) i64
+
+@framework("CoreText")
+extern fn CTLineCreateWithAttributedString(text i64) i64
+
+@framework("CoreText")
+extern fn CTLineDraw(line i64, ctx i64)
+
+@framework("CoreGraphics")
+extern fn CGContextShowTextAtPoint(ctx i64, x f64, y f64, text i64, n i64)
+
+@framework("CoreGraphics")
+extern fn CGContextRelease(ctx i64)
+
+@framework("CoreGraphics")
+extern fn CGImageRelease(image i64)
+
+@framework("CoreGraphics")
+extern fn CGColorSpaceRelease(space i64)
+
+// Bitmap is a w by h RGBA bitmap (premultiplied alpha, 8 bits per component) the editor draws into: Pixels is
+// where the bytes are, Ctx the CoreGraphics context drawing to them.
+type Bitmap struct {
+	W i64
+	H i64
+	Pixels i64
+	Ctx i64
+	space i64
+	Font i64
+	FontName str
+	FontSize f64
+	R f64
+	G f64
+	B f64
+}
+
+// NewBitmap makes a w by h bitmap, cleared to transparent black.
+fn NewBitmap(w i64, h i64) Bitmap {
+	let b = Bitmap{W: w, H: h}
+	b.Pixels = calloc(w * h, 4)
+	b.space = CGColorSpaceCreateDeviceRGB()
+	// kCGImageAlphaPremultipliedLast: red, green, blue, alpha bytes
+	b.Ctx = CGBitmapContextCreate(b.Pixels, w, h, 8, w * 4, b.space, 1)
+	return b
+}
+
+// FillRect fills the rectangle with the color (components 0 to 1).
+fn FillRect(b Bitmap, x f64, y f64, w f64, h f64, r f64, g f64, bl f64, a f64) {
+	CGContextSetRGBFillColor(b.Ctx, r, g, bl, a)
+	CGContextFillRect(b.Ctx, x, y, w, h)
+}
+
+// Pixel is byte i of the bitmap's pixel data.
+fn Pixel(b Bitmap, i i64) i64 {
+	return i64(load8(b.Pixels + i))
+}
+
+// SendDouble sends the message name with no arguments and returns its double result.
+fn SendDouble(recv i64, name str) f64 {
+	return msgDouble(recv, Sel(name))
+}
+
+// SendWithDouble sends the message name with one double argument and returns its pointer or integer result.
+fn SendWithDouble(recv i64, name str, v f64) i64 {
+	return msgWithDouble(recv, Sel(name), v)
+}
+
+// ParseNumbers is the numbers (integers and decimals, with an optional minus sign) in s, in order: AppKit prints
+// its structures as text ("NSRect: {{0, 0}, {640, 400}}"), and a struct result cannot be read from Tin directly.
+fn ParseNumbers(s str) []f64 {
+	mut out = []f64{}
+	mut i = 0
+	for i < len(s) {
+		let c = s[i]
+		let digit = c >= '0' && c <= '9'
+		let negative = c == '-' && i + 1 < len(s) && s[i + 1] >= '0' && s[i + 1] <= '9'
+		if !digit && !negative {
+			i += 1
+			continue
+		}
+		mut neg = false
+		if negative {
+			neg = true
+			i += 1
+		}
+		mut v = 0.0
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			v = v * 10.0 + f64(i64(s[i]) - 48)
+			i += 1
+		}
+		if i + 1 < len(s) && s[i] == '.' && s[i + 1] >= '0' && s[i + 1] <= '9' {
+			i += 1
+			mut scale = 0.1
+			for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+				v = v + f64(i64(s[i]) - 48) * scale
+				scale = scale / 10.0
+				i += 1
+			}
+		}
+		if neg {
+			v = 0.0 - v
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// The autorelease pool: the objects the messages return are autoreleased, so a loop that sends many messages
+// wraps each pass in PoolPush and PoolPop.
+@framework("/usr/lib/libobjc.A.dylib")
+extern fn objc_autoreleasePoolPush() i64
+
+@framework("/usr/lib/libobjc.A.dylib")
+extern fn objc_autoreleasePoolPop(pool i64)
+
+fn PoolPush() i64 {
+	return objc_autoreleasePoolPush()
+}
+
+fn PoolPop(pool i64) {
+	objc_autoreleasePoolPop(pool)
+}
+
+// Scale is how many pixels a point is on the window's screen (2 on a Retina display).
+fn Scale(win Window) f64 {
+	return SendDouble(win.Win, "backingScaleFactor")
+}
+
+// ContentSize is the size in points of the window's content view (read through key-value coding, which hands
+// back the NSRect as an NSValue that prints as text).
+fn ContentSize(win Window) (f64, f64) {
+	let frame = Send1(win.View, "valueForKey:", NewString("frame"))
+	let nums = ParseNumbers(StringOf(Send(frame, "description")))
+	if len(nums) < 4 {
+		return 0.0, 0.0
+	}
+	return nums[2], nums[3]
+}
+
+// SetTitle sets the window's title.
+fn SetTitle(win Window, title str) {
+	Send1(win.Win, "setTitle:", NewString(title))
+}
+
+// EventLocation is where a mouse event happened, in points from the content area's bottom left (the event
+// prints its position as "loc=(x,y)").
+fn EventLocation(e i64) (f64, f64) {
+	let d = StringOf(Send(e, "description"))
+	let at = twine.Index(d, "loc=(")
+	if at < 0 {
+		return 0.0, 0.0
+	}
+	let nums = ParseNumbers(d[at + 5:])
+	if len(nums) < 2 {
+		return 0.0, 0.0
+	}
+	return nums[0], nums[1]
+}
+
+// EventScrollY is the vertical scroll of a scroll-wheel event in points (positive: content moves down).
+fn EventScrollY(e i64) f64 {
+	return SendDouble(e, "scrollingDeltaY")
+}
+
+// ClipboardText is the text on the general pasteboard ("" when there is none).
+fn ClipboardText() str {
+	let pb = Send(Class("NSPasteboard"), "generalPasteboard")
+	return StringOf(Send1(pb, "stringForType:", NewString("public.utf8-plain-text")))
+}
+
+// SetClipboard puts text on the general pasteboard.
+fn SetClipboard(text str) {
+	let pb = Send(Class("NSPasteboard"), "generalPasteboard")
+	Send(pb, "clearContents")
+	Send2(pb, "setString:forType:", NewString(text), NewString("public.utf8-plain-text"))
+}
+
+// OpenPanel asks for a file to open ("" when cancelled).
+fn OpenPanel() str {
+	let panel = Send(Class("NSOpenPanel"), "openPanel")
+	// NSModalResponseOK is 1
+	if Send(panel, "runModal") != 1 {
+		return ""
+	}
+	return StringOf(Send(Send(panel, "URL"), "path"))
+}
+
+// SavePanel asks where to save, offering name ("" when cancelled).
+fn SavePanel(name str) str {
+	let panel = Send(Class("NSSavePanel"), "savePanel")
+	Send1(panel, "setNameFieldStringValue:", NewString(name))
+	if Send(panel, "runModal") != 1 {
+		return ""
+	}
+	return StringOf(Send(Send(panel, "URL"), "path"))
+}
+
+// Alert shows a message with buttons (the first is the default) and returns the index of the one pressed.
+fn Alert(message str, detail str, buttons []str) i64 {
+	let alert = Send(Send(Class("NSAlert"), "alloc"), "init")
+	Send1(alert, "setMessageText:", NewString(message))
+	Send1(alert, "setInformativeText:", NewString(detail))
+	mut i = 0
+	for i < len(buttons) {
+		Send1(alert, "addButtonWithTitle:", NewString(buttons[i]))
+		i += 1
+	}
+	// the first button returns NSAlertFirstButtonReturn (1000), the next 1001, ...
+	return Send(alert, "runModal") - 1000
+}
+
+// ImageIO writes the bitmap as a PNG: the editor's pixels, to a file (a snapshot for tests and bug reports).
+@framework("CoreFoundation")
+extern fn CFStringCreateWithCString(alloc i64, text i64, encoding i64) i64
+
+@framework("CoreFoundation")
+extern fn CFURLCreateWithFileSystemPath(alloc i64, path i64, style i64, isDirectory i64) i64
+
+@framework("CoreFoundation")
+extern fn CFRelease(object i64)
+
+@framework("ImageIO")
+extern fn CGImageDestinationCreateWithURL(url i64, kind i64, count i64, options i64) i64
+
+@framework("ImageIO")
+extern fn CGImageDestinationAddImage(dest i64, image i64, properties i64)
+
+@framework("ImageIO")
+extern fn CGImageDestinationFinalize(dest i64) i64
+
+// SavePNG writes the bitmap to path as a PNG; it reports whether the file was written.
+fn SavePNG(b Bitmap, path str) bool {
+	// 0x08000100 is kCFStringEncodingUTF8
+	let image = CGBitmapContextCreateImage(b.Ctx)
+	let cfpath = CFStringCreateWithCString(0, rt_cstr(path), 0x08000100)
+	// style 0 is kCFURLPOSIXPathStyle
+	let url = CFURLCreateWithFileSystemPath(0, cfpath, 0, 0)
+	let kind = CFStringCreateWithCString(0, rt_cstr("public.png"), 0x08000100)
+	let dest = CGImageDestinationCreateWithURL(url, kind, 1, 0)
+	CGImageDestinationAddImage(dest, image, 0)
+	let ok = CGImageDestinationFinalize(dest) & 0xff
+	CFRelease(dest)
+	CFRelease(kind)
+	CFRelease(url)
+	CFRelease(cfpath)
+	CGImageRelease(image)
+	return ok != 0
+}
+
+// FreeBitmap releases the bitmap's context and pixels.
+fn FreeBitmap(b Bitmap) {
+	CGContextRelease(b.Ctx)
+	CGColorSpaceRelease(b.space)
+	free(b.Pixels)
+}
+
+// SetColor sets the color the next text is drawn in (components 0 to 1).
+fn SetColor(b Bitmap, r f64, g f64, bl f64, a f64) {
+	b.R = r
+	b.G = g
+	b.B = bl
+	CGContextSetRGBFillColor(b.Ctx, r, g, bl, a)
+}
+
+extern fn popen(command i64, mode i64) i64
+
+extern fn fread(buf i64, size i64, n i64, stream i64) i64
+
+extern fn pclose(stream i64) i64
+
+// RunCapture runs a shell command line (standard error folded into standard output) and returns its exit code
+// and everything it printed (up to a megabyte).
+fn RunCapture(command str) (i64, str) {
+	let fp = popen(rt_cstr(command + " 2>&1"), rt_cstr("r"))
+	if fp == 0 {
+		return -1, "cannot run: " + command
+	}
+	let buf = calloc(65536, 1)
+	mut out = ""
+	for len(out) < 1 << 20 {
+		let n = fread(buf, 1, 65536, fp)
+		if n <= 0 {
+			break
+		}
+		out = out + rt_str_from_raw(buf, n)
+	}
+	let status = pclose(fp)
+	return (status >> 8) & 0xff, out
 }

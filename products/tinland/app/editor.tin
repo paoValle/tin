@@ -1,0 +1,694 @@
+package main
+
+import "appkit"
+import "mint"
+import "quarry"
+import "textedit"
+import "twine"
+
+// Modifier flags of a key event (NSEventModifierFlag).
+const flagShift = 1 << 17
+const flagCtrl = 1 << 18
+const flagAlt = 1 << 19
+const flagCmd = 1 << 20
+
+// What the keys mean right now: editing, typing a search, typing a line number.
+const modeEdit = 0
+const modeFind = 1
+const modeGoto = 2
+const modeReplace = 3
+
+// Hardware key codes (the ANSI layout; the editor reads text from the event, codes only for keys that type none).
+const keyReturn = 36
+const keyEnter = 76
+const keyTab = 48
+const keyBackspace = 51
+const keyEscape = 53
+const keyLeft = 123
+const keyRight = 124
+const keyDown = 125
+const keyUp = 126
+const keyForwardDelete = 117
+const keyHome = 115
+const keyEnd = 119
+const keyPageUp = 116
+const keyPageDown = 121
+
+// Key is one key press: the hardware code, the modifier flags and the text it types.
+type Key struct {
+	Code  i64
+	Flags i64
+	Chars str
+}
+
+// Tab is one open file: its text and where its view is scrolled (the active tab's live copy is the editor's).
+type Tab struct {
+	Buf     textedit.Buffer
+	Scroll  i64
+	HScroll i64
+}
+
+// Editor is the application state: the text, where the view is scrolled, the mode, and the pixels.
+type Editor struct {
+	Buf      textedit.Buffer
+	Tabs     []Tab
+	Active   i64
+	Win      appkit.Window
+	Bmp      appkit.Bitmap
+	Open     bool
+	Scale    f64
+	PtW      f64
+	PtH      f64
+	FontSize f64
+	CharW    f64
+	LineH    f64
+	Scroll   i64
+	HScroll  i64
+	Mode     i64
+	Prompt   str
+	Message  str
+	FindFrom textedit.Pos
+	Needle   str
+	Replacement str
+	fresh    bool
+	Clip     str
+	Output   []str
+	OutputOpen bool
+	Redraw   bool
+	Blink    bool
+	Quit     bool
+	Headless bool
+	Title    str
+	rawRows  []bool
+	rawFor   i64
+	acc      f64
+	dragging bool
+	clicks   i64
+	lastClick f64
+}
+
+fn newEditor(buf textedit.Buffer) Editor {
+	let ed = Editor{Buf: buf, Win: appkit.Window{}, Bmp: appkit.Bitmap{}, FindFrom: textedit.Pos{}, FontSize: 13.0, Scale: 2.0, PtW: 900.0, PtH: 600.0, Redraw: true, Blink: true}
+	ed.rawFor = -1
+	ed.Tabs = []Tab{Tab{Buf: buf}}
+	return ed
+}
+
+// name is the file's name for the title and the status line.
+fn (ed Editor) name() str {
+	if len(ed.Buf.Path) == 0 {
+		return "untitled"
+	}
+	let parts = twine.Split(ed.Buf.Path, "/")
+	return parts[len(parts) - 1]
+}
+
+fn (ed mut Editor) say(text str) {
+	ed.Message = text
+	ed.Redraw = true
+}
+
+// stash keeps the live view state in the active tab.
+fn (ed mut Editor) stash() {
+	if ed.Active < 0 {
+		return
+	}
+	let t = ed.Tabs[ed.Active]
+	t.Buf = ed.Buf
+	t.Scroll = ed.Scroll
+	t.HScroll = ed.HScroll
+}
+
+// activate makes tab i the one shown.
+fn (ed mut Editor) activate(i i64) {
+	if i < 0 || i >= len(ed.Tabs) {
+		return
+	}
+	ed.stash()
+	ed.Active = i
+	ed.Buf = ed.Tabs[i].Buf
+	ed.Scroll = ed.Tabs[i].Scroll
+	ed.HScroll = ed.Tabs[i].HScroll
+	ed.rawFor = -1
+	ed.Mode = modeEdit
+	ed.Redraw = true
+}
+
+// newTab opens a tab holding buf and shows it.
+fn (ed mut Editor) newTab(buf textedit.Buffer) {
+	ed.stash()
+	ed.Tabs = append(ed.Tabs, Tab{Buf: buf})
+	ed.activate(len(ed.Tabs) - 1)
+}
+
+// tabName is the name shown for tab i.
+fn (ed Editor) tabName(i i64) str {
+	let b = ed.Tabs[i].Buf
+	if i == ed.Active {
+		return nameOf(ed.Buf)
+	}
+	return nameOf(b)
+}
+
+fn nameOf(b textedit.Buffer) str {
+	if len(b.Path) == 0 {
+		return "untitled"
+	}
+	let parts = twine.Split(b.Path, "/")
+	return parts[len(parts) - 1]
+}
+
+// load opens the file at path in a tab (switching to the tab that already has it, and reusing an untouched
+// empty tab).
+fn (ed mut Editor) load(path str) bool {
+	ed.stash()
+	mut i = 0
+	for i < len(ed.Tabs) {
+		if ed.Tabs[i].Buf.Path == path {
+			ed.activate(i)
+			ed.say("switched to " + path)
+			return true
+		}
+		i += 1
+	}
+	let text = quarry.ReadFile(path) catch _ {
+		ed.say("cannot read " + path)
+		return false
+	}
+	let buf = textedit.FromText(text)
+	buf.Path = path
+	let cur = ed.Buf
+	if len(ed.Tabs) == 1 && len(cur.Path) == 0 && !cur.Dirty && len(cur.Lines) == 1 && len(cur.Lines[0]) == 0 {
+		ed.Tabs[0].Buf = buf
+		ed.Active = -1
+		ed.activate(0)
+		ed.Active = 0
+	} else {
+		ed.newTab(buf)
+	}
+	ed.say("opened " + path)
+	return true
+}
+
+// closeTab closes the active tab (asking about unsaved changes); closing the last one quits.
+fn (ed mut Editor) closeTab() {
+	if !ed.confirm() {
+		return
+	}
+	if len(ed.Tabs) == 1 {
+		ed.Quit = true
+		return
+	}
+	let at = ed.Active
+	mut rest = []Tab{}
+	mut j = 0
+	for j < len(ed.Tabs) {
+		if j != at {
+			rest = append(rest, ed.Tabs[j])
+		}
+		j += 1
+	}
+	ed.Tabs = rest
+	mut next = at
+	if next >= len(ed.Tabs) {
+		next = len(ed.Tabs) - 1
+	}
+	ed.Active = -1
+	ed.Buf = ed.Tabs[next].Buf
+	ed.Scroll = ed.Tabs[next].Scroll
+	ed.HScroll = ed.Tabs[next].HScroll
+	ed.Active = next
+	ed.rawFor = -1
+	ed.Redraw = true
+}
+
+// save writes the text to its file (asking for one when it has none).
+fn (ed mut Editor) save(asNew bool) bool {
+	mut path = ed.Buf.Path
+	if len(path) == 0 || asNew {
+		if ed.Headless {
+			ed.say("no file name")
+			return false
+		}
+		path = appkit.SavePanel(ed.name())
+		if len(path) == 0 {
+			return false
+		}
+	}
+	quarry.WriteFile(path, ed.Buf.Text()) catch _ {
+		ed.say("cannot write " + path)
+		return false
+	}
+	ed.Buf.Path = path
+	ed.Buf.Dirty = false
+	ed.say("saved " + path)
+	return true
+}
+
+// panelH is the height in pixels of the output panel (0 when closed).
+fn (ed Editor) panelH() f64 {
+	if !ed.OutputOpen {
+		return 0.0
+	}
+	return ed.LineH * f64(outputRows) + ed.LineH * 0.4
+}
+
+// tabH is the height in pixels of the tab bar.
+fn (ed Editor) tabH() f64 {
+	return ed.LineH * 1.5
+}
+
+// rows is how many text lines fit in the window.
+fn (ed Editor) rows() i64 {
+	let area = ed.PtH * ed.Scale - ed.LineH * 2.0 - ed.LineH * 0.4 - ed.tabH() - ed.panelH()
+	let n = i64(area / ed.LineH)
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+// cols is how many columns of text fit beside the line numbers.
+fn (ed Editor) cols() i64 {
+	let n = i64((ed.PtW * ed.Scale - ed.gutterW() - ed.CharW) / ed.CharW)
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+// gutterW is the width in pixels of the line numbers.
+fn (ed Editor) gutterW() f64 {
+	mut digits = 1
+	mut n = len(ed.Buf.Lines)
+	for n >= 10 {
+		n = n / 10
+		digits += 1
+	}
+	return f64(digits + 3) * ed.CharW
+}
+
+// ensureVisible scrolls so the cursor is on screen.
+fn (ed mut Editor) ensureVisible() {
+	let rows = ed.rows()
+	if ed.Buf.Row < ed.Scroll {
+		ed.Scroll = ed.Buf.Row
+	}
+	if ed.Buf.Row >= ed.Scroll + rows {
+		ed.Scroll = ed.Buf.Row - rows + 1
+	}
+	let maxScroll = len(ed.Buf.Lines) - 1
+	if ed.Scroll > maxScroll {
+		ed.Scroll = maxScroll
+	}
+	if ed.Scroll < 0 {
+		ed.Scroll = 0
+	}
+	let cols = ed.cols()
+	let dc = textedit.DisplayCol(ed.Buf.Lines[ed.Buf.Row], ed.Buf.Col, 4)
+	if dc < ed.HScroll {
+		ed.HScroll = dc
+	}
+	if dc >= ed.HScroll + cols - 1 {
+		ed.HScroll = dc - cols + 2
+	}
+	if ed.HScroll < 0 {
+		ed.HScroll = 0
+	}
+}
+
+// typeable reports whether a key's text is something to insert: not a control character, and not one of the
+// private-use characters AppKit reports for the arrow, function and other keys that type nothing.
+fn typeable(chars str) bool {
+	if len(chars) == 0 {
+		return false
+	}
+	let c = i64(chars[0])
+	if c < 0x20 || c == 0x7f {
+		return false
+	}
+	if c == 0xef && len(chars) > 1 {
+		let d = i64(chars[1])
+		if d >= 0x9c && d <= 0xa3 {
+			return false
+		}
+	}
+	return true
+}
+
+// handleKey acts on one key press.
+fn (ed mut Editor) handleKey(k Key) {
+	ed.Blink = true
+	ed.Redraw = true
+	ed.Message = ""
+	if ed.Mode != modeEdit {
+		ed.promptKey(k)
+		ed.ensureVisible()
+		return
+	}
+	let shift = (k.Flags & flagShift) != 0
+	let alt = (k.Flags & flagAlt) != 0
+	let cmd = (k.Flags & flagCmd) != 0
+	let ctrl = (k.Flags & flagCtrl) != 0
+	if cmd {
+		ed.command(k, shift)
+		ed.ensureVisible()
+		return
+	}
+	let b = ed.Buf
+	if k.Code == keyLeft {
+		if alt {
+			b.WordLeft(shift)
+		} else {
+			b.Left(shift)
+		}
+	} else if k.Code == keyRight {
+		if alt {
+			b.WordRight(shift)
+		} else {
+			b.Right(shift)
+		}
+	} else if k.Code == keyUp {
+		if alt {
+			b.MoveLines(-1)
+		} else {
+			b.Up(shift)
+		}
+	} else if k.Code == keyDown {
+		if alt {
+			b.MoveLines(1)
+		} else {
+			b.Down(shift)
+		}
+	} else if k.Code == keyHome {
+		b.Home(shift)
+	} else if k.Code == keyEnd {
+		b.End(shift)
+	} else if k.Code == keyPageUp {
+		b.PageUp(ed.rows() - 1, shift)
+	} else if k.Code == keyPageDown {
+		b.PageDown(ed.rows() - 1, shift)
+	} else if k.Code == keyReturn || k.Code == keyEnter {
+		b.Newline()
+	} else if k.Code == keyBackspace {
+		b.Backspace()
+	} else if k.Code == keyForwardDelete {
+		b.Delete()
+	} else if k.Code == keyTab && ctrl {
+		mut next = ed.Active + 1
+		if shift {
+			next = ed.Active - 1
+		}
+		if next < 0 {
+			next = len(ed.Tabs) - 1
+		}
+		if next >= len(ed.Tabs) {
+			next = 0
+		}
+		ed.activate(next)
+	} else if k.Code == keyTab {
+		if shift {
+			b.Unindent()
+		} else if b.HasSel && b.SelStart().Row != b.SelEnd().Row {
+			b.Indent()
+		} else {
+			b.Insert("\t")
+		}
+	} else if k.Code == keyEscape {
+		b.HasSel = false
+		ed.OutputOpen = false
+	} else if ctrl {
+		ed.controlKey(k)
+	} else if typeable(k.Chars) {
+		b.Insert(k.Chars)
+	}
+	ed.ensureVisible()
+}
+
+// controlKey handles the Emacs-style line editing keys of a Mac text field.
+fn (ed mut Editor) controlKey(k Key) {
+	let b = ed.Buf
+	if len(k.Chars) == 0 {
+		return
+	}
+	let c = k.Chars[0]
+	if c == 'a' || c == 1 {
+		b.Home(false)
+	} else if c == 'e' || c == 5 {
+		b.End(false)
+	} else if c == 'k' || c == 11 {
+		// kill to the end of the line (at the end of a line, the line break)
+		b.MoveTo(b.Row, len(b.Lines[b.Row]), true)
+		if len(b.SelectedText()) == 0 {
+			b.Delete()
+		} else {
+			b.Backspace()
+		}
+	}
+}
+
+// command handles a key pressed with the command key.
+fn (ed mut Editor) command(k Key, shift bool) {
+	let b = ed.Buf
+	if len(k.Chars) == 0 {
+		return
+	}
+	let c = k.Chars[0]
+	if k.Code == keyLeft {
+		b.Home(shift)
+	} else if k.Code == keyRight {
+		b.End(shift)
+	} else if k.Code == keyUp {
+		b.DocStart(shift)
+	} else if k.Code == keyDown {
+		b.DocEnd(shift)
+	} else if c == 'q' {
+		ed.quit()
+	} else if c == 'w' {
+		ed.closeTab()
+	} else if c >= '1' && c <= '9' {
+		ed.activate(i64(c) - 49)
+	} else if c == 's' {
+		ed.save(shift)
+	} else if c == 'o' {
+		ed.openFile()
+	} else if c == 'n' {
+		ed.newTab(textedit.New())
+	} else if c == 'z' {
+		if shift {
+			b.Redo()
+		} else {
+			b.Undo()
+		}
+	} else if c == 'x' {
+		ed.copy(true)
+	} else if c == 'c' {
+		ed.copy(false)
+	} else if c == 'v' {
+		let text = ed.clipboard()
+		if len(text) > 0 {
+			b.Insert(text)
+		}
+	} else if c == 'a' {
+		b.SelectAll()
+	} else if c == 'f' {
+		ed.Mode = modeFind
+		ed.Prompt = ed.Needle
+		ed.fresh = true
+		ed.FindFrom = b.SelStart()
+	} else if c == 'g' {
+		if len(ed.Needle) > 0 && !b.Find(ed.Needle, !shift) {
+			ed.say("not found: " + ed.Needle)
+		}
+	} else if c == 'l' {
+		ed.Mode = modeGoto
+		ed.Prompt = ""
+	} else if c == 'r' {
+		ed.runFile()
+	} else if c == '/' {
+		b.ToggleComment()
+	} else if c == 'd' {
+		b.DuplicateLine()
+	} else if c == 'k' && shift {
+		b.DeleteLine()
+	} else if c == ']' {
+		b.Indent()
+	} else if c == '[' {
+		b.Unindent()
+	}
+}
+
+// clipboard and copy go through the system pasteboard (the Clip field stands in when there is no window).
+fn (ed Editor) clipboard() str {
+	if ed.Headless {
+		return ed.Clip
+	}
+	return appkit.ClipboardText()
+}
+
+fn (ed mut Editor) copy(cut bool) {
+	let b = ed.Buf
+	mut text = b.SelectedText()
+	if len(text) == 0 {
+		text = b.Lines[b.Row] + "\n"
+		if cut {
+			b.DeleteLine()
+		}
+	} else if cut {
+		b.Backspace()
+	}
+	if ed.Headless {
+		ed.Clip = text
+	} else {
+		appkit.SetClipboard(text)
+	}
+}
+
+// openFile asks for a file and loads it.
+fn (ed mut Editor) openFile() {
+	if ed.Headless {
+		return
+	}
+	let path = appkit.OpenPanel()
+	if len(path) > 0 {
+		ed.load(path)
+	}
+}
+
+// confirm asks what to do with unsaved changes in the active tab before it goes away; it reports whether to go on.
+fn (ed mut Editor) confirm() bool {
+	if !ed.Buf.Dirty || ed.Headless {
+		return true
+	}
+	let answer = appkit.Alert("Save changes to " + ed.name() + "?", "Your changes will be lost if you don't save them.", []str{"Save", "Don't Save", "Cancel"})
+	if answer == 2 {
+		return false
+	}
+	return answer != 0 || ed.save(false)
+}
+
+// quit leaves the editor, asking first about every tab with unsaved changes.
+fn (ed mut Editor) quit() {
+	ed.stash()
+	let start = ed.Active
+	mut i = 0
+	for i < len(ed.Tabs) {
+		if ed.Tabs[i].Buf.Dirty {
+			ed.activate(i)
+			if !ed.confirm() {
+				return
+			}
+		}
+		i += 1
+	}
+	ed.Quit = true
+}
+
+// promptKey handles keys while a find or go-to-line prompt is open.
+fn (ed mut Editor) promptKey(k Key) {
+	let b = ed.Buf
+	let shift = (k.Flags & flagShift) != 0
+	if k.Code == keyEscape {
+		ed.Mode = modeEdit
+		return
+	}
+	if k.Code == keyTab && ed.Mode == modeFind {
+		// Tab moves from the search text to the replacement text
+		ed.Needle = ed.Prompt
+		ed.Prompt = ed.Replacement
+		ed.fresh = true
+		ed.Mode = modeReplace
+		return
+	}
+	if k.Code == keyTab && ed.Mode == modeReplace {
+		ed.Replacement = ed.Prompt
+		ed.Prompt = ed.Needle
+		ed.fresh = true
+		ed.Mode = modeFind
+		return
+	}
+	if (k.Code == keyReturn || k.Code == keyEnter) && ed.Mode == modeReplace {
+		ed.Replacement = ed.Prompt
+		if (k.Flags & flagCmd) != 0 {
+			let n = b.ReplaceAll(ed.Needle, ed.Prompt)
+			ed.say("replaced " + mint.Itoa(n))
+			ed.Mode = modeEdit
+			return
+		}
+		// replace the match the cursor is on (finding it first when it is not selected), then go to the next
+		if !b.HasSel || b.SelectedText() != ed.Needle {
+			b.Find(ed.Needle, true)
+		}
+		if b.HasSel && b.SelectedText() == ed.Needle {
+			b.ReplaceSelection(ed.Prompt)
+			if !b.Find(ed.Needle, true) {
+				ed.say("no more matches")
+			}
+		} else {
+			ed.say("not found: " + ed.Needle)
+		}
+		return
+	}
+	if k.Code == keyReturn || k.Code == keyEnter {
+		if ed.Mode == modeGoto {
+			let n = parseInt(ed.Prompt)
+			if n > 0 {
+				b.MoveTo(n - 1, 0, false)
+			}
+			ed.Mode = modeEdit
+			return
+		}
+		ed.Needle = ed.Prompt
+		if len(ed.Needle) > 0 && !b.Find(ed.Needle, !shift) {
+			ed.say("not found: " + ed.Needle)
+		}
+		return
+	}
+	if k.Code == keyBackspace {
+		if ed.fresh {
+			ed.Prompt = ""
+		} else if len(ed.Prompt) > 0 {
+			ed.Prompt = ed.Prompt[:len(ed.Prompt) - 1]
+		}
+		ed.fresh = false
+	} else if (k.Flags & flagCmd) != 0 {
+		if len(k.Chars) > 0 && k.Chars[0] == 'g' && len(ed.Needle) > 0 {
+			b.Find(ed.Needle, !shift)
+		} else if len(k.Chars) > 0 && k.Chars[0] == 'f' {
+			ed.Mode = modeFind
+			ed.Prompt = ed.Needle
+			ed.fresh = true
+		}
+		return
+	} else if typeable(k.Chars) {
+		if ed.fresh {
+			ed.Prompt = ""
+			ed.fresh = false
+		}
+		ed.Prompt = ed.Prompt + k.Chars
+	} else {
+		return
+	}
+	if ed.Mode == modeFind {
+		// search again from where the search began, as the text is typed
+		b.MoveTo(ed.FindFrom.Row, ed.FindFrom.Col, false)
+		ed.Needle = ed.Prompt
+		if len(ed.Prompt) > 0 {
+			b.Find(ed.Prompt, true)
+		}
+	}
+}
+
+// parseInt is the number in s (0 when it is not one).
+fn parseInt(s str) i64 {
+	mut n = 0
+	mut i = 0
+	for i < len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return 0
+		}
+		n = n * 10 + (i64(s[i]) - 48)
+		i += 1
+	}
+	return n
+}

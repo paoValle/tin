@@ -128,6 +128,24 @@ fn entry_fn() Fn {
 	return cast(Fn, 0)
 }
 
+// symbol_of is the C symbol an extern binds to: its @symbol("name") when it has one, else its own name.
+// Several externs may bind one symbol with different signatures (objc_msgSend for each argument shape).
+fn symbol_of(f Fn) str {
+	if cast(i64, f.attrs) == 0 {
+		return f.name
+	}
+	let attrs = cast([]i64, f.attrs)
+	mut i = 0
+	for i < len(attrs) {
+		let a = cast(Attr, attrs[i])
+		if a.name == "symbol" {
+			return cast(StrLit, cast([]i64, a.args)[0]).ptr
+		}
+		i = i + 1
+	}
+	return f.name
+}
+
 // framework_of is the name of the @framework an extern declares, or "" for libSystem.
 fn framework_of(f Fn) str {
 	if cast(i64, f.attrs) == 0 {
@@ -145,8 +163,12 @@ fn framework_of(f Fn) str {
 	return ""
 }
 
-// framework_path is the path dyld loads a system framework from.
+// framework_path is the path dyld loads a system framework from; a name that starts with / is a dylib's
+// path, as libobjc.A.dylib is (it is not re-exported by libSystem).
 fn framework_path(name str) str {
+	if name[0] == '/' {
+		return name
+	}
 	return "/System/Library/Frameworks/" + name + ".framework/" + name
 }
 
@@ -280,7 +302,7 @@ fn write_executable(path str) {
 		bind_ordinal(bind_, lk_ords[i])
 		buf_byte(bind_, 0x40)
 		buf_byte(bind_, '_')
-		buf_str(bind_, lk_imports[i].name)
+		buf_str(bind_, symbol_of(lk_imports[i]))
 		buf_byte(bind_, 0)
 		buf_byte(bind_, 0x51)
 		buf_byte(bind_, 0x72)

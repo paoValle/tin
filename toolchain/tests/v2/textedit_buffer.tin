@@ -1,0 +1,71 @@
+package main
+
+import "say"
+import "textedit"
+
+fn show(b textedit.Buffer) {
+	say.Line(b.Text(), "|", b.Row, b.Col)
+}
+
+// The editing model without a screen: typing, newlines with indentation, deletion, joins, moves by rune, the
+// selection, undo and redo, search.
+fn main() {
+	let b = textedit.New()
+	b.Insert("fn main() {{")
+	b.Newline()
+	b.Insert("let x = 1")
+	show(b)
+
+	// a selection typed over; backspace joins lines
+	b.Home(false)
+	b.End(true)
+	say.Line("selected:", b.SelectedText())
+	b.Insert("let y = 2")
+	b.Home(false)
+	b.Backspace()
+	b.Backspace()
+	show(b)
+
+	// UTF-8: left over a two-byte rune, then delete it
+	let u = textedit.FromText("aéb")
+	u.End(false)
+	u.Left(false)
+	u.Left(false)
+	say.Line("col before the rune:", u.Col)
+	u.Delete()
+	say.Line("after delete:", u.Text(), u.Col)
+
+	// undo and redo
+	let c = textedit.New()
+	c.Insert("one")
+	c.Newline()
+	c.Insert("two")
+	say.Line(c.Text(), "|", c.Undo(), "|", c.Text(), "|", c.Undo(), "|", c.Text(), "|", c.Undo())
+	say.Line(c.Redo(), c.Redo(), c.Text())
+
+	// search wraps and selects
+	let f = textedit.FromText("alpha\nbeta alpha\ngamma")
+	say.Line(f.Find("alpha", true), f.Row, f.Col, f.SelectedText())
+	say.Line(f.Find("alpha", true), f.Row, f.Col)
+	say.Line(f.Find("alpha", true), f.Row, f.Col)
+	say.Line(f.Find("zeta", true))
+
+	// moves keep the screen column
+	let m = textedit.FromText("abcdef\nx\nabcdef")
+	m.End(false)
+	m.Down(false)
+	m.Down(false)
+	say.Line(m.Row, m.Col)
+	m.Up(false)
+	m.Up(false)
+	say.Line(m.Row, m.Col)
+
+	// words
+	let w = textedit.FromText("foo bar_baz  qux")
+	w.WordRight(false)
+	say.Line(w.Col)
+	w.WordRight(false)
+	say.Line(w.Col)
+	w.WordLeft(false)
+	say.Line(w.Col)
+}

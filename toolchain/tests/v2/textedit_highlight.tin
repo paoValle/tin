@@ -1,0 +1,25 @@
+package main
+
+import "say"
+import "textedit"
+
+fn show(line str, raw bool) bool {
+	let (spans, out) = textedit.Highlight(line, raw)
+	mut i = 0
+	for i < len(spans) {
+		let s = spans[i]
+		say.Line(s.Kind, line[s.Start:s.End])
+		i += 1
+	}
+	return out
+}
+
+// Syntax classes: keywords, constants, types, calls, numbers with units, strings with escapes, runes, comments, and a
+// raw string that runs over two lines.
+fn main() {
+	show("fn main() {{", false)
+	show("\tlet n = 0x2a + 1.5e3 // note", false)
+	show("say.Line(\"a\\\"b\", 'x', 200ms, true)", false)
+	say.Line("open:", show("let raw = `first", false))
+	say.Line("open:", show("still raw` + 1", true))
+}

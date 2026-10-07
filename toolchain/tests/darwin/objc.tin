@@ -1,0 +1,11 @@
+package main
+
+import "appkit"
+import "say"
+
+// Objective-C through the runtime: look a class up by name and send it a message.
+fn main() {
+	say.Line("AppKit loaded:", appkit.LoadAppKit())
+	say.Line("NSApplication class:", appkit.Class("NSApplication") != 0)
+	say.Line("new NSObject:", appkit.Send(appkit.Class("NSObject"), "new") != 0)
+}

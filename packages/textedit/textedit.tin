@@ -1,0 +1,973 @@
+// Package textedit is the editing model behind Tinland: a text buffer with a cursor, a selection, undo and
+// redo, search, and the syntax highlighting of Tin source. It does no I/O and draws nothing, so it runs (and is
+// tested) on every platform; the editor program supplies the keys, the pixels and the files.
+package textedit
+
+import "twine"
+
+// Pos is a place in the text: a line and a byte offset in it (always on a rune boundary).
+type Pos struct {
+	Row i64
+	Col i64
+}
+
+type snapshot struct {
+	lines []str
+	row   i64
+	col   i64
+}
+
+// Edit kinds: typing merges into one undo step, every other kind is a step of its own.
+const kindNone = 0
+const kindType = 1
+const kindOther = 2
+
+// Buffer is the text being edited, split into lines (without their newlines), with the cursor and an optional
+// selection from (SelRow, SelCol) to the cursor.
+type Buffer struct {
+	Lines  []str
+	Row    i64
+	Col    i64
+	HasSel bool
+	SelRow i64
+	SelCol i64
+	Dirty  bool
+	// Version counts the edits, so a view can tell its cached highlighting is out of date.
+	Version i64
+	Path   str
+	want   i64
+	undo   []snapshot
+	redo   []snapshot
+	last   i64
+}
+
+// New returns an empty buffer: one empty line, the cursor at its start.
+fn New() Buffer {
+	return Buffer{Lines: []str{""}}
+}
+
+// FromText returns a buffer holding text; both \n and \r\n end a line.
+fn FromText(text str) Buffer {
+	let parts = twine.Split(text, "\n")
+	mut lines = []str{}
+	mut i = 0
+	for i < len(parts) {
+		mut line = parts[i]
+		if len(line) > 0 && line[len(line) - 1] == '\r' {
+			line = line[:len(line) - 1]
+		}
+		lines = append(lines, line)
+		i += 1
+	}
+	return Buffer{Lines: lines}
+}
+
+// Text is the whole text, lines joined with \n.
+fn (b Buffer) Text() str {
+	return twine.Join(b.Lines, "\n")
+}
+
+// Cur is the cursor.
+fn (b Buffer) Cur() Pos {
+	return Pos{Row: b.Row, Col: b.Col}
+}
+
+// prevBoundary is the start of the rune that ends at col.
+fn prevBoundary(s str, col i64) i64 {
+	mut i = col - 1
+	for i > 0 && (i64(s[i]) & 0xc0) == 0x80 {
+		i -= 1
+	}
+	if i < 0 {
+		return 0
+	}
+	return i
+}
+
+// nextBoundary is the end of the rune that starts at col.
+fn nextBoundary(s str, col i64) i64 {
+	mut i = col + 1
+	for i < len(s) && (i64(s[i]) & 0xc0) == 0x80 {
+		i += 1
+	}
+	if i > len(s) {
+		return len(s)
+	}
+	return i
+}
+
+// DisplayCol is the screen column of byte offset col in line: runes are one column, a tab goes to the next
+// multiple of tabWidth.
+fn DisplayCol(line str, col i64, tabWidth i64) i64 {
+	mut d = 0
+	mut i = 0
+	for i < col && i < len(line) {
+		if line[i] == '\t' {
+			d = (d / tabWidth + 1) * tabWidth
+		} else if (i64(line[i]) & 0xc0) != 0x80 {
+			d += 1
+		}
+		i += 1
+	}
+	return d
+}
+
+// colForDisplay is the byte offset in line at screen column dcol (the end of the line when it is shorter).
+fn colForDisplay(line str, dcol i64, tabWidth i64) i64 {
+	mut d = 0
+	mut i = 0
+	for i < len(line) {
+		mut w = 1
+		if line[i] == '\t' {
+			w = (d / tabWidth + 1) * tabWidth - d
+		}
+		if d + w > dcol {
+			return i
+		}
+		d += w
+		i = nextBoundary(line, i)
+	}
+	return len(line)
+}
+
+// before reports whether a comes before b in the text.
+// ColForDisplay is the byte column of the character at display column dcol of line (tabs count to the next
+// multiple of tabWidth): where a mouse click lands.
+fn ColForDisplay(line str, dcol i64, tabWidth i64) i64 {
+	return colForDisplay(line, dcol, tabWidth)
+}
+
+fn before(a Pos, b Pos) bool {
+	if a.Row != b.Row {
+		return a.Row < b.Row
+	}
+	return a.Col < b.Col
+}
+
+// SelStart and SelEnd are the ends of the selection in text order (both the cursor when nothing is selected).
+fn (b Buffer) SelStart() Pos {
+	if !b.HasSel {
+		return b.Cur()
+	}
+	let a = Pos{Row: b.SelRow, Col: b.SelCol}
+	if before(a, b.Cur()) {
+		return a
+	}
+	return b.Cur()
+}
+
+fn (b Buffer) SelEnd() Pos {
+	if !b.HasSel {
+		return b.Cur()
+	}
+	let a = Pos{Row: b.SelRow, Col: b.SelCol}
+	if before(a, b.Cur()) {
+		return b.Cur()
+	}
+	return a
+}
+
+// SelectedText is the text of the selection ("" when there is none).
+fn (b Buffer) SelectedText() str {
+	if !b.HasSel {
+		return ""
+	}
+	return b.textBetween(b.SelStart(), b.SelEnd())
+}
+
+fn (b Buffer) textBetween(from Pos, to Pos) str {
+	if from.Row == to.Row {
+		return b.Lines[from.Row][from.Col:to.Col]
+	}
+	mut parts = []str{}
+	parts = append(parts, b.Lines[from.Row][from.Col:])
+	mut r = from.Row + 1
+	for r < to.Row {
+		parts = append(parts, b.Lines[r])
+		r += 1
+	}
+	parts = append(parts, b.Lines[to.Row][:to.Col])
+	return twine.Join(parts, "\n")
+}
+
+// record starts an undo step before an edit of the given kind, unless it continues the current typing run.
+fn (b mut Buffer) record(kind i64) {
+	if kind == kindType && b.last == kindType {
+		return
+	}
+	b.undo = append(b.undo, b.snap())
+	b.redo = []snapshot{}
+	b.last = kind
+}
+
+fn (b Buffer) snap() snapshot {
+	mut copy = []str{}
+	mut i = 0
+	for i < len(b.Lines) {
+		copy = append(copy, b.Lines[i])
+		i += 1
+	}
+	return snapshot{lines: copy, row: b.Row, col: b.Col}
+}
+
+fn (b mut Buffer) restore(s snapshot) {
+	b.Lines = s.lines
+	b.Row = s.row
+	b.Col = s.col
+	b.HasSel = false
+	b.want = -1
+	b.Dirty = true
+	b.Version += 1
+	b.last = kindNone
+}
+
+// Undo reverts the last edit; it reports whether there was one.
+fn (b mut Buffer) Undo() bool {
+	if len(b.undo) == 0 {
+		return false
+	}
+	let s = b.undo[len(b.undo) - 1]
+	b.undo = b.undo[:len(b.undo) - 1]
+	b.redo = append(b.redo, b.snap())
+	b.restore(s)
+	return true
+}
+
+// Redo re-applies the last undone edit; it reports whether there was one.
+fn (b mut Buffer) Redo() bool {
+	if len(b.redo) == 0 {
+		return false
+	}
+	let s = b.redo[len(b.redo) - 1]
+	b.redo = b.redo[:len(b.redo) - 1]
+	b.undo = append(b.undo, b.snap())
+	b.restore(s)
+	return true
+}
+
+// deleteRange removes the text from from to to and puts the cursor at from.
+fn (b mut Buffer) deleteRange(from Pos, to Pos) {
+	let head = b.Lines[from.Row][:from.Col]
+	let tail = b.Lines[to.Row][to.Col:]
+	mut out = []str{}
+	mut i = 0
+	for i < from.Row {
+		out = append(out, b.Lines[i])
+		i += 1
+	}
+	out = append(out, head + tail)
+	i = to.Row + 1
+	for i < len(b.Lines) {
+		out = append(out, b.Lines[i])
+		i += 1
+	}
+	b.Lines = out
+	b.Row = from.Row
+	b.Col = from.Col
+	b.HasSel = false
+	b.want = -1
+	b.Dirty = true
+	b.Version += 1
+}
+
+// deleteSelection removes the selected text; it reports whether there was a selection.
+fn (b mut Buffer) deleteSelection() bool {
+	if !b.HasSel {
+		return false
+	}
+	let from = b.SelStart()
+	let to = b.SelEnd()
+	b.deleteRange(from, to)
+	return true
+}
+
+// Insert types text at the cursor, replacing the selection; text may hold newlines.
+fn (b mut Buffer) Insert(text str) {
+	if len(text) == 0 {
+		return
+	}
+	if b.HasSel {
+		b.record(kindOther)
+		b.deleteSelection()
+	} else {
+		b.record(kindType)
+	}
+	let parts = twine.Split(text, "\n")
+	let line = b.Lines[b.Row]
+	let head = line[:b.Col]
+	let tail = line[b.Col:]
+	if len(parts) == 1 {
+		b.Lines[b.Row] = head + text + tail
+		b.Col += len(text)
+	} else {
+		mut out = []str{}
+		mut i = 0
+		for i < b.Row {
+			out = append(out, b.Lines[i])
+			i += 1
+		}
+		out = append(out, head + parts[0])
+		mut p = 1
+		for p < len(parts) - 1 {
+			out = append(out, parts[p])
+			p += 1
+		}
+		let last = parts[len(parts) - 1]
+		out = append(out, last + tail)
+		i = b.Row + 1
+		for i < len(b.Lines) {
+			out = append(out, b.Lines[i])
+			i += 1
+		}
+		b.Lines = out
+		b.Row += len(parts) - 1
+		b.Col = len(last)
+	}
+	b.want = -1
+	b.Dirty = true
+	b.Version += 1
+}
+
+// indentOf is the leading spaces and tabs of line.
+fn indentOf(line str) str {
+	mut i = 0
+	for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
+		i += 1
+	}
+	return line[:i]
+}
+
+// Newline splits the line at the cursor; the new line keeps the indentation, one more after an opening brace.
+fn (b mut Buffer) Newline() {
+	if b.HasSel {
+		b.record(kindOther)
+		b.deleteSelection()
+	} else {
+		b.record(kindOther)
+	}
+	let line = b.Lines[b.Row]
+	let head = line[:b.Col]
+	let tail = line[b.Col:]
+	mut indent = indentOf(head)
+	if len(head) > 0 && head[len(head) - 1] == '{' {
+		indent = indent + "\t"
+	}
+	mut out = []str{}
+	mut i = 0
+	for i < b.Row {
+		out = append(out, b.Lines[i])
+		i += 1
+	}
+	out = append(out, head)
+	out = append(out, indent + tail)
+	i = b.Row + 1
+	for i < len(b.Lines) {
+		out = append(out, b.Lines[i])
+		i += 1
+	}
+	b.Lines = out
+	b.Row += 1
+	b.Col = len(indent)
+	b.want = -1
+	b.Dirty = true
+	b.Version += 1
+}
+
+// Backspace deletes the selection, or the rune before the cursor, or joins the line to the one above.
+fn (b mut Buffer) Backspace() {
+	if b.HasSel {
+		b.record(kindOther)
+		b.deleteSelection()
+		return
+	}
+	if b.Col > 0 {
+		b.record(kindOther)
+		let line = b.Lines[b.Row]
+		let start = prevBoundary(line, b.Col)
+		b.Lines[b.Row] = line[:start] + line[b.Col:]
+		b.Col = start
+	} else if b.Row > 0 {
+		b.record(kindOther)
+		b.deleteRange(Pos{Row: b.Row - 1, Col: len(b.Lines[b.Row - 1])}, Pos{Row: b.Row, Col: 0})
+	} else {
+		return
+	}
+	b.want = -1
+	b.Dirty = true
+	b.Version += 1
+}
+
+// Delete removes the selection, or the rune after the cursor, or joins the next line to this one.
+fn (b mut Buffer) Delete() {
+	if b.HasSel {
+		b.record(kindOther)
+		b.deleteSelection()
+		return
+	}
+	let line = b.Lines[b.Row]
+	if b.Col < len(line) {
+		b.record(kindOther)
+		let end = nextBoundary(line, b.Col)
+		b.Lines[b.Row] = line[:b.Col] + line[end:]
+	} else if b.Row + 1 < len(b.Lines) {
+		b.record(kindOther)
+		b.deleteRange(Pos{Row: b.Row, Col: b.Col}, Pos{Row: b.Row + 1, Col: 0})
+	} else {
+		return
+	}
+	b.want = -1
+	b.Dirty = true
+	b.Version += 1
+}
+
+// startMove begins a cursor move: with extend the selection grows from where the cursor is, without it the
+// selection is dropped. It reports whether the move should go on (a plain left or right over a selection only
+// collapses it, which the callers handle).
+fn (b mut Buffer) startMove(extend bool) {
+	b.last = kindNone
+	if extend {
+		if !b.HasSel {
+			b.HasSel = true
+			b.SelRow = b.Row
+			b.SelCol = b.Col
+		}
+	} else {
+		b.HasSel = false
+	}
+}
+
+// Left moves one rune left (to the end of the line above at the line's start).
+fn (b mut Buffer) Left(extend bool) {
+	if !extend && b.HasSel {
+		let s = b.SelStart()
+		b.startMove(false)
+		b.Row = s.Row
+		b.Col = s.Col
+		b.want = -1
+		return
+	}
+	b.startMove(extend)
+	if b.Col > 0 {
+		b.Col = prevBoundary(b.Lines[b.Row], b.Col)
+	} else if b.Row > 0 {
+		b.Row -= 1
+		b.Col = len(b.Lines[b.Row])
+	}
+	b.want = -1
+}
+
+// Right moves one rune right (to the start of the next line at the line's end).
+fn (b mut Buffer) Right(extend bool) {
+	if !extend && b.HasSel {
+		let e = b.SelEnd()
+		b.startMove(false)
+		b.Row = e.Row
+		b.Col = e.Col
+		b.want = -1
+		return
+	}
+	b.startMove(extend)
+	if b.Col < len(b.Lines[b.Row]) {
+		b.Col = nextBoundary(b.Lines[b.Row], b.Col)
+	} else if b.Row + 1 < len(b.Lines) {
+		b.Row += 1
+		b.Col = 0
+	}
+	b.want = -1
+}
+
+// vertical moves n lines (negative: up), keeping the screen column.
+fn (b mut Buffer) vertical(n i64, extend bool) {
+	b.startMove(extend)
+	if b.want < 0 {
+		b.want = DisplayCol(b.Lines[b.Row], b.Col, 4)
+	}
+	mut row = b.Row + n
+	if row < 0 {
+		row = 0
+	}
+	if row >= len(b.Lines) {
+		row = len(b.Lines) - 1
+	}
+	if row == b.Row && n != 0 {
+		// at the first or last line a vertical move goes to the start or end of the line
+		if n < 0 {
+			b.Col = 0
+		} else {
+			b.Col = len(b.Lines[b.Row])
+		}
+		b.want = -1
+		return
+	}
+	b.Row = row
+	b.Col = colForDisplay(b.Lines[row], b.want, 4)
+}
+
+fn (b mut Buffer) Up(extend bool) {
+	b.vertical(-1, extend)
+}
+
+fn (b mut Buffer) Down(extend bool) {
+	b.vertical(1, extend)
+}
+
+// PageUp and PageDown move n lines.
+fn (b mut Buffer) PageUp(n i64, extend bool) {
+	b.vertical(-n, extend)
+}
+
+fn (b mut Buffer) PageDown(n i64, extend bool) {
+	b.vertical(n, extend)
+}
+
+// Home goes to the first non-blank character of the line, or to the start when already there.
+fn (b mut Buffer) Home(extend bool) {
+	b.startMove(extend)
+	let line = b.Lines[b.Row]
+	let first = len(indentOf(line))
+	if b.Col == first {
+		b.Col = 0
+	} else {
+		b.Col = first
+	}
+	b.want = -1
+}
+
+// End goes to the end of the line.
+fn (b mut Buffer) End(extend bool) {
+	b.startMove(extend)
+	b.Col = len(b.Lines[b.Row])
+	b.want = -1
+}
+
+// DocStart and DocEnd go to the first and the last position of the text.
+fn (b mut Buffer) DocStart(extend bool) {
+	b.startMove(extend)
+	b.Row = 0
+	b.Col = 0
+	b.want = -1
+}
+
+fn (b mut Buffer) DocEnd(extend bool) {
+	b.startMove(extend)
+	b.Row = len(b.Lines) - 1
+	b.Col = len(b.Lines[b.Row])
+	b.want = -1
+}
+
+fn isWordByte(c u8) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c >= 0x80
+}
+
+// WordLeft and WordRight move to the previous start and the next end of a word.
+fn (b mut Buffer) WordLeft(extend bool) {
+	b.startMove(extend)
+	for {
+		if b.Col == 0 {
+			if b.Row == 0 {
+				break
+			}
+			b.Row -= 1
+			b.Col = len(b.Lines[b.Row])
+			break
+		}
+		let line = b.Lines[b.Row]
+		mut c = b.Col
+		for c > 0 && !isWordByte(line[c - 1]) {
+			c -= 1
+		}
+		for c > 0 && isWordByte(line[c - 1]) {
+			c -= 1
+		}
+		b.Col = c
+		break
+	}
+	b.want = -1
+}
+
+fn (b mut Buffer) WordRight(extend bool) {
+	b.startMove(extend)
+	let line = b.Lines[b.Row]
+	if b.Col >= len(line) {
+		if b.Row + 1 < len(b.Lines) {
+			b.Row += 1
+			b.Col = 0
+		}
+		b.want = -1
+		return
+	}
+	mut c = b.Col
+	for c < len(line) && !isWordByte(line[c]) {
+		c += 1
+	}
+	for c < len(line) && isWordByte(line[c]) {
+		c += 1
+	}
+	b.Col = c
+	b.want = -1
+}
+
+// SelectAll selects the whole text, the cursor at its end.
+fn (b mut Buffer) SelectAll() {
+	b.last = kindNone
+	b.HasSel = true
+	b.SelRow = 0
+	b.SelCol = 0
+	b.Row = len(b.Lines) - 1
+	b.Col = len(b.Lines[b.Row])
+	b.want = -1
+}
+
+// MoveTo puts the cursor at row and col (clamped to the text), extending the selection when asked.
+fn (b mut Buffer) MoveTo(row i64, col i64, extend bool) {
+	b.startMove(extend)
+	mut r = row
+	if r < 0 {
+		r = 0
+	}
+	if r >= len(b.Lines) {
+		r = len(b.Lines) - 1
+	}
+	mut c = col
+	if c < 0 {
+		c = 0
+	}
+	if c > len(b.Lines[r]) {
+		c = len(b.Lines[r])
+	}
+	b.Row = r
+	b.Col = c
+	b.want = -1
+}
+
+// Indent adds a tab at the start of every selected line (or the cursor's line); Unindent removes one tab or up
+// to four spaces from each.
+fn (b mut Buffer) Indent() {
+	b.record(kindOther)
+	let first = b.SelStart().Row
+	let last = b.SelEnd().Row
+	mut r = first
+	for r <= last {
+		b.Lines[r] = "\t" + b.Lines[r]
+		r += 1
+	}
+	b.Col += 1
+	if b.HasSel {
+		b.SelCol += 1
+	}
+	b.want = -1
+	b.Dirty = true
+	b.Version += 1
+}
+
+fn (b mut Buffer) Unindent() {
+	b.record(kindOther)
+	let first = b.SelStart().Row
+	let last = b.SelEnd().Row
+	mut r = first
+	for r <= last {
+		let line = b.Lines[r]
+		mut cut = 0
+		if len(line) > 0 && line[0] == '\t' {
+			cut = 1
+		} else {
+			for cut < 4 && cut < len(line) && line[cut] == ' ' {
+				cut += 1
+			}
+		}
+		b.Lines[r] = line[cut:]
+		if r == b.Row {
+			b.Col = max0(b.Col - cut)
+		}
+		if b.HasSel && r == b.SelRow {
+			b.SelCol = max0(b.SelCol - cut)
+		}
+		r += 1
+	}
+	b.want = -1
+	b.Dirty = true
+	b.Version += 1
+}
+
+fn max0(n i64) i64 {
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+// Find looks for needle after the cursor (before it when backward), wrapping around the end of the text, and
+// selects the match; it reports whether there was one.
+fn (b mut Buffer) Find(needle str, forward bool) bool {
+	if len(needle) == 0 {
+		return false
+	}
+	let n = len(b.Lines)
+	if forward {
+		mut row = b.Row
+		mut col = b.SelEnd().Col
+		if b.HasSel {
+			row = b.SelEnd().Row
+		}
+		mut k = 0
+		for k <= n {
+			let line = b.Lines[row]
+			if col <= len(line) {
+				let at = twine.Index(line[col:], needle)
+				if at >= 0 {
+					b.selectSpan(row, col + at, len(needle))
+					return true
+				}
+			}
+			row = (row + 1) % n
+			col = 0
+			k += 1
+		}
+		return false
+	}
+	mut row = b.Row
+	mut stop = b.SelStart().Col
+	if b.HasSel {
+		row = b.SelStart().Row
+	}
+	mut k = 0
+	for k <= n {
+		let line = b.Lines[row]
+		mut best = -1
+		mut from = 0
+		for from <= stop {
+			let at = twine.Index(line[from:], needle)
+			if at < 0 || from + at + len(needle) > stop {
+				break
+			}
+			best = from + at
+			from = from + at + 1
+		}
+		if best >= 0 {
+			b.selectSpan(row, best, len(needle))
+			return true
+		}
+		row = (row + n - 1) % n
+		stop = len(b.Lines[row])
+		k += 1
+	}
+	return false
+}
+
+// selectSpan selects length bytes of line row from col, the cursor at the end of the match.
+fn (b mut Buffer) selectSpan(row i64, col i64, length i64) {
+	b.last = kindNone
+	b.HasSel = true
+	b.SelRow = row
+	b.SelCol = col
+	b.Row = row
+	b.Col = col + length
+	b.want = -1
+}
+
+// ReplaceSelection replaces the selection with text (a no-op without a selection).
+fn (b mut Buffer) ReplaceSelection(text str) {
+	if !b.HasSel {
+		return
+	}
+	b.Insert(text)
+}
+
+// firstRow and lastRow are the first and last lines the selection touches (the cursor's line without one); a
+// selection that ends at the very start of a line does not include that line.
+fn (b Buffer) firstRow() i64 {
+	return b.SelStart().Row
+}
+
+fn (b Buffer) lastRow() i64 {
+	let e = b.SelEnd()
+	if b.HasSel && e.Col == 0 && e.Row > b.SelStart().Row {
+		return e.Row - 1
+	}
+	return e.Row
+}
+
+// ToggleComment comments every touched line with "// ", or uncomments them when all of them are commented.
+fn (b mut Buffer) ToggleComment() {
+	b.record(kindOther)
+	let first = b.firstRow()
+	let last = b.lastRow()
+	mut all = true
+	mut r = first
+	for r <= last {
+		let line = b.Lines[r]
+		let t = line[len(indentOf(line)):]
+		if len(t) > 0 && !twine.HasPrefix(t, "//") {
+			all = false
+		}
+		r += 1
+	}
+	r = first
+	for r <= last {
+		let line = b.Lines[r]
+		let indent = indentOf(line)
+		let rest = line[len(indent):]
+		if all {
+			mut cut = 2
+			if twine.HasPrefix(rest, "// ") {
+				cut = 3
+			}
+			if twine.HasPrefix(rest, "//") {
+				b.Lines[r] = indent + rest[cut:]
+				if r == b.Row {
+					b.Col = max0(b.Col - cut)
+				}
+			}
+		} else if len(rest) > 0 {
+			b.Lines[r] = indent + "// " + rest
+			if r == b.Row {
+				b.Col += 3
+			}
+		}
+		r += 1
+	}
+	b.HasSel = false
+	b.want = -1
+	b.Dirty = true
+	b.Version += 1
+}
+
+// DeleteLine removes the cursor's line (or every touched line).
+fn (b mut Buffer) DeleteLine() {
+	b.record(kindOther)
+	let first = b.firstRow()
+	let last = b.lastRow()
+	mut out = []str{}
+	mut i = 0
+	for i < len(b.Lines) {
+		if i < first || i > last {
+			out = append(out, b.Lines[i])
+		}
+		i += 1
+	}
+	if len(out) == 0 {
+		out = append(out, "")
+	}
+	b.Lines = out
+	b.Row = first
+	if b.Row >= len(b.Lines) {
+		b.Row = len(b.Lines) - 1
+	}
+	b.Col = 0
+	b.HasSel = false
+	b.want = -1
+	b.Dirty = true
+	b.Version += 1
+}
+
+// DuplicateLine copies the touched lines below themselves and moves the cursor into the copy.
+fn (b mut Buffer) DuplicateLine() {
+	b.record(kindOther)
+	let first = b.firstRow()
+	let last = b.lastRow()
+	mut out = []str{}
+	mut i = 0
+	for i <= last {
+		out = append(out, b.Lines[i])
+		i += 1
+	}
+	i = first
+	for i <= last {
+		out = append(out, b.Lines[i])
+		i += 1
+	}
+	i = last + 1
+	for i < len(b.Lines) {
+		out = append(out, b.Lines[i])
+		i += 1
+	}
+	b.Lines = out
+	b.Row += last - first + 1
+	b.HasSel = false
+	b.want = -1
+	b.Dirty = true
+	b.Version += 1
+}
+
+// MoveLines moves the touched lines up (dir -1) or down (dir 1) by one line, the cursor going with them.
+fn (b mut Buffer) MoveLines(dir i64) {
+	let first = b.firstRow()
+	let last = b.lastRow()
+	if dir < 0 && first == 0 {
+		return
+	}
+	if dir > 0 && last + 1 >= len(b.Lines) {
+		return
+	}
+	b.record(kindOther)
+	if dir < 0 {
+		let above = b.Lines[first - 1]
+		mut r = first
+		for r <= last {
+			b.Lines[r - 1] = b.Lines[r]
+			r += 1
+		}
+		b.Lines[last] = above
+	} else {
+		let below = b.Lines[last + 1]
+		mut r = last
+		for r >= first {
+			b.Lines[r + 1] = b.Lines[r]
+			r -= 1
+		}
+		b.Lines[first] = below
+	}
+	b.Row += dir
+	if b.HasSel {
+		b.SelRow += dir
+	}
+	b.Dirty = true
+	b.Version += 1
+}
+
+// ReplaceAll replaces every occurrence of needle with repl as one undo step and returns how many there were;
+// the cursor goes to the start of the text.
+fn (b mut Buffer) ReplaceAll(needle str, repl str) i64 {
+	if len(needle) == 0 {
+		return 0
+	}
+	let text = b.Text()
+	let n = twine.Count(text, needle)
+	if n == 0 {
+		return 0
+	}
+	b.record(kindOther)
+	let fresh = FromText(twine.ReplaceAll(text, needle, repl))
+	b.Lines = fresh.Lines
+	b.Row = 0
+	b.Col = 0
+	b.HasSel = false
+	b.want = -1
+	b.Dirty = true
+	b.Version += 1
+	b.last = kindNone
+	return n
+}
+
+// SelectWordAt selects the word (letters, digits and underscores) around column col of row, or the one
+// character there when it is not part of a word.
+fn (b mut Buffer) SelectWordAt(row i64, col i64) {
+	let line = b.Lines[row]
+	mut from = col
+	mut to = col
+	if col < len(line) && isWordByte(line[col]) || col > 0 && col == len(line) && isWordByte(line[col - 1]) {
+		if col == len(line) {
+			from = col - 1
+		}
+		for from > 0 && isWordByte(line[from - 1]) {
+			from -= 1
+		}
+		to = max0(from)
+		for to < len(line) && isWordByte(line[to]) {
+			to += 1
+		}
+	} else if col < len(line) {
+		to = nextBoundary(line, col)
+	}
+	b.selectSpan(row, from, to - from)
+}

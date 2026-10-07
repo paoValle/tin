@@ -1,0 +1,104 @@
+--- editor_sample.txt row 4 col 11 dirty true
+package main
+
+fn main() {
+	let y = 2
+	let x = 1
+	say.Line(x)
+}
+
+--- editor_sample.txt row 4 col 2 dirty true
+package main
+
+fn main() {
+	
+	let x = 1
+	say.Line(x)
+}
+
+--- editor_sample.txt row 4 col 14 dirty true
+package main
+
+fn main() {
+	// let y = 2
+	let x = 1
+	say.Line(x)
+}
+
+--- editor_sample.txt row 4 col 14 dirty true
+package main
+
+fn main() {
+	// let y = 2
+	// let y = 2
+	let x = 1
+	say.Line(x)
+}
+
+prompt: 1 say 
+--- editor_sample.txt row 7 col 5 dirty true
+selection: say
+package main
+
+fn main() {
+	// let y = 2
+	// let y = 2
+	let x = 1
+	say.Line(x)
+}
+
+--- editor_sample.txt row 2 col 1 dirty true
+package main
+
+fn main() {
+	// let y = 2
+	// let y = 2
+	let x = 1
+	say.Line(x)
+}
+
+--- editor_sample.txt row 1 col 1 dirty true
+
+--- editor_sample.txt row 16 col 1 dirty true
+selection: }
+
+package main
+
+fn main() {
+	// let y = 2
+	// let y = 2
+	let x = 1
+	say.Line(x)
+}
+package main
+
+fn main() {
+	// let y = 2
+	// let y = 2
+	let x = 1
+	say.Line(x)
+}
+
+--- editor_sample.txt row 1 col 1 dirty true
+let yy = 1
+say.Line(yy)
+let é = "ü"
+--- editor_sample.txt row 1 col 1 dirty true
+let yy = 1
+say.Line(yy)
+let é = "ü"
+--- untitled row 1 col 8 dirty true
+scratch
+--- editor_sample.txt row 1 col 1 dirty true
+let yy = 1
+say.Line(yy)
+let é = "ü"
+output: true
+-- editor_run.tin: exit 0
+run from the editor 42
+jumped: true
+--- editor_sample.txt row 3 col 5 dirty true
+let yy = 1
+say.Line(yy)
+let é = "ü"
+message: switched to toolchain/tests/darwin/editor_sample.txt

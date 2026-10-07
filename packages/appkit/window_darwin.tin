@@ -1,0 +1,154 @@
+package appkit
+
+// A window, its events and its pixels, without a single callback into Tin: the application polls for events with
+// -[NSApplication nextEventMatchingMask:untilDate:inMode:dequeue:], and the contents are a CGImage set on the content
+// view's plain CALayer. Nothing is subclassed.
+
+const StyleTitled = 1
+const StyleClosable = 2
+const StyleMiniaturizable = 4
+const StyleResizable = 8
+const BackingBuffered = 2
+
+const EventKeyDown = 10
+const EventKeyUp = 11
+const EventLeftMouseDown = 1
+
+type Window struct {
+	App i64
+	Win i64
+	View i64
+	Layer i64
+	Mode i64
+}
+
+// OpenWindow shows a window of w by h points with a title, as the frontmost application.
+fn OpenWindow(title str, w f64, h f64) Window {
+	LoadFoundation()
+	LoadAppKit()
+	let win = Window{}
+	win.App = Send(Class("NSApplication"), "sharedApplication")
+	// NSApplicationActivationPolicyRegular: a Dock icon and the right to come to the front
+	Send1(win.App, "setActivationPolicy:", 0)
+	let style = StyleTitled | StyleClosable | StyleMiniaturizable | StyleResizable
+	let alloc = Send(Class("NSWindow"), "alloc")
+	win.Win = SendRect3(alloc, "initWithContentRect:styleMask:backing:defer:", 120.0, 120.0, w, h, style, BackingBuffered, 0)
+	Send1(win.Win, "setTitle:", NewString(title))
+	win.View = Send(win.Win, "contentView")
+	Send1(win.View, "setWantsLayer:", 1)
+	win.Layer = Send(win.View, "layer")
+	// NSDefaultRunLoopMode is the string "kCFRunLoopDefaultMode"
+	win.Mode = NewString("kCFRunLoopDefaultMode")
+	Send(win.App, "finishLaunching")
+	Send1(win.Win, "makeKeyAndOrderFront:", 0)
+	// A process that was not launched as an application is not activated by the system: put the window in front
+	// regardless, and ask to be activated (the request is honored when the user started this program).
+	Send(win.Win, "orderFrontRegardless")
+	Send1(win.App, "activateIgnoringOtherApps:", 1)
+	return win
+}
+
+// IsOpen reports whether the window is still on screen (closing it hides it).
+fn IsOpen(win Window) bool {
+	return Send(win.Win, "isVisible") & 0xff != 0
+}
+
+// WaitEvent waits up to seconds for an event and returns it, or 0 when none came (a window that has nothing to
+// animate waits for half a second, so an idle editor costs no processor time).
+fn WaitEvent(win Window, seconds f64) i64 {
+	let until = msgWithDouble(Class("NSDate"), Sel("dateWithTimeIntervalSinceNow:"), seconds)
+	// the mask is every event type (NSUIntegerMax), dequeue is YES
+	return Send4(win.App, "nextEventMatchingMask:untilDate:inMode:dequeue:", -1, until, win.Mode, 1)
+}
+
+// PollEvent waits up to ten milliseconds for an event and returns it, or 0 when there was none.
+fn PollEvent(win Window) i64 {
+	return WaitEvent(win, 0.01)
+}
+
+// Dispatch hands an event to AppKit (window dragging, closing, focus). Key events the editor handles itself are
+// not dispatched, so the system does not beep for them.
+fn Dispatch(win Window, e i64) {
+	Send1(win.App, "sendEvent:", e)
+}
+
+// EventType is the NSEventType of e (EventKeyDown, EventLeftMouseDown, ...).
+fn EventType(e i64) i64 {
+	return Send(e, "type")
+}
+
+// EventKeyCode is the hardware key code of a key event.
+fn EventKeyCode(e i64) i64 {
+	return Send(e, "keyCode") & 0xffff
+}
+
+// EventFlags are the modifier flags of an event (shift 1<<17, control 1<<18, option 1<<19, command 1<<20).
+fn EventFlags(e i64) i64 {
+	return Send(e, "modifierFlags")
+}
+
+// EventChars is the text a key event types (empty for a key that types nothing).
+fn EventChars(e i64) str {
+	return StringOf(Send(e, "characters"))
+}
+
+// StringOf copies an NSString into a Tin string.
+fn StringOf(ns i64) str {
+	if ns == 0 {
+		return ""
+	}
+	let p = Send(ns, "UTF8String")
+	mut n = 0
+	for i64(load8(p + n)) != 0 {
+		n = n + 1
+	}
+	return rt_str_from_raw(p, n)
+}
+
+// Present shows the bitmap as the window's contents.
+fn Present(win Window, b Bitmap) {
+	let image = CGBitmapContextCreateImage(b.Ctx)
+	Send1(win.Layer, "setContents:", image)
+	CGImageRelease(image)
+}
+
+// SetFont chooses the font the next DrawText uses (a PostScript name such as "Menlo-Regular").
+fn SetFont(b Bitmap, name str, size f64) {
+	// 1 is kCGEncodingMacRoman
+	CGContextSelectFont(b.Ctx, rt_cstr(name), size, 1)
+	b.Font = CTFontCreateWithName(NewString(name), size, 0)
+	b.FontName = name
+	b.FontSize = size
+}
+
+// DrawText draws text with its baseline starting at (x, y), the origin at the bitmap's bottom left, in the
+// current fill color.
+fn DrawText(b Bitmap, x f64, y f64, text str) {
+	CGContextShowTextAtPoint(b.Ctx, x, y, rt_cstr(text), len(text))
+}
+
+// DrawUnicode draws text (UTF-8, any script, with the system's fallback fonts for characters the font lacks) with
+// its baseline starting at (x, y), in the current fill color. DrawText is faster and does for ASCII.
+fn DrawUnicode(b Bitmap, x f64, y f64, text str) {
+	// the attributes are {NSFont: font, CTForegroundColor: color}; CTFont is the same object as NSFont
+	let color = CGColorCreateGenericRGB(b.R, b.G, b.B, 1.0)
+	let attrs = Send(Send(Class("NSMutableDictionary"), "alloc"), "init")
+	Send2(attrs, "setObject:forKey:", b.Font, NewString("NSFont"))
+	Send2(attrs, "setObject:forKey:", color, NewString("CTForegroundColor"))
+	let astr = Send2(Send(Class("NSAttributedString"), "alloc"), "initWithString:attributes:", NewString(text), attrs)
+	let line = CTLineCreateWithAttributedString(astr)
+	CGContextSetTextPosition(b.Ctx, x, y)
+	CTLineDraw(line, b.Ctx)
+	CFRelease(line)
+	Send(astr, "release")
+	Send(attrs, "release")
+	CGColorRelease(color)
+	// CoreText leaves its own font and color in the context: put ours back for DrawText
+	CGContextSelectFont(b.Ctx, rt_cstr(b.FontName), b.FontSize, 1)
+	CGContextSetRGBFillColor(b.Ctx, b.R, b.G, b.B, 1.0)
+}
+
+// EventClicks is the click count of a mouse event: 1 for a click, 2 for a double click, 3 for a triple click.
+fn EventClicks(e i64) i64 {
+	return Send(e, "clickCount")
+}

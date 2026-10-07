@@ -1,0 +1,131 @@
+package main
+
+import "appkit"
+import "say"
+import "textedit"
+import "twine"
+
+// keyFor turns "cmd+shift+z", "left" or "a" into a key press (the scripts that drive the editor without a
+// window, so its behaviour can be tested and its pixels written to a PNG).
+fn keyFor(spec str) Key {
+	let parts = twine.Split(spec, "+")
+	mut k = Key{}
+	mut i = 0
+	for i < len(parts) - 1 {
+		if parts[i] == "shift" {
+			k.Flags = k.Flags | flagShift
+		} else if parts[i] == "alt" {
+			k.Flags = k.Flags | flagAlt
+		} else if parts[i] == "cmd" {
+			k.Flags = k.Flags | flagCmd
+		} else if parts[i] == "ctrl" {
+			k.Flags = k.Flags | flagCtrl
+		}
+		i += 1
+	}
+	let name = parts[len(parts) - 1]
+	k.Code = -1
+	if name == "return" {
+		k.Code = keyReturn
+	} else if name == "tab" {
+		k.Code = keyTab
+	} else if name == "backspace" {
+		k.Code = keyBackspace
+	} else if name == "delete" {
+		k.Code = keyForwardDelete
+	} else if name == "escape" {
+		k.Code = keyEscape
+	} else if name == "left" {
+		k.Code = keyLeft
+	} else if name == "right" {
+		k.Code = keyRight
+	} else if name == "up" {
+		k.Code = keyUp
+	} else if name == "down" {
+		k.Code = keyDown
+	} else if name == "home" {
+		k.Code = keyHome
+	} else if name == "end" {
+		k.Code = keyEnd
+	} else if name == "pageup" {
+		k.Code = keyPageUp
+	} else if name == "pagedown" {
+		k.Code = keyPageDown
+	} else {
+		k.Chars = name
+	}
+	return k
+}
+
+// dump prints the text and the cursor (and the selection when there is one).
+fn (ed Editor) dump() {
+	let b = ed.Buf
+	say.Line("---", ed.name(), "row", b.Row + 1, "col", b.Col + 1, "dirty", b.Dirty)
+	if b.HasSel {
+		say.Line("selection:", b.SelectedText())
+	}
+	say.Line(b.Text())
+}
+
+// runScript performs a script: steps separated by "|", each one of
+//   type:TEXT        types TEXT (\n is a line break, \t a tab, \p a "|")
+//   key:SPEC         one key press, such as key:cmd+shift+z or key:left
+//   dump             prints the text and the cursor
+//   jump:TEXT        jumps to the place a compiler message names
+//   output           prints the output panel
+//   prompt           prints the find or go-to-line prompt
+//   open:PATH        loads a file
+//   snap:PATH        draws the editor and writes it as a PNG
+//   view:W,H         sets the window size in points
+fn runScript(ed mut Editor, script str) {
+	let steps = twine.Split(script, "|")
+	mut i = 0
+	for i < len(steps) {
+		let step = steps[i]
+		if twine.HasPrefix(step, "type:") {
+			mut text = step[5:]
+			text = twine.ReplaceAll(text, "\\n", "\n")
+			text = twine.ReplaceAll(text, "\\t", "\t")
+			text = twine.ReplaceAll(text, "\\p", "|")
+			if ed.Mode != modeEdit {
+				// typed into a prompt: one key press per character
+				mut j = 0
+				for j < len(text) {
+					ed.handleKey(Key{Code: -1, Chars: text[j:j + 1]})
+					j += 1
+				}
+			} else {
+				ed.Blink = true
+				ed.Buf.Insert(text)
+			}
+		} else if twine.HasPrefix(step, "key:") {
+			ed.handleKey(keyFor(step[4:]))
+		} else if step == "dump" {
+			ed.dump()
+		} else if twine.HasPrefix(step, "jump:") {
+			say.Line("jumped:", ed.jumpTo(step[5:]))
+		} else if step == "output" {
+			say.Line("output:", ed.OutputOpen)
+			say.Line(twine.Join(ed.Output, "\n"))
+		} else if step == "prompt" {
+			say.Line("prompt:", ed.Mode, ed.Prompt, ed.Message)
+		} else if twine.HasPrefix(step, "open:") {
+			ed.load(step[5:])
+		} else if twine.HasPrefix(step, "snap:") {
+			ed.render()
+			if !appkit.SavePNG(ed.Bmp, step[5:]) {
+				say.Line("cannot write", step[5:])
+			}
+		} else if twine.HasPrefix(step, "view:") {
+			let nums = appkit.ParseNumbers(step[5:])
+			if len(nums) >= 2 {
+				ed.PtW = nums[0]
+				ed.PtH = nums[1]
+			}
+		}
+		i += 1
+	}
+	if ed.Message != "" {
+		say.Line("message:", ed.Message)
+	}
+}

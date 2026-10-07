@@ -456,16 +456,16 @@ fn fn_attributes_check(attrs i64, is_extern i64) {
 	mut i = 0
 	for i < len(list) {
 		let a = cast(Attr, list[i])
-		if a.name == "framework" {
+		if a.name == "framework" || a.name == "symbol" {
 			if is_extern == 0 {
-				p_fail_code(a.pos, "E041 UNKNOWN_ATTRIBUTE", "@framework belongs on an extern declaration: it names the framework the function is bound from")
+				p_fail_code(a.pos, "E041 UNKNOWN_ATTRIBUTE", "@" + a.name + " belongs on an extern declaration: it names what the function is bound from")
 			}
 			let args = cast([]i64, a.args)
 			if len(args) != 1 || cast(Node, args[0]).kind != EX_STR {
-				p_fail_code(a.pos, "E042 ATTRIBUTE_ARGS", "@framework takes one string: the framework's name, like @framework(\"CoreGraphics\")")
+				p_fail_code(a.pos, "E042 ATTRIBUTE_ARGS", "@" + a.name + " takes one string: the name, like @" + a.name + "(\"CoreGraphics\")")
 			}
 		} else if a.name != "nopoll" && a.name != "wrap" {
-			p_fail_code(a.pos, "E041 UNKNOWN_ATTRIBUTE", "unknown function attribute @" + a.name + "; supported attributes are @nopoll, @wrap and @framework")
+			p_fail_code(a.pos, "E041 UNKNOWN_ATTRIBUTE", "unknown function attribute @" + a.name + "; supported attributes are @nopoll, @wrap, @framework and @symbol")
 		} else if len(cast([]i64, a.args)) != 0 {
 			p_fail_code(a.pos, "E042 ATTRIBUTE_ARGS", "@" + a.name + " takes no arguments")
 		}
@@ -492,8 +492,8 @@ fn parse_attributes() i64 {
 		attr.args = cast(i64, args)
 		attrs = append(attrs, cast(i64, attr))
 		// An attribute on its own line ends a statement for the lexer: the ';' it adds is not in the source,
-		// so it is skipped when a declaration follows (a let after it stays E040, as ERRORS.md shows).
-		if cast(Token, p_peek()).synth != 0 && (tok_is(p_peek2(), "fn") != 0 || tok_is(p_peek2(), "extern") != 0) {
+		// so it is skipped when a declaration or another attribute follows (a let after it stays E040, as ERRORS.md shows).
+		if cast(Token, p_peek()).synth != 0 && (tok_is(p_peek2(), "fn") != 0 || tok_is(p_peek2(), "extern") != 0 || tok_is(p_peek2(), "@") != 0) {
 			p_next()
 		}
 	}

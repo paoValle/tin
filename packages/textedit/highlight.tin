@@ -1,0 +1,127 @@
+package textedit
+
+// Syntax classes of Tin source, from the edition 1 lexical rules (toolchain/docs/LANGUAGE.md): the reserved words,
+// // comments, "strings", `raw strings` (which may run over several lines), runes, numbers with their units.
+const KindPlain = 0
+const KindKeyword = 1
+const KindString = 2
+const KindNumber = 3
+const KindComment = 4
+const KindConstant = 5
+const KindType = 6
+const KindFunc = 7
+
+// Span is the text from Start to End (byte offsets in the line) of one class.
+type Span struct {
+	Start i64
+	End   i64
+	Kind  i64
+}
+
+fn isReserved(w str) bool {
+	if w == "break" || w == "case" || w == "catch" || w == "const" || w == "continue" || w == "default" {
+		return true
+	}
+	if w == "defer" || w == "detach" || w == "else" || w == "enum" || w == "extern" || w == "fail" {
+		return true
+	}
+	if w == "fn" || w == "for" || w == "go" || w == "guard" || w == "if" || w == "import" || w == "keep" {
+		return true
+	}
+	if w == "let" || w == "limit" || w == "map" || w == "match" || w == "mut" || w == "package" {
+		return true
+	}
+	if w == "parallel" || w == "range" || w == "return" || w == "secret" || w == "shared" || w == "struct" {
+		return true
+	}
+	return w == "switch" || w == "try" || w == "type" || w == "var" || w == "while" || w == "within" || w == "func"
+}
+
+fn isDigit(c u8) bool {
+	return c >= '0' && c <= '9'
+}
+
+fn isIdentStart(c u8) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c >= 0x80
+}
+
+// Highlight classifies one line. raw says the line starts inside a raw string; the second result says it ends
+// inside one. Text that is not in any span is plain.
+fn Highlight(line str, raw bool) ([]Span, bool) {
+	mut spans = []Span{}
+	mut i = 0
+	let n = len(line)
+	mut inRaw = raw
+	for i < n {
+		if inRaw {
+			let start = i
+			for i < n && line[i] != '`' {
+				i += 1
+			}
+			if i < n {
+				i += 1
+				inRaw = false
+			}
+			spans = append(spans, Span{Start: start, End: i, Kind: KindString})
+			continue
+		}
+		let c = line[i]
+		if c == '/' && i + 1 < n && line[i + 1] == '/' {
+			spans = append(spans, Span{Start: i, End: n, Kind: KindComment})
+			i = n
+		} else if c == '"' || c == '\'' {
+			let start = i
+			i += 1
+			for i < n && line[i] != c {
+				if line[i] == '\\' && i + 1 < n {
+					i += 1
+				}
+				i += 1
+			}
+			if i < n {
+				i += 1
+			}
+			spans = append(spans, Span{Start: start, End: i, Kind: KindString})
+		} else if c == '`' {
+			inRaw = true
+			let start = i
+			i += 1
+			for i < n && line[i] != '`' {
+				i += 1
+			}
+			if i < n {
+				i += 1
+				inRaw = false
+			}
+			spans = append(spans, Span{Start: start, End: i, Kind: KindString})
+		} else if isDigit(c) || (c == '.' && i + 1 < n && isDigit(line[i + 1])) {
+			let start = i
+			for i < n && (isWordByte(line[i]) || (line[i] == '.' && i + 1 < n && isDigit(line[i + 1]))) {
+				i += 1
+			}
+			spans = append(spans, Span{Start: start, End: i, Kind: KindNumber})
+		} else if isIdentStart(c) {
+			let start = i
+			for i < n && isWordByte(line[i]) {
+				i += 1
+			}
+			let word = line[start:i]
+			mut kind = KindPlain
+			if word == "true" || word == "false" || word == "nil" {
+				kind = KindConstant
+			} else if isReserved(word) {
+				kind = KindKeyword
+			} else if i < n && line[i] == '(' {
+				kind = KindFunc
+			} else if c >= 'A' && c <= 'Z' {
+				kind = KindType
+			}
+			if kind != KindPlain {
+				spans = append(spans, Span{Start: start, End: i, Kind: kind})
+			}
+		} else {
+			i += 1
+		}
+	}
+	return spans, inRaw
+}

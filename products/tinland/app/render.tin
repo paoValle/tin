@@ -1,0 +1,360 @@
+package main
+
+import "appkit"
+import "mint"
+import "textedit"
+
+// The dark theme: background, current line, gutter, selection, status bar and one color per syntax class.
+const bgR = 0.118
+const bgG = 0.125
+const bgB = 0.157
+
+// colorOf is the text color for a syntax class (red, green, blue).
+fn colorOf(kind i64) (f64, f64, f64) {
+	if kind == textedit.KindKeyword {
+		return 0.78, 0.55, 0.95
+	}
+	if kind == textedit.KindString {
+		return 0.62, 0.8, 0.45
+	}
+	if kind == textedit.KindNumber {
+		return 0.95, 0.65, 0.4
+	}
+	if kind == textedit.KindComment {
+		return 0.45, 0.5, 0.58
+	}
+	if kind == textedit.KindConstant {
+		return 0.95, 0.65, 0.4
+	}
+	if kind == textedit.KindType {
+		return 0.4, 0.78, 0.85
+	}
+	if kind == textedit.KindFunc {
+		return 0.45, 0.65, 0.95
+	}
+	return 0.85, 0.87, 0.9
+}
+
+// fontFor sets the metrics from the font size and the screen's scale: Menlo's advance is 0.602 em.
+fn (ed mut Editor) fontFor() {
+	let px = ed.FontSize * ed.Scale
+	ed.CharW = px * 0.602
+	ed.LineH = px * 1.4
+}
+
+// updateRaw recomputes, for each line, whether it starts inside a multi-line `raw string`.
+fn (ed mut Editor) updateRaw() {
+	if ed.rawFor == ed.Buf.Version && len(ed.rawRows) == len(ed.Buf.Lines) {
+		return
+	}
+	mut rows = []bool{}
+	mut raw = false
+	mut i = 0
+	for i < len(ed.Buf.Lines) {
+		rows = append(rows, raw)
+		let (spans, next) = textedit.Highlight(ed.Buf.Lines[i], raw)
+		raw = next
+		i += 1
+	}
+	ed.rawRows = rows
+	ed.rawFor = ed.Buf.Version
+}
+
+// cell is one displayed character: what to draw and the syntax class it has.
+type cell struct {
+	text str
+	kind i64
+}
+
+// cellsOf expands a line into display cells: tabs become spaces to the next tab stop, a multi-byte character
+// is one cell, and each cell gets its syntax class.
+fn cellsOf(line str, raw bool) []cell {
+	let (spans, _) = textedit.Highlight(line, raw)
+	mut kinds = make([]i64, len(line), len(line))
+	mut s = 0
+	for s < len(spans) {
+		mut j = spans[s].Start
+		for j < spans[s].End && j < len(line) {
+			kinds[j] = spans[s].Kind
+			j += 1
+		}
+		s += 1
+	}
+	mut out = []cell{}
+	mut i = 0
+	for i < len(line) {
+		let c = line[i]
+		if c == '\t' {
+			mut n = 4 - len(out) % 4
+			for n > 0 {
+				out = append(out, cell{text: " ", kind: kinds[i]})
+				n -= 1
+			}
+		} else if c >= 0x80 && c < 0xc0 {
+			// a continuation byte belongs to the cell its lead byte began
+		} else if c >= 0xc0 {
+			mut n = 2
+			if c >= 0xf0 {
+				n = 4
+			} else if c >= 0xe0 {
+				n = 3
+			}
+			if i + n > len(line) {
+				n = len(line) - i
+			}
+			out = append(out, cell{text: line[i:i + n], kind: kinds[i]})
+		} else {
+			out = append(out, cell{text: line[i:i + 1], kind: kinds[i]})
+		}
+		i += 1
+	}
+	return out
+}
+
+// textOf is the text of cells from..to.
+fn textOf(cells []cell, from i64, to i64) str {
+	mut text = ""
+	mut i = from
+	for i < to {
+		text = text + cells[i].text
+		i += 1
+	}
+	return text
+}
+
+// ascii reports whether a cell is a single ASCII character.
+fn (c cell) ascii() bool {
+	return len(c.text) == 1
+}
+
+// ensureBitmap makes the bitmap match the window's size in pixels.
+fn (ed mut Editor) ensureBitmap() {
+	let w = i64(ed.PtW * ed.Scale)
+	let h = i64(ed.PtH * ed.Scale)
+	if ed.Bmp.W == w && ed.Bmp.H == h && ed.Bmp.Ctx != 0 {
+		return
+	}
+	if ed.Bmp.Ctx != 0 {
+		appkit.FreeBitmap(ed.Bmp)
+	}
+	ed.Bmp = appkit.NewBitmap(w, h)
+	ed.fontFor()
+	appkit.SetFont(ed.Bmp, "Menlo-Regular", ed.FontSize * ed.Scale)
+	ed.Redraw = true
+}
+
+// textTop is the pixel row (from the top) where line number row (counted from the scroll position) starts.
+fn (ed Editor) rowTop(n i64) f64 {
+	return f64(n) * ed.LineH + ed.LineH * 0.2 + ed.tabH()
+}
+
+// rect fills a rectangle given from the window's top left.
+fn (ed Editor) rect(x f64, top f64, w f64, h f64, r f64, g f64, b f64) {
+	appkit.FillRect(ed.Bmp, x, f64(ed.Bmp.H) - top - h, w, h, r, g, b, 1.0)
+}
+
+// draw writes text with its line starting at top, in the given color.
+fn (ed Editor) draw(x f64, top f64, text str, r f64, g f64, b f64) {
+	appkit.SetColor(ed.Bmp, r, g, b, 1.0)
+	// the baseline sits about 0.78 of the way down the line box
+	appkit.DrawText(ed.Bmp, x, f64(ed.Bmp.H) - top - ed.LineH * 0.78, text)
+}
+
+// drawUnicode is draw for text that is not ASCII.
+fn (ed Editor) drawUnicode(x f64, top f64, text str, r f64, g f64, b f64) {
+	appkit.SetColor(ed.Bmp, r, g, b, 1.0)
+	appkit.DrawUnicode(ed.Bmp, x, f64(ed.Bmp.H) - top - ed.LineH * 0.78, text)
+}
+
+// render draws the whole editor into the bitmap.
+fn (ed mut Editor) render() {
+	ed.ensureBitmap()
+	ed.updateRaw()
+	ed.ensureVisible()
+	let w = f64(ed.Bmp.W)
+	let h = f64(ed.Bmp.H)
+	ed.rect(0.0, 0.0, w, h, bgR, bgG, bgB)
+	let gutter = ed.gutterW()
+	let rows = ed.rows()
+	let b = ed.Buf
+	let sel0 = b.SelStart()
+	let sel1 = b.SelEnd()
+	let textX = gutter
+	mut n = 0
+	for n < rows && ed.Scroll + n < len(b.Lines) {
+		let row = ed.Scroll + n
+		let line = b.Lines[row]
+		let top = ed.rowTop(n)
+		let cells = cellsOf(line, ed.rawRows[row])
+		if row == b.Row && !b.HasSel {
+			ed.rect(gutter - ed.CharW * 0.5, top, w, ed.LineH, 0.15, 0.16, 0.2)
+		}
+		// the selected part of this line
+		if b.HasSel && row >= sel0.Row && row <= sel1.Row {
+			mut from = 0
+			mut to = len(cells) + 1
+			if row == sel0.Row {
+				from = textedit.DisplayCol(line, sel0.Col, 4)
+			}
+			if row == sel1.Row {
+				to = textedit.DisplayCol(line, sel1.Col, 4)
+			}
+			if row < sel1.Row && to == len(cells) + 1 {
+				// the line break is selected too: show it as one more cell
+				to = len(cells) + 1
+			}
+			let x0 = textX + f64(from - ed.HScroll) * ed.CharW
+			let x1 = textX + f64(to - ed.HScroll) * ed.CharW
+			if x1 > x0 {
+				ed.rect(x0, top, x1 - x0, ed.LineH, 0.22, 0.32, 0.5)
+			}
+		}
+		// the text, in runs of one syntax class
+		mut i = ed.HScroll
+		let last = ed.HScroll + ed.cols() + 1
+		for i < len(cells) && i < last {
+			mut j = i + 1
+			for j < len(cells) && j < last && cells[j].kind == cells[i].kind {
+				j += 1
+			}
+			let (r, g, bl) = colorOf(cells[i].kind)
+			// ASCII goes out in one piece; every other character is placed in its own cell so a wider
+			// fallback glyph cannot push the rest of the line out of the grid
+			mut k = i
+			for k < j {
+				mut m = k
+				if cells[k].ascii() {
+					for m < j && cells[m].ascii() {
+						m += 1
+					}
+					ed.draw(textX + f64(k - ed.HScroll) * ed.CharW, top, textOf(cells, k, m), r, g, bl)
+				} else {
+					m = k + 1
+					ed.drawUnicode(textX + f64(k - ed.HScroll) * ed.CharW, top, cells[k].text, r, g, bl)
+				}
+				k = m
+			}
+			i = j
+		}
+		// the line number, right aligned in the gutter (the current line brighter)
+		let label = mint.Itoa(row + 1)
+		let lx = gutter - ed.CharW * 1.5 - f64(len(label)) * ed.CharW
+		if row == b.Row {
+			ed.draw(lx, top, label, 0.8, 0.82, 0.86)
+		} else {
+			ed.draw(lx, top, label, 0.4, 0.43, 0.5)
+		}
+		n += 1
+	}
+	// the caret: a bar between two characters, blinking
+	if ed.Blink && ed.Mode == modeEdit {
+		let cx = textX + f64(textedit.DisplayCol(b.Lines[b.Row], b.Col, 4) - ed.HScroll) * ed.CharW
+		let cn = b.Row - ed.Scroll
+		if cn >= 0 && cn < rows {
+			ed.rect(cx, ed.rowTop(cn), ed.Scale * 1.5, ed.LineH, 0.95, 0.95, 1.0)
+		}
+	}
+	ed.panel()
+	ed.tabBar()
+	ed.statusBar()
+}
+
+// statusBar draws the bottom line: the prompt while one is open, otherwise the message, the file and position.
+fn (ed mut Editor) statusBar() {
+	let h = f64(ed.Bmp.H)
+	let w = f64(ed.Bmp.W)
+	let top = h - ed.LineH * 1.4
+	ed.rect(0.0, top, w, ed.LineH * 1.4, 0.16, 0.18, 0.23)
+	let ty = top + ed.LineH * 0.2
+	if ed.Mode == modeFind {
+		ed.draw(ed.CharW, ty, "Find: " + ed.Prompt + "_", 0.95, 0.85, 0.5)
+		return
+	}
+	if ed.Mode == modeReplace {
+		ed.draw(ed.CharW, ty, "Find: " + ed.Needle + "   Replace with: " + ed.Prompt + "_   (Return replaces, Cmd+Return all, Tab switches)", 0.95, 0.85, 0.5)
+		return
+	}
+	if ed.Mode == modeGoto {
+		ed.draw(ed.CharW, ty, "Go to line: " + ed.Prompt + "_", 0.95, 0.85, 0.5)
+		return
+	}
+	mut left = ed.name()
+	if ed.Buf.Dirty {
+		left = left + " *"
+	}
+	if len(ed.Message) > 0 {
+		left = left + "   " + ed.Message
+	}
+	ed.draw(ed.CharW, ty, left, 0.85, 0.87, 0.9)
+	let pos = "Ln " + mint.Itoa(ed.Buf.Row + 1) + ", Col " + mint.Itoa(textedit.DisplayCol(ed.Buf.Lines[ed.Buf.Row], ed.Buf.Col, 4) + 1) + "   " + mint.Itoa(len(ed.Buf.Lines)) + " lines"
+	ed.draw(w - f64(len(pos) + 2) * ed.CharW, ty, pos, 0.6, 0.64, 0.72)
+}
+
+// tabBar draws the open files along the top.
+fn (ed mut Editor) tabBar() {
+	let w = f64(ed.Bmp.W)
+	ed.rect(0.0, 0.0, w, ed.tabH(), 0.09, 0.095, 0.12)
+	let ty = (ed.tabH() - ed.LineH) / 2.0
+	mut x = 0.0
+	mut i = 0
+	for i < len(ed.Tabs) {
+		mut name = ed.tabName(i)
+		let dirty = (i == ed.Active && ed.Buf.Dirty) || (i != ed.Active && ed.Tabs[i].Buf.Dirty)
+		if dirty {
+			name = name + " *"
+		}
+		let tw = f64(len(name) + 4) * ed.CharW
+		if i == ed.Active {
+			ed.rect(x, 0.0, tw, ed.tabH(), bgR, bgG, bgB)
+			ed.rect(x, 0.0, tw, ed.Scale * 2.0, 0.45, 0.65, 0.95)
+			ed.draw(x + ed.CharW * 2.0, ty, name, 0.9, 0.92, 0.95)
+		} else {
+			ed.draw(x + ed.CharW * 2.0, ty, name, 0.5, 0.54, 0.62)
+		}
+		x += tw
+		i += 1
+	}
+}
+
+// tabAt is the tab under pixel column px of the tab bar (-1 past the last one).
+fn (ed Editor) tabAt(px f64) i64 {
+	mut x = 0.0
+	mut i = 0
+	for i < len(ed.Tabs) {
+		mut len2 = len(ed.tabName(i))
+		if (i == ed.Active && ed.Buf.Dirty) || (i != ed.Active && ed.Tabs[i].Buf.Dirty) {
+			len2 += 2
+		}
+		x += f64(len2 + 4) * ed.CharW
+		if px < x {
+			return i
+		}
+		i += 1
+	}
+	return -1
+}
+
+// panel draws the output of the last Run above the status line.
+fn (ed mut Editor) panel() {
+	if !ed.OutputOpen {
+		return
+	}
+	let h = f64(ed.Bmp.H)
+	let w = f64(ed.Bmp.W)
+	let ph = ed.panelH()
+	let top = h - ed.LineH * 1.4 - ph
+	ed.rect(0.0, top, w, ph, 0.08, 0.085, 0.105)
+	ed.rect(0.0, top, w, ed.Scale, 0.3, 0.33, 0.4)
+	// the last lines that fit
+	mut first = len(ed.Output) - outputRows
+	if first < 0 {
+		first = 0
+	}
+	mut i = first
+	mut n = 0
+	for i < len(ed.Output) && n < outputRows {
+		ed.draw(ed.CharW, top + ed.LineH * 0.2 + f64(n) * ed.LineH, ed.Output[i], 0.8, 0.82, 0.86)
+		i += 1
+		n += 1
+	}
+}

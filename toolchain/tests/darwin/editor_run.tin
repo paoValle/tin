@@ -1,0 +1,7 @@
+package main
+
+import "say"
+
+fn main() {
+	say.Line("run from the editor", 6 * 7)
+}

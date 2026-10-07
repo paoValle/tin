@@ -1,0 +1,109 @@
+package main
+
+import "appkit"
+import "mint"
+import "quarry"
+import "twine"
+
+// output is what the last Run printed, shown in a panel above the status line until Escape.
+const outputRows = 10
+
+// compilerPath is the Tin compiler to run files with: TINLAND_TINC, else tinc from the PATH.
+fn compilerPath() str {
+	let c = quarry.Getenv("TINLAND_TINC")
+	if len(c) > 0 {
+		return c
+	}
+	return "tinc"
+}
+
+// quoted is s as one word for sh.
+fn quoted(s str) str {
+	return "'" + twine.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// capture runs a program (standard error folded into the output) for at most ten seconds and returns its exit
+// code and everything it printed. The time limit is perl's alarm, which is on every Mac.
+fn capture(argv []str) (i64, str) {
+	mut words = []str{}
+	mut i = 0
+	for i < len(argv) {
+		words = append(words, quoted(argv[i]))
+		i += 1
+	}
+	return appkit.RunCapture("exec perl -e 'alarm 10; exec @ARGV' " + twine.Join(words, " "))
+}
+
+// runFile compiles the active file with tinc and runs it, collecting the output into the panel.
+fn (ed mut Editor) runFile() {
+	if !twine.HasSuffix(ed.Buf.Path, ".tin") {
+		ed.say("Run works on a saved .tin file")
+		return
+	}
+	if ed.Buf.Dirty && !ed.save(false) {
+		return
+	}
+	let exe = "/tmp/tinland-run"
+	let (code, text) = capture([]str{compilerPath(), "-o", exe, ed.Buf.Path})
+	mut shown = text
+	mut title = "compile failed"
+	if code == 0 {
+		let (rc, out) = capture([]str{exe})
+		shown = out
+		title = "exit " + mint.Itoa(rc)
+	}
+	let lines = twine.Split(twine.TrimSpace(shown), "\n")
+	ed.Output = append([]str{"-- " + ed.name() + ": " + title}, lines...)
+	ed.OutputOpen = true
+	ed.Redraw = true
+}
+
+// jumpTo opens the file and line named by a compiler message "path:line:col: ..." (false for any other line).
+fn (ed mut Editor) jumpTo(text str) bool {
+	let parts = twine.SplitN(text, ":", 4)
+	if len(parts) < 3 {
+		return false
+	}
+	let row = parseInt(parts[1])
+	let col = parseInt(parts[2])
+	if row < 1 || len(parts[0]) == 0 {
+		return false
+	}
+	if parts[0] != ed.Buf.Path && !ed.load(parts[0]) {
+		return false
+	}
+	let at = row - 1
+	if at >= len(ed.Buf.Lines) {
+		return false
+	}
+	mut c = col - 1
+	if c < 0 {
+		c = 0
+	}
+	if c > len(ed.Buf.Lines[at]) {
+		c = len(ed.Buf.Lines[at])
+	}
+	ed.Buf.MoveTo(at, c, false)
+	ed.Redraw = true
+	return true
+}
+
+// panelClick handles a click at pixel row py (from the window's top) when it is inside the output panel.
+fn (ed mut Editor) panelClick(py f64) bool {
+	if !ed.OutputOpen {
+		return false
+	}
+	let top = ed.PtH * ed.Scale - ed.LineH * 1.4 - ed.panelH()
+	if py < top || py > top + ed.panelH() {
+		return false
+	}
+	mut first = len(ed.Output) - outputRows
+	if first < 0 {
+		first = 0
+	}
+	let i = first + i64((py - top - ed.LineH * 0.2) / ed.LineH)
+	if i >= 0 && i < len(ed.Output) {
+		ed.jumpTo(ed.Output[i])
+	}
+	return true
+}
