@@ -205,6 +205,7 @@ Anything that touches the OS must also run on Linux (cross-compile and run in ti
 - toolchain/std/NAME/NAME.tin (package NAME) with a one-line comment on every exported function.
 - toolchain/tests/v2/NAME.tin: a `package main` program exercising every function, printing results with
   say.Line (deterministic output; temporary files under /tmp/tin-test-*). Then save the expected
-  output: run it, sort the output, and write it to toolchain/tests/v2/NAME.out
-  (`bin/agent_X/prog | sort > toolchain/tests/v2/NAME.out`) only after verifying every line by hand is correct.
+  output, in the order the program prints it: `bin/agent_X/prog > toolchain/tests/v2/NAME.out`, only after
+  verifying every line, and the order, by hand. The suite compares output exactly; only a test whose order
+  truly varies (cores finishing in any order) saves sorted output and adds NAME.sorted saying why (#626).
 - The package's README: API list, design notes, known gaps.

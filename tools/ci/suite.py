@@ -89,6 +89,16 @@ def execute(command, *, cwd=ROOT, timeout=60, env=None):
         return 124, exc.stdout or b"", (exc.stderr or b"") + b"\nCI timeout\n"
 
 
+def run_output(source, stdout):
+    """The stdout a strict test is judged by (#626): exactly as printed, so a test fails on
+    order (map iteration, defer, select, scope, a loop's lines). A test whose order may vary
+    (cores finishing in any order) opts in with NAME.sorted, a file saying why; only its
+    lines are sorted before the comparison."""
+    if source.with_suffix('.sorted').exists():
+        return b''.join(sorted(stdout.splitlines(True)))
+    return stdout
+
+
 def compare(name, expected, actual):
     if expected == actual:
         return True
@@ -136,7 +146,7 @@ def run(compiler, target=None, docker=None, root=ROOT):
                                'timeout', '60', '/work/' + name]
                 code, stdout, stderr = execute(command, cwd=root, timeout=75 if docker else 60)
                 (output / (name + '.run.log')).write_bytes(stdout + stderr)
-                passed = code == 0 and compare(name, golden.read_bytes(), b''.join(sorted(stdout.splitlines(True))))
+                passed = code == 0 and compare(name, golden.read_bytes(), run_output(source, stdout))
             if not passed:
                 print(f'FAIL {name}: exit {code}\n{stderr.decode(errors="replace")[:4000]}')
             else:
@@ -171,6 +181,11 @@ def run(compiler, target=None, docker=None, root=ROOT):
             else:
                 print('PASS', name)
             results.append({'name': name, 'passed': passed, 'exit': code})
+        # A .sorted marker must name a test and say why its order may vary (#626).
+        for marker in sorted((root / 'toolchain/tests/v2').glob('*.sorted')):
+            if not marker.with_suffix('.tin').exists() or not marker.read_text().strip():
+                print('FAIL', marker.stem, 'a .sorted marker needs its test and a reason:', marker)
+                results.append({'name': marker.stem, 'passed': False, 'exit': None})
         # A check file whose test is missing (a typo in the name) would check nothing.
         asm_stems = {source.stem for source in asm_cases}
         for check in sorted((root / 'toolchain/tests/v2').glob('*_asm.check')):

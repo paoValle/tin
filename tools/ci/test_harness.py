@@ -12,7 +12,7 @@ import suite
 
 
 class SuiteTests(unittest.TestCase):
-    def scenario(self, *, negative=False, golden=True, outcomes=()):
+    def scenario(self, *, negative=False, golden=True, outcomes=(), expected='expected\n', marker=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             tests = root / 'toolchain/tests/v2'
@@ -20,7 +20,9 @@ class SuiteTests(unittest.TestCase):
             source = tests / ('sample_bad.tin' if negative else 'sample.tin')
             source.write_text('package main\n')
             if golden:
-                source.with_suffix('.err' if negative else '.out').write_text('expected\n')
+                source.with_suffix('.err' if negative else '.out').write_text(expected)
+            if marker is not None:
+                source.with_suffix('.sorted').write_text(marker)
             with patch.object(suite, 'execute', side_effect=outcomes), contextlib.redirect_stdout(io.StringIO()):
                 return suite.run(Path('/compiler'), root=root)
 
@@ -48,6 +50,18 @@ class SuiteTests(unittest.TestCase):
     def test_negative_diagnostics_must_match(self):
         self.assertFalse(self.scenario(negative=True, outcomes=[(1, b'', b'wrong\n')]))
         self.assertTrue(self.scenario(negative=True, outcomes=[(1, b'', b'expected\n')]))
+
+    def test_output_order_matters(self):
+        # #626: two lines in the wrong order fail; the suite no longer sorts stdout.
+        self.assertTrue(self.scenario(expected='a\nb\n', outcomes=[(0, b'', b''), (0, b'a\nb\n', b'')]))
+        self.assertFalse(self.scenario(expected='a\nb\n', outcomes=[(0, b'', b''), (0, b'b\na\n', b'')]))
+
+    def test_sorted_marker_compares_sorted_lines(self):
+        # A test whose order may vary opts in with NAME.sorted, which must say why.
+        why = 'cores print in the order they finish\n'
+        self.assertTrue(self.scenario(expected='a\nb\n', marker=why, outcomes=[(0, b'', b''), (0, b'b\na\n', b'')]))
+        self.assertFalse(self.scenario(expected='a\nb\n', marker=why, outcomes=[(0, b'', b''), (0, b'b\nc\n', b'')]))
+        self.assertFalse(self.scenario(expected='a\nb\n', marker='', outcomes=[(0, b'', b''), (0, b'b\na\n', b'')]))
 
     def test_real_process_timeout(self):
         result = suite.execute([sys.executable, '-c', 'import time; time.sleep(10)'], timeout=.05)

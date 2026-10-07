@@ -1,25 +1,25 @@
-accept a waiting client true
-accept with a negative timeout wire: accept timeout -1 is negative (0 waits with no limit)
-accept with no client wire: accept timed out
-accept with no limit true
-bad url true
-chunked true 200 "hello, world" chunks
 dial true
 echo "one\ntwo\nthree\n" true
 eof true
 get true 200 ok text/plain
-header name wire: invalid header name "Bad Name"
-header value wire: invalid header value for X-A
-https wire: connect 127.0.0.1:1: Connection refused
-localhost true
-maxbody chunked wire: response body is over the 8-byte limit
-maxbody exact true 100
-maxbody length wire: response body of 100 bytes is over the 50-byte limit
-method wire: invalid method "GE T"
-noport wire: address "nohostport" needs a port
+chunked true 200 "hello, world" chunks
 post true 201 created
-refused true
-scheme wire: "ftp://example.com/" is not an http:// or https:// URL
-stop bye
 timeout wire: read timed out
+maxbody length wire: response body of 100 bytes is over the 50-byte limit
+maxbody exact true 100
+maxbody chunked wire: response body is over the 8-byte limit
+header value wire: invalid header value for X-A
+header name wire: invalid header name "Bad Name"
 url true
+method wire: invalid method "GE T"
+stop bye
+https wire: connect 127.0.0.1:1: Connection refused
+scheme wire: "ftp://example.com/" is not an http:// or https:// URL
+bad url true
+refused true
+noport wire: address "nohostport" needs a port
+localhost true
+accept with no client wire: accept timed out
+accept with a negative timeout wire: accept timeout -1 is negative (0 waits with no limit)
+accept a waiting client true
+accept with no limit true

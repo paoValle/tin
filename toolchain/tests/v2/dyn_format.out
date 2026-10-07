@@ -1,9 +1,9 @@
-interp {rex 3} and {7}
 line {rex 3} Long(x 2) {7}
-optional <nil>
-optional {7}
-same as concrete true
+interp {rex 3} and {7}
+verbs {rex 3} | {n:rex age:3}
 slice [{rex 3} Long(x 2) {7}]
 struct {ann {rex 3}}
 struct {owner:ann pet:{n:rex age:3}}
-verbs {rex 3} | {n:rex age:3}
+optional <nil>
+optional {7}
+same as concrete true

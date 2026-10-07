@@ -1,8 +1,8 @@
-constraint: 3
-limited: 2
-lookup: 4
-pair: 7
-pick: 1
-rwc: 1
 seq: 1
 streams: 2
+rwc: 1
+pair: 7
+pick: 1
+limited: 2
+constraint: 3
+lookup: 4

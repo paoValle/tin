@@ -1,8 +1,8 @@
 celsius 212 101.5 32
 cents $19.99 [$0.05 $2.50]
-ids 6 [1 2 3]
 name hi ann
-op 7
-sorted [al bo] hi al
+ids 6 [1 2 3]
 tally map[a:2]
+op 7
 values 212 6
+sorted [al bo] hi al

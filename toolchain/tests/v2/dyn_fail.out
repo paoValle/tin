@@ -1,10 +1,10 @@
-both rex cat tom dogcat
-catch value default
-fault: no such kind: fish
-generic cat tom
-got cat tom
-method cat tom
-pair cat tom 3
-run: no such kind: fish
 try rex
+pair cat tom 3
+both rex cat tom dogcat
+method cat tom
 value rex
+generic cat tom
+run: no such kind: fish
+got cat tom
+fault: no such kind: fish
+catch value default

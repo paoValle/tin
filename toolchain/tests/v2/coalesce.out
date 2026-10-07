@@ -1,14 +1,14 @@
-chain 4 99 fallback calls 1
-dyn dyn
-expr 11 hi anon
 i64 5
-left side once 3 11 lefts 2 fallback calls 1
-literal 2 t
-loop 206
-map 4
-optional result 8 -1
-scalars 2.5 1.25 true 200
 set 7 7 fallback calls 0
-slice 3
+scalars 2.5 1.25 true 200
 str anon none bo
 struct guest ann
+slice 3
+map 4
+dyn dyn
+chain 4 99 fallback calls 1
+optional result 8 -1
+left side once 3 11 lefts 2 fallback calls 1
+expr 11 hi anon
+literal 2 t
+loop 206

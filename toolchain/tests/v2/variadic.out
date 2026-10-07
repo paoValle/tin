@@ -1,13 +1,13 @@
-closure 3
-dyn 25 10
-func type 5 3 0
-generic 3 0 3 1 2
-hundred 4950
-join a, b, c  0
-method [info: started ok warn: ]
-shape 13
-shares true false
-spread 9
 sum 6 0 7
+spread 9
+shares true false
+join a, b, c  0
 untyped 202
+hundred 4950
+method [info: started ok warn: ]
 value 2 0
+closure 3
+generic 3 0 3 1 2
+func type 5 3 0
+shape 13
+dyn 25 10

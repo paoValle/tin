@@ -1,16 +1,16 @@
+write true
+open true
 0 "alpha"
 1 "beta"
 2 ""
 3 "gamma"
 4 long 100000 42
 5 "last line no newline"
-bytes a true l true 100038
-empty true false
-eof byte false
-flush true
-missing flume: /tmp/tin-test-no/such/file: No such file or directory
-open true
-read true 100040 375668 0
 readall 100040 true alpha
+bytes a true l true 100038
+eof byte false
+read true 100040 375668 0
+missing flume: /tmp/tin-test-no/such/file: No such file or directory
+empty true false
 stdout -77!
-write true
+flush true

@@ -1,42 +1,42 @@
-accepted accepted accepted
-defs out <p>[&lt;x&gt;]</p>
-out after script <script>var x = 1;</script>&lt;b&gt;
+out text <p>&lt;script&gt;alert(1)&lt;/script&gt;</p>
+out text amp <p>a &amp; b &lt; c &gt; d &#34;e&#34; &#39;f&#39;</p>
 out attr <a title="&#34; onmouseover=alert(1)">x</a>
 out attr single <a title='&#39; onmouseover=alert(1)'>x</a>
 out attr unquoted <a title=x>x</a>
-out builtin html <p>&amp;lt;i&amp;gt;</p>
-out builtin js <p>\u003C/script\u003E</p>
-out builtin urlquery <p>a+b%26c</p>
-out href data <a href="#ZgotmplZ">x</a>
 out href js <a href="#ZgotmplZ">x</a>
 out href js mixed <a href="#ZgotmplZ">x</a>
-out href mailto <a href="mailto:a@b.c">x</a>
-out href relative <a href="/path?q=1&amp;r=2">x</a>
+out href data <a href="#ZgotmplZ">x</a>
 out href safe <a href="https://example.com/?a=b&amp;c=d">x</a>
-out js <script>var x = "\u003C/script\u003E\u003Cscript\u003Ealert(1)\u003C/script\u003E";</script>
-out js backslash <script>var x = "\u005C";</script>
-out js quote <script>var x = 'a\u0027b\u005Cc';</script>
-out quoted then onclick ok <a href="/x" title="v">x</a>
+out href relative <a href="/path?q=1&amp;r=2">x</a>
+out href mailto <a href="mailto:a@b.c">x</a>
 out src <img src="x&#34; onerror=&#34;alert(1)">
-out text <p>&lt;script&gt;alert(1)&lt;/script&gt;</p>
-out text amp <p>a &amp; b &lt; c &gt; d &#34;e&#34; &#39;f&#39;</p>
-out unquoted eq <a title=a&#61;b&#96;c>x</a>
 out unquoted href <a href=#ZgotmplZ>x</a>
-out unquoted href space <a href=https://a.example/&#32;onmouseover&#61;alert(1)>x</a>
+out js <script>var x = "\u003C/script\u003E\u003Cscript\u003Ealert(1)\u003C/script\u003E";</script>
+out js quote <script>var x = 'a\u0027b\u005Cc';</script>
+out js backslash <script>var x = "\u005C";</script>
 out unquoted space <a title=x&#32;onmouseover&#61;alert(1)>x</a>
+out unquoted eq <a title=a&#61;b&#96;c>x</a>
+out unquoted href space <a href=https://a.example/&#32;onmouseover&#61;alert(1)>x</a>
 out unquoted then attr <a title=p&#32;q id=z>x</a>
-refused <!-- {{.}} --> stencil: an action inside an HTML comment is not supported
-refused <a b {{.}}>x</a> stencil: an action inside a tag, outside an attribute value, is not supported
-refused <a href="/x" onclick="{{.}}">x</a> stencil: the onclick attribute is not supported
-refused <a onclick="{{.}}">x</a> stencil: the onclick attribute is not supported
-refused <a {{.}}>x</a> stencil: an action inside a tag, outside an attribute value, is not supported
-refused <p class=" stencil: bad: the template ends inside an HTML context
-refused <script>var x = "a" / 2; var y = "{{.}}";</script> stencil: an action in <script> must be inside a JavaScript string literal
-refused <script>var x = `${ {{.}} }`;</script> stencil: an action in <script> must be inside a JavaScript string literal
-refused <script>var x = {{.}};</script> stencil: an action in <script> must be inside a JavaScript string literal
+out quoted then onclick ok <a href="/x" title="v">x</a>
+out after script <script>var x = 1;</script>&lt;b&gt;
+out builtin html <p>&amp;lt;i&amp;gt;</p>
+out builtin urlquery <p>a+b%26c</p>
+out builtin js <p>\u003C/script\u003E</p>
 refused <style>{{.}}</style> stencil: <style> is not supported
+refused <a onclick="{{.}}">x</a> stencil: the onclick attribute is not supported
+refused <!-- {{.}} --> stencil: an action inside an HTML comment is not supported
 refused <title>{{.}}</title> stencil: <title> is not supported
 refused <{{.}}> stencil: an action as a tag name is not supported
 refused {{if .}}<p{{end}}> stencil: an if block crosses an HTML context boundary
 refused {{if .}}{{else}}<p{{end}} stencil: an if block crosses an HTML context boundary
 refused {{range .}}<p{{end}} stencil: a range block crosses an HTML context boundary
+refused <p class=" stencil: bad: the template ends inside an HTML context
+refused <script>var x = {{.}};</script> stencil: an action in <script> must be inside a JavaScript string literal
+refused <script>var x = "a" / 2; var y = "{{.}}";</script> stencil: an action in <script> must be inside a JavaScript string literal
+refused <script>var x = `${ {{.}} }`;</script> stencil: an action in <script> must be inside a JavaScript string literal
+refused <a href="/x" onclick="{{.}}">x</a> stencil: the onclick attribute is not supported
+refused <a {{.}}>x</a> stencil: an action inside a tag, outside an attribute value, is not supported
+refused <a b {{.}}>x</a> stencil: an action inside a tag, outside an attribute value, is not supported
+accepted accepted accepted
+defs out <p>[&lt;x&gt;]</p>

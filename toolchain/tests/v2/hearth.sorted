@@ -1,0 +1,1 @@
+Every core prints a "core N sees" line in the order the cores run; the lines, not their order, are what the test checks.

@@ -1,0 +1,1 @@
+Cores answer relay messages concurrently and print in the order their replies arrive; the lines, not their order, are what the test checks.

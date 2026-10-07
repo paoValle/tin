@@ -1,11 +1,11 @@
-b is nil
-get <nil> y nn <nil> <nil>
-get <nil> z <nil> [t1] map[q:2]
-kept x
-len 1 x!
-m 1
 x <nil>
+len 1 x!
+b is nil
 xs <nil>
 xs [1 2 3] 3
+m 1
+kept x
 {"Name":"a","Nick":null,"Tags":null,"Meta":null}
+get <nil> z <nil> [t1] map[q:2]
+get <nil> y nn <nil> <nil>
 {"Name":"y","Nick":"nn","Tags":null,"Meta":null}

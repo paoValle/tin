@@ -1,36 +1,36 @@
-backtrace none: ""
+wrap message: handle: loading user 7: not found
+wrap str: handle: loading user 7: not found
+wrap interp: handle: loading user 7: not found
+wrap is ErrNotFound: true
+wrap is ErrAlsoNotFound: false
+wrap is ErrDenied: false
+wrap classify: 404
 cause 1: loading user 7: not found
 cause 2: not found true
 cause 3 nil: true
-deadline text: true
-denied: handle: loading user 7: denied 2 403
-error method: handle: loading user 7: not found
-join all nil: true
-join cause nil: true
-join classify: 404
-join empty: true
-join is: true true false false
-join message: "handle: loading user 7: not found\ndialing db: deadline exceeded"
-join one: "denied 2" true
-kept: "request: handle: loading user 7: not found\ndialing db: deadline exceeded" true true false
 message: handle: loading user 7: not found
-nested join: "same text\ndenied 2\noverloaded" true true true false
-nil target: false nil err: false
+denied: handle: loading user 7: denied 2 403
+plain: handle: loading user 7: bad key bad 500 false
+success: ok true false
 plain self: true plain other: false
 plain through wrap: true false
-plain: handle: loading user 7: bad key bad 500 false
-say.Fault: code 42 true
+nil target: false nil err: false
 sentinel self: true false
-sentinels distinct: false false true
-sentinels: canceled | deadline exceeded | limit exceeded | overloaded | draining | panic
-success: ok true false
-wrap classify: 404
-wrap empty msg: ": not found" true
-wrap interp: handle: loading user 7: not found
-wrap is ErrAlsoNotFound: false
-wrap is ErrDenied: false
-wrap is ErrNotFound: true
-wrap message: handle: loading user 7: not found
 wrap nil: true ""
-wrap str: handle: loading user 7: not found
+wrap empty msg: ": not found" true
+join message: "handle: loading user 7: not found\ndialing db: deadline exceeded"
+join is: true true false false
+join cause nil: true
+join classify: 404
+join all nil: true
+join empty: true
+join one: "denied 2" true
 wrapped join: "request: handle: loading user 7: not found\ndialing db: deadline exceeded" true 404
+nested join: "same text\ndenied 2\noverloaded" true true true false
+sentinels: canceled | deadline exceeded | limit exceeded | overloaded | draining | panic
+sentinels distinct: false false true
+deadline text: true
+backtrace none: ""
+kept: "request: handle: loading user 7: not found\ndialing db: deadline exceeded" true true false
+say.Fault: code 42 true
+error method: handle: loading user 7: not found

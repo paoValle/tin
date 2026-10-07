@@ -1,5 +1,5 @@
--1 true [second 0 first]
 10 true [third second 5 first]
-[plain body plain end]
-empty [parse done chain done]
+-1 true [second 0 first]
 negative [first]
+empty [parse done chain done]
+[plain body plain end]

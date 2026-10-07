@@ -1,174 +1,174 @@
-absolute true true
-dotdot true true
-empty true true
-fixed 1970 1 1 1 0 0 3600 X 2025 10 1 11 22 5 3600 X
-fixed date true true
-garbage true
-in Africa/Casablanca 0 1970 1 1 0 0 0 0 +00
-in Africa/Casablanca 1735603200 2024 12 31 1 0 0 3600 +01
-in Africa/Casablanca 1740787200 2025 3 1 0 0 0 0 +00
-in Africa/Casablanca 1743379200 2025 3 31 0 0 0 0 +00
-in Africa/Casablanca 1745971200 2025 4 30 1 0 0 3600 +01
-in Africa/Casablanca 1751414400 2025 7 2 1 0 0 3600 +01
-in Africa/Casablanca 1759190400 2025 9 30 1 0 0 3600 +01
-in Africa/Casablanca 1762041600 2025 11 2 1 0 0 3600 +01
-in Africa/Casablanca 2222121600 2040 6 1 0 0 0 0 +00
-in America/New_York 0 1969 12 31 19 0 0 -18000 EST
-in America/New_York 1735603200 2024 12 30 19 0 0 -18000 EST
-in America/New_York 1740787200 2025 2 28 19 0 0 -18000 EST
-in America/New_York 1743379200 2025 3 30 20 0 0 -14400 EDT
-in America/New_York 1745971200 2025 4 29 20 0 0 -14400 EDT
-in America/New_York 1751414400 2025 7 1 20 0 0 -14400 EDT
-in America/New_York 1759190400 2025 9 29 20 0 0 -14400 EDT
-in America/New_York 1762041600 2025 11 1 20 0 0 -14400 EDT
-in America/New_York 2222121600 2040 5 31 20 0 0 -14400 EDT
-in America/Sao_Paulo 0 1969 12 31 21 0 0 -10800 -03
-in America/Sao_Paulo 1735603200 2024 12 30 21 0 0 -10800 -03
-in America/Sao_Paulo 1740787200 2025 2 28 21 0 0 -10800 -03
-in America/Sao_Paulo 1743379200 2025 3 30 21 0 0 -10800 -03
-in America/Sao_Paulo 1745971200 2025 4 29 21 0 0 -10800 -03
-in America/Sao_Paulo 1751414400 2025 7 1 21 0 0 -10800 -03
-in America/Sao_Paulo 1759190400 2025 9 29 21 0 0 -10800 -03
-in America/Sao_Paulo 1762041600 2025 11 1 21 0 0 -10800 -03
-in America/Sao_Paulo 2222121600 2040 5 31 21 0 0 -10800 -03
-in Asia/Kathmandu 0 1970 1 1 5 30 0 19800 +0530
-in Asia/Kathmandu 1735603200 2024 12 31 5 45 0 20700 +0545
-in Asia/Kathmandu 1740787200 2025 3 1 5 45 0 20700 +0545
-in Asia/Kathmandu 1743379200 2025 3 31 5 45 0 20700 +0545
-in Asia/Kathmandu 1745971200 2025 4 30 5 45 0 20700 +0545
-in Asia/Kathmandu 1751414400 2025 7 2 5 45 0 20700 +0545
-in Asia/Kathmandu 1759190400 2025 9 30 5 45 0 20700 +0545
-in Asia/Kathmandu 1762041600 2025 11 2 5 45 0 20700 +0545
-in Asia/Kathmandu 2222121600 2040 6 1 5 45 0 20700 +0545
-in Australia/Lord_Howe 0 1970 1 1 10 0 0 36000 AEST
-in Australia/Lord_Howe 1735603200 2024 12 31 11 0 0 39600 +11
-in Australia/Lord_Howe 1740787200 2025 3 1 11 0 0 39600 +11
-in Australia/Lord_Howe 1743379200 2025 3 31 11 0 0 39600 +11
-in Australia/Lord_Howe 1745971200 2025 4 30 10 30 0 37800 +1030
-in Australia/Lord_Howe 1751414400 2025 7 2 10 30 0 37800 +1030
-in Australia/Lord_Howe 1759190400 2025 9 30 10 30 0 37800 +1030
-in Australia/Lord_Howe 1762041600 2025 11 2 11 0 0 39600 +11
-in Australia/Lord_Howe 2222121600 2040 6 1 10 30 0 37800 +1030
-in Etc/GMT+5 0 1969 12 31 19 0 0 -18000 -05
-in Etc/GMT+5 1735603200 2024 12 30 19 0 0 -18000 -05
-in Etc/GMT+5 1740787200 2025 2 28 19 0 0 -18000 -05
-in Etc/GMT+5 1743379200 2025 3 30 19 0 0 -18000 -05
-in Etc/GMT+5 1745971200 2025 4 29 19 0 0 -18000 -05
-in Etc/GMT+5 1751414400 2025 7 1 19 0 0 -18000 -05
-in Etc/GMT+5 1759190400 2025 9 29 19 0 0 -18000 -05
-in Etc/GMT+5 1762041600 2025 11 1 19 0 0 -18000 -05
-in Etc/GMT+5 2222121600 2040 5 31 19 0 0 -18000 -05
-in Europe/Paris 0 1970 1 1 1 0 0 3600 CET
-in Europe/Paris 1735603200 2024 12 31 1 0 0 3600 CET
-in Europe/Paris 1740787200 2025 3 1 1 0 0 3600 CET
-in Europe/Paris 1743379200 2025 3 31 2 0 0 7200 CEST
-in Europe/Paris 1745971200 2025 4 30 2 0 0 7200 CEST
-in Europe/Paris 1751414400 2025 7 2 2 0 0 7200 CEST
-in Europe/Paris 1759190400 2025 9 30 2 0 0 7200 CEST
-in Europe/Paris 1762041600 2025 11 2 1 0 0 3600 CET
-in Europe/Paris 2222121600 2040 6 1 2 0 0 7200 CEST
-in Pacific/Chatham 0 1970 1 1 12 45 0 45900 +1245
-in Pacific/Chatham 1735603200 2024 12 31 13 45 0 49500 +1345
-in Pacific/Chatham 1740787200 2025 3 1 13 45 0 49500 +1345
-in Pacific/Chatham 1743379200 2025 3 31 13 45 0 49500 +1345
-in Pacific/Chatham 1745971200 2025 4 30 12 45 0 45900 +1245
-in Pacific/Chatham 1751414400 2025 7 2 12 45 0 45900 +1245
-in Pacific/Chatham 1759190400 2025 9 30 13 45 0 49500 +1345
-in Pacific/Chatham 1762041600 2025 11 2 13 45 0 49500 +1345
-in Pacific/Chatham 2222121600 2040 6 1 12 45 0 45900 +1245
-name Africa/Casablanca Africa/Casablanca
+name Europe/Paris Europe/Paris
 name America/New_York America/New_York
-name America/Sao_Paulo America/Sao_Paulo
 name Asia/Kathmandu Asia/Kathmandu
 name Australia/Lord_Howe Australia/Lord_Howe
-name Etc/GMT+5 Etc/GMT+5
-name Europe/Paris Europe/Paris
 name Pacific/Chatham Pacific/Chatham
-norm 1969 12 31 23 59 59 999999999 true
-norm 2024 2 29 0 0 0 0 true
-norm 2025 0 1 0 0 0 0 true
-norm 2025 1 32 0 0 0 0 true
-norm 2025 13 1 0 0 0 0 true
-norm 2025 2 30 25 61 61 1500000000 true
-roundtrip Africa/Casablanca 0 0 true
-roundtrip Africa/Casablanca 1735603200 1735603200000000000 true
-roundtrip Africa/Casablanca 1740787200 1740787200000000000 true
-roundtrip Africa/Casablanca 1743379200 1743379200000000000 true
-roundtrip Africa/Casablanca 1745971200 1745971200000000000 true
-roundtrip Africa/Casablanca 1751414400 1751414400000000000 true
-roundtrip Africa/Casablanca 1759190400 1759190400000000000 true
-roundtrip Africa/Casablanca 1762041600 1762041600000000000 true
-roundtrip Africa/Casablanca 2222121600 2222121600000000000 true
-roundtrip America/New_York 0 0 true
-roundtrip America/New_York 1735603200 1735603200000000000 true
-roundtrip America/New_York 1740787200 1740787200000000000 true
-roundtrip America/New_York 1743379200 1743379200000000000 true
-roundtrip America/New_York 1745971200 1745971200000000000 true
-roundtrip America/New_York 1751414400 1751414400000000000 true
-roundtrip America/New_York 1759190400 1759190400000000000 true
-roundtrip America/New_York 1762041600 1762041600000000000 true
-roundtrip America/New_York 2222121600 2222121600000000000 true
-roundtrip America/Sao_Paulo 0 0 true
-roundtrip America/Sao_Paulo 1735603200 1735603200000000000 true
-roundtrip America/Sao_Paulo 1740787200 1740787200000000000 true
-roundtrip America/Sao_Paulo 1743379200 1743379200000000000 true
-roundtrip America/Sao_Paulo 1745971200 1745971200000000000 true
-roundtrip America/Sao_Paulo 1751414400 1751414400000000000 true
-roundtrip America/Sao_Paulo 1759190400 1759190400000000000 true
-roundtrip America/Sao_Paulo 1762041600 1762041600000000000 true
-roundtrip America/Sao_Paulo 2222121600 2222121600000000000 true
-roundtrip Asia/Kathmandu 0 0 true
-roundtrip Asia/Kathmandu 1735603200 1735603200000000000 true
-roundtrip Asia/Kathmandu 1740787200 1740787200000000000 true
-roundtrip Asia/Kathmandu 1743379200 1743379200000000000 true
-roundtrip Asia/Kathmandu 1745971200 1745971200000000000 true
-roundtrip Asia/Kathmandu 1751414400 1751414400000000000 true
-roundtrip Asia/Kathmandu 1759190400 1759190400000000000 true
-roundtrip Asia/Kathmandu 1762041600 1762041600000000000 true
-roundtrip Asia/Kathmandu 2222121600 2222121600000000000 true
-roundtrip Australia/Lord_Howe 0 0 true
-roundtrip Australia/Lord_Howe 1735603200 1735603200000000000 true
-roundtrip Australia/Lord_Howe 1740787200 1740787200000000000 true
-roundtrip Australia/Lord_Howe 1743379200 1743379200000000000 true
-roundtrip Australia/Lord_Howe 1745971200 1745971200000000000 true
-roundtrip Australia/Lord_Howe 1751414400 1751414400000000000 true
-roundtrip Australia/Lord_Howe 1759190400 1759190400000000000 true
-roundtrip Australia/Lord_Howe 1762041600 1762041600000000000 true
-roundtrip Australia/Lord_Howe 2222121600 2222121600000000000 true
-roundtrip Etc/GMT+5 0 0 true
-roundtrip Etc/GMT+5 1735603200 1735603200000000000 true
-roundtrip Etc/GMT+5 1740787200 1740787200000000000 true
-roundtrip Etc/GMT+5 1743379200 1743379200000000000 true
-roundtrip Etc/GMT+5 1745971200 1745971200000000000 true
-roundtrip Etc/GMT+5 1751414400 1751414400000000000 true
-roundtrip Etc/GMT+5 1759190400 1759190400000000000 true
-roundtrip Etc/GMT+5 1762041600 1762041600000000000 true
-roundtrip Etc/GMT+5 2222121600 2222121600000000000 true
+name America/Sao_Paulo America/Sao_Paulo
+name Africa/Casablanca Africa/Casablanca
+name Etc/GMT+5 Etc/GMT+5
+in Europe/Paris 0 1970 1 1 1 0 0 3600 CET
 roundtrip Europe/Paris 0 0 true
+in Europe/Paris 1735603200 2024 12 31 1 0 0 3600 CET
 roundtrip Europe/Paris 1735603200 1735603200000000000 true
+in Europe/Paris 1740787200 2025 3 1 1 0 0 3600 CET
 roundtrip Europe/Paris 1740787200 1740787200000000000 true
+in Europe/Paris 1743379200 2025 3 31 2 0 0 7200 CEST
 roundtrip Europe/Paris 1743379200 1743379200000000000 true
+in Europe/Paris 1745971200 2025 4 30 2 0 0 7200 CEST
 roundtrip Europe/Paris 1745971200 1745971200000000000 true
+in Europe/Paris 1751414400 2025 7 2 2 0 0 7200 CEST
 roundtrip Europe/Paris 1751414400 1751414400000000000 true
+in Europe/Paris 1759190400 2025 9 30 2 0 0 7200 CEST
 roundtrip Europe/Paris 1759190400 1759190400000000000 true
+in Europe/Paris 1762041600 2025 11 2 1 0 0 3600 CET
 roundtrip Europe/Paris 1762041600 1762041600000000000 true
+in Europe/Paris 2222121600 2040 6 1 2 0 0 7200 CEST
 roundtrip Europe/Paris 2222121600 2222121600000000000 true
+in America/New_York 0 1969 12 31 19 0 0 -18000 EST
+roundtrip America/New_York 0 0 true
+in America/New_York 1735603200 2024 12 30 19 0 0 -18000 EST
+roundtrip America/New_York 1735603200 1735603200000000000 true
+in America/New_York 1740787200 2025 2 28 19 0 0 -18000 EST
+roundtrip America/New_York 1740787200 1740787200000000000 true
+in America/New_York 1743379200 2025 3 30 20 0 0 -14400 EDT
+roundtrip America/New_York 1743379200 1743379200000000000 true
+in America/New_York 1745971200 2025 4 29 20 0 0 -14400 EDT
+roundtrip America/New_York 1745971200 1745971200000000000 true
+in America/New_York 1751414400 2025 7 1 20 0 0 -14400 EDT
+roundtrip America/New_York 1751414400 1751414400000000000 true
+in America/New_York 1759190400 2025 9 29 20 0 0 -14400 EDT
+roundtrip America/New_York 1759190400 1759190400000000000 true
+in America/New_York 1762041600 2025 11 1 20 0 0 -14400 EDT
+roundtrip America/New_York 1762041600 1762041600000000000 true
+in America/New_York 2222121600 2040 5 31 20 0 0 -14400 EDT
+roundtrip America/New_York 2222121600 2222121600000000000 true
+in Asia/Kathmandu 0 1970 1 1 5 30 0 19800 +0530
+roundtrip Asia/Kathmandu 0 0 true
+in Asia/Kathmandu 1735603200 2024 12 31 5 45 0 20700 +0545
+roundtrip Asia/Kathmandu 1735603200 1735603200000000000 true
+in Asia/Kathmandu 1740787200 2025 3 1 5 45 0 20700 +0545
+roundtrip Asia/Kathmandu 1740787200 1740787200000000000 true
+in Asia/Kathmandu 1743379200 2025 3 31 5 45 0 20700 +0545
+roundtrip Asia/Kathmandu 1743379200 1743379200000000000 true
+in Asia/Kathmandu 1745971200 2025 4 30 5 45 0 20700 +0545
+roundtrip Asia/Kathmandu 1745971200 1745971200000000000 true
+in Asia/Kathmandu 1751414400 2025 7 2 5 45 0 20700 +0545
+roundtrip Asia/Kathmandu 1751414400 1751414400000000000 true
+in Asia/Kathmandu 1759190400 2025 9 30 5 45 0 20700 +0545
+roundtrip Asia/Kathmandu 1759190400 1759190400000000000 true
+in Asia/Kathmandu 1762041600 2025 11 2 5 45 0 20700 +0545
+roundtrip Asia/Kathmandu 1762041600 1762041600000000000 true
+in Asia/Kathmandu 2222121600 2040 6 1 5 45 0 20700 +0545
+roundtrip Asia/Kathmandu 2222121600 2222121600000000000 true
+in Australia/Lord_Howe 0 1970 1 1 10 0 0 36000 AEST
+roundtrip Australia/Lord_Howe 0 0 true
+in Australia/Lord_Howe 1735603200 2024 12 31 11 0 0 39600 +11
+roundtrip Australia/Lord_Howe 1735603200 1735603200000000000 true
+in Australia/Lord_Howe 1740787200 2025 3 1 11 0 0 39600 +11
+roundtrip Australia/Lord_Howe 1740787200 1740787200000000000 true
+in Australia/Lord_Howe 1743379200 2025 3 31 11 0 0 39600 +11
+roundtrip Australia/Lord_Howe 1743379200 1743379200000000000 true
+in Australia/Lord_Howe 1745971200 2025 4 30 10 30 0 37800 +1030
+roundtrip Australia/Lord_Howe 1745971200 1745971200000000000 true
+in Australia/Lord_Howe 1751414400 2025 7 2 10 30 0 37800 +1030
+roundtrip Australia/Lord_Howe 1751414400 1751414400000000000 true
+in Australia/Lord_Howe 1759190400 2025 9 30 10 30 0 37800 +1030
+roundtrip Australia/Lord_Howe 1759190400 1759190400000000000 true
+in Australia/Lord_Howe 1762041600 2025 11 2 11 0 0 39600 +11
+roundtrip Australia/Lord_Howe 1762041600 1762041600000000000 true
+in Australia/Lord_Howe 2222121600 2040 6 1 10 30 0 37800 +1030
+roundtrip Australia/Lord_Howe 2222121600 2222121600000000000 true
+in Pacific/Chatham 0 1970 1 1 12 45 0 45900 +1245
 roundtrip Pacific/Chatham 0 0 true
+in Pacific/Chatham 1735603200 2024 12 31 13 45 0 49500 +1345
 roundtrip Pacific/Chatham 1735603200 1735603200000000000 true
+in Pacific/Chatham 1740787200 2025 3 1 13 45 0 49500 +1345
 roundtrip Pacific/Chatham 1740787200 1740787200000000000 true
+in Pacific/Chatham 1743379200 2025 3 31 13 45 0 49500 +1345
 roundtrip Pacific/Chatham 1743379200 1743379200000000000 true
+in Pacific/Chatham 1745971200 2025 4 30 12 45 0 45900 +1245
 roundtrip Pacific/Chatham 1745971200 1745971200000000000 true
+in Pacific/Chatham 1751414400 2025 7 2 12 45 0 45900 +1245
 roundtrip Pacific/Chatham 1751414400 1751414400000000000 true
+in Pacific/Chatham 1759190400 2025 9 30 13 45 0 49500 +1345
 roundtrip Pacific/Chatham 1759190400 1759190400000000000 true
+in Pacific/Chatham 1762041600 2025 11 2 13 45 0 49500 +1345
 roundtrip Pacific/Chatham 1762041600 1762041600000000000 true
+in Pacific/Chatham 2222121600 2040 6 1 12 45 0 45900 +1245
 roundtrip Pacific/Chatham 2222121600 2222121600000000000 true
-truncated true
-unknown true true
-utc UTC 1970 1 1 0 0 0 0 UTC 1969 12 31 23 59 59 0 UTC 2040 6 1 0 0 0 0 UTC
-version true
-wall America/New_York 2025 11 2 1 30 1762061400000000000 2025 11 2 1 30 0 -14400 EDT
+in America/Sao_Paulo 0 1969 12 31 21 0 0 -10800 -03
+roundtrip America/Sao_Paulo 0 0 true
+in America/Sao_Paulo 1735603200 2024 12 30 21 0 0 -10800 -03
+roundtrip America/Sao_Paulo 1735603200 1735603200000000000 true
+in America/Sao_Paulo 1740787200 2025 2 28 21 0 0 -10800 -03
+roundtrip America/Sao_Paulo 1740787200 1740787200000000000 true
+in America/Sao_Paulo 1743379200 2025 3 30 21 0 0 -10800 -03
+roundtrip America/Sao_Paulo 1743379200 1743379200000000000 true
+in America/Sao_Paulo 1745971200 2025 4 29 21 0 0 -10800 -03
+roundtrip America/Sao_Paulo 1745971200 1745971200000000000 true
+in America/Sao_Paulo 1751414400 2025 7 1 21 0 0 -10800 -03
+roundtrip America/Sao_Paulo 1751414400 1751414400000000000 true
+in America/Sao_Paulo 1759190400 2025 9 29 21 0 0 -10800 -03
+roundtrip America/Sao_Paulo 1759190400 1759190400000000000 true
+in America/Sao_Paulo 1762041600 2025 11 1 21 0 0 -10800 -03
+roundtrip America/Sao_Paulo 1762041600 1762041600000000000 true
+in America/Sao_Paulo 2222121600 2040 5 31 21 0 0 -10800 -03
+roundtrip America/Sao_Paulo 2222121600 2222121600000000000 true
+in Africa/Casablanca 0 1970 1 1 0 0 0 0 +00
+roundtrip Africa/Casablanca 0 0 true
+in Africa/Casablanca 1735603200 2024 12 31 1 0 0 3600 +01
+roundtrip Africa/Casablanca 1735603200 1735603200000000000 true
+in Africa/Casablanca 1740787200 2025 3 1 0 0 0 0 +00
+roundtrip Africa/Casablanca 1740787200 1740787200000000000 true
+in Africa/Casablanca 1743379200 2025 3 31 0 0 0 0 +00
+roundtrip Africa/Casablanca 1743379200 1743379200000000000 true
+in Africa/Casablanca 1745971200 2025 4 30 1 0 0 3600 +01
+roundtrip Africa/Casablanca 1745971200 1745971200000000000 true
+in Africa/Casablanca 1751414400 2025 7 2 1 0 0 3600 +01
+roundtrip Africa/Casablanca 1751414400 1751414400000000000 true
+in Africa/Casablanca 1759190400 2025 9 30 1 0 0 3600 +01
+roundtrip Africa/Casablanca 1759190400 1759190400000000000 true
+in Africa/Casablanca 1762041600 2025 11 2 1 0 0 3600 +01
+roundtrip Africa/Casablanca 1762041600 1762041600000000000 true
+in Africa/Casablanca 2222121600 2040 6 1 0 0 0 0 +00
+roundtrip Africa/Casablanca 2222121600 2222121600000000000 true
+in Etc/GMT+5 0 1969 12 31 19 0 0 -18000 -05
+roundtrip Etc/GMT+5 0 0 true
+in Etc/GMT+5 1735603200 2024 12 30 19 0 0 -18000 -05
+roundtrip Etc/GMT+5 1735603200 1735603200000000000 true
+in Etc/GMT+5 1740787200 2025 2 28 19 0 0 -18000 -05
+roundtrip Etc/GMT+5 1740787200 1740787200000000000 true
+in Etc/GMT+5 1743379200 2025 3 30 19 0 0 -18000 -05
+roundtrip Etc/GMT+5 1743379200 1743379200000000000 true
+in Etc/GMT+5 1745971200 2025 4 29 19 0 0 -18000 -05
+roundtrip Etc/GMT+5 1745971200 1745971200000000000 true
+in Etc/GMT+5 1751414400 2025 7 1 19 0 0 -18000 -05
+roundtrip Etc/GMT+5 1751414400 1751414400000000000 true
+in Etc/GMT+5 1759190400 2025 9 29 19 0 0 -18000 -05
+roundtrip Etc/GMT+5 1759190400 1759190400000000000 true
+in Etc/GMT+5 1762041600 2025 11 1 19 0 0 -18000 -05
+roundtrip Etc/GMT+5 1762041600 1762041600000000000 true
+in Etc/GMT+5 2222121600 2040 5 31 19 0 0 -18000 -05
+roundtrip Etc/GMT+5 2222121600 2222121600000000000 true
 wall America/New_York 2025 3 9 2 30 1741501800000000000 2025 3 9 1 30 0 -18000 EST
+wall America/New_York 2025 11 2 1 30 1762061400000000000 2025 11 2 1 30 0 -14400 EDT
+wall Europe/Paris 2025 3 30 2 30 1743298200000000000 2025 3 30 3 30 0 7200 CEST
+wall Europe/Paris 2025 10 26 2 30 1761442200000000000 2025 10 26 2 30 0 3600 CET
 wall Australia/Lord_Howe 2025 10 5 2 15 1759592700000000000 2025 10 5 2 45 0 39600 +11
 wall Australia/Lord_Howe 2025 4 6 1 45 1743866100000000000 2025 4 6 1 45 0 37800 +1030
-wall Europe/Paris 2025 10 26 2 30 1761442200000000000 2025 10 26 2 30 0 3600 CET
-wall Europe/Paris 2025 3 30 2 30 1743298200000000000 2025 3 30 3 30 0 7200 CEST
+fixed 1970 1 1 1 0 0 3600 X 2025 10 1 11 22 5 3600 X
+fixed date true true
+utc UTC 1970 1 1 0 0 0 0 UTC 1969 12 31 23 59 59 0 UTC 2040 6 1 0 0 0 0 UTC
+norm 2025 13 1 0 0 0 0 true
+norm 2025 0 1 0 0 0 0 true
+norm 2025 1 32 0 0 0 0 true
+norm 2025 2 30 25 61 61 1500000000 true
+norm 2024 2 29 0 0 0 0 true
+norm 1969 12 31 23 59 59 999999999 true
+unknown true true
+dotdot true true
+absolute true true
+empty true true
+truncated true
+garbage true
+version true

@@ -1,15 +1,15 @@
-dyn rex
-fallible 4 -1
+value 3 3
+mut method 9 9
 field 19
+map 19
+fallible 4 -1
+results 19 n
+sort [ccc bb a]
 generic 2 [1 2]
+dyn rex
+same struct 2
+old receiver 2 100
 kept 42
 loop 0
 loop 10
 loop 20
-map 19
-mut method 9 9
-old receiver 2 100
-results 19 n
-same struct 2
-sort [ccc bb a]
-value 3 3

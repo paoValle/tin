@@ -88,11 +88,11 @@ def check_checked_in():
     got = sorted(run(['go', 'run', './bench/ref/seal_wycheproof']).splitlines())
     assert got == want, 'Wycheproof: Go output differs from toolchain/tests/v2/seal_wycheproof*.out:\n' + \
         '\n'.join(set(got) ^ set(want))
-    want_sign = (ROOT / 'toolchain/tests/v2/seal_sign.out').read_text().splitlines()
+    want_sign = sorted((ROOT / 'toolchain/tests/v2/seal_sign.out').read_text().splitlines())
     got_sign = sorted(run(['go', 'run', './bench/ref/seal_sign']).splitlines())
     assert got_sign == want_sign, 'signing: Go output differs from toolchain/tests/v2/seal_sign.out:\n' + \
         '\n'.join(sorted(set(got_sign) ^ set(want_sign))[:40])
-    want_info = (ROOT / 'toolchain/tests/v2/seal_certinfo.out').read_text().splitlines()
+    want_info = sorted((ROOT / 'toolchain/tests/v2/seal_certinfo.out').read_text().splitlines())
     got_info = sorted(run(['go', 'run', './bench/ref/seal_certinfo']).splitlines())
     assert got_info == want_info, 'certificate fields: Go output differs from toolchain/tests/v2/seal_certinfo.out:\n' + \
         '\n'.join(sorted(set(got_info) ^ set(want_info))[:40])

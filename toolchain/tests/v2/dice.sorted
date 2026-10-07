@@ -1,0 +1,1 @@
+The per-core part prints one "core N" line from each core in the order the cores run (it varied between runs on linux-amd64); everything else prints in program order but cannot be checked apart from it.

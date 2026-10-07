@@ -1,18 +1,18 @@
-after reset 42 ff "q" true
-big 100002 <xx xx>
-digits 488890
-fault: too big: 3 > 2
-fault: too big: 4 > 2
-ok 1
-ok 2
 outer ab0c000d [0|sb0c000| 1.50]
 outer ab1c001d [1|sb1c001| 1.50]
 outer ab2c002d [2|sb2c002| 1.50]
+task 0: t-0 0 0
+task 1: t-1 0 0
+task 0: t-0 1 10
+task 1: t-1 1 10
+task 0: t-0 2 20
+task 1: t-1 2 20
+ok 1
+ok 2
+fault: too big: 3 > 2
+fault: too big: 4 > 2
+big 100002 <xx xx>
 prec 602 0.333333
 small 1+2.5 {3 0.25} [1 2] map[k:7]
-task 0: t-0 0 0
-task 0: t-0 1 10
-task 0: t-0 2 20
-task 1: t-1 0 0
-task 1: t-1 1 10
-task 1: t-1 2 20
+after reset 42 ff "q" true
+digits 488890

@@ -1,71 +1,71 @@
+rss pi xml version="1.0" encoding="UTF-8"
+rss text 
 
+rss comment  a feed 
+rss text 
 
-
+rss start  rss  :version=2.0
+rss text 
   
+rss start  channel 
+rss text 
+    
+rss start  title 
+rss text Tom & Jerry
+rss end  title
+rss text 
+    
+rss start  item  :id=1 :kind=x
+rss end  item
+rss text 
+    
+rss start  item  :id=2
+rss text a < b & c
+rss end  item
+rss text 
+    
+rss start  description 
+rss text 1 < 2 é 😀
+rss end  description
+rss text 
   
-    
-    
-    
-    
-<a>
-<b></a> scroll: 3:8: end tag a does not match b
-attrs true
-depth true ok
-doctype directive DOCTYPE r [<!ENTITY x "boom">]
-doctype fault scroll: 1:37: unknown entity &x;
-doctype start  r 
-err </a> scroll: 1:5: unexpected end tag a
-err <a b=c/> scroll: 1:6: expected a quoted attribute value
-err <a scroll: 1:3: unclosed start tag
-err <a x="1" x="2"/> scroll: 1:11: duplicate attribute x
-err <a/><b/> scroll: 1:9: a second root element
-err <a:x xmlns:a="u" xmlns:b="u"></b:x> scroll: 1:36: end tag b:x does not match a:x
-err <a></a> scroll: 1:4: character 1 is not allowed in XML
-err <a> scroll: 1:4: unclosed element a
-err <a>&#x0;</a> scroll: 1:4: character 0 is not allowed in XML
-err <a>&#x1F600;</a> ok
-err <a>&#xD800;</a> scroll: 1:4: invalid character reference &#xD800;
-err <a>&unknown;</a> scroll: 1:4: unknown entity &unknown;
-err <a><!-- a -- b --></a> scroll: 1:16: -- is not allowed inside a comment
-err <a><!-- a ---></a> scroll: 1:12: -- is not allowed inside a comment
-err <a></b> scroll: 1:8: end tag b does not match a
-err <a><b></a></b> scroll: 1:11: end tag a does not match b
-err <a>text</b> scroll: 1:12: end tag b does not match a
-err <a>�(</a> scroll: 1:4: invalid UTF-8
-err <p:r/> scroll: 1:7: undefined namespace prefix p
-err line1
-lenient start:a start:b end:b
-ns done
-ns end urn:default r
-ns end urn:p c
+rss end  channel
+rss text 
+
+rss end  rss
+rss done
 ns start urn:default r  :xmlns=urn:default xmlns:p=urn:p http://www.w3.org/XML/1998/namespace:lang=en
 ns start urn:p c  :a=1 urn:p:b=2
-rss comment  a feed 
-rss done
-rss end  channel
-rss end  description
-rss end  item
-rss end  item
-rss end  rss
-rss end  title
-rss pi xml version="1.0" encoding="UTF-8"
-rss start  channel 
-rss start  description 
-rss start  item  :id=1 :kind=x
-rss start  item  :id=2
-rss start  rss  :version=2.0
-rss start  title 
-rss text 
-rss text 
-rss text 
-rss text 
-rss text 
-rss text 
-rss text 
-rss text 
-rss text 
-rss text 1 < 2 é 😀
-rss text Tom & Jerry
-rss text a < b & c
+ns end urn:p c
+ns end urn:default r
+ns done
+doctype directive DOCTYPE r [<!ENTITY x "boom">]
+doctype start  r 
+doctype fault scroll: 1:37: unknown entity &x;
+lenient start:a start:b end:b
+err <a><b></a></b> scroll: 1:11: end tag a does not match b
+err <a></b> scroll: 1:8: end tag b does not match a
+err <a/><b/> scroll: 1:9: a second root element
+err <a scroll: 1:3: unclosed start tag
+err <a x="1" x="2"/> scroll: 1:11: duplicate attribute x
+err <a>&unknown;</a> scroll: 1:4: unknown entity &unknown;
+err <a>&#x0;</a> scroll: 1:4: character 0 is not allowed in XML
+err <a>&#xD800;</a> scroll: 1:4: invalid character reference &#xD800;
+err <p:r/> scroll: 1:7: undefined namespace prefix p
+err <a> scroll: 1:4: unclosed element a
+err </a> scroll: 1:5: unexpected end tag a
+err <a>&#x1F600;</a> ok
+err <a></a> scroll: 1:4: character 1 is not allowed in XML
+err <a>�(</a> scroll: 1:4: invalid UTF-8
+err line1
+<a>
+<b></a> scroll: 3:8: end tag a does not match b
+err <a>text</b> scroll: 1:12: end tag b does not match a
+err <a b=c/> scroll: 1:6: expected a quoted attribute value
+err <a:x xmlns:a="u" xmlns:b="u"></b:x> scroll: 1:36: end tag b:x does not match a:x
+err <a><!-- a -- b --></a> scroll: 1:16: -- is not allowed inside a comment
+err <a><!-- a ---></a> scroll: 1:12: -- is not allowed inside a comment
+depth true ok
+attrs true
 token ok false false false false
 token over true true true true

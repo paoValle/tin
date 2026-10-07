@@ -1,10 +1,10 @@
-a = -1 cut short: true
 a: deadline exceeded true
+a = -1 cut short: true
 b = 5
-c = 98
 c inner: deadline exceeded
-d = -1
+c = 98
 d: deadline exceeded
-e = 7
+d = -1
 e: waited past the deadline
+e = 7
 full sleep: true

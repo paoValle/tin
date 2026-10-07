@@ -1,0 +1,1 @@
+Four cores print their lines in the order they finish; the lines, not their order, are what the test checks.

@@ -129,7 +129,7 @@ passes.
 
 | suite | where | how it checks |
 |---|---|---|
-| strict tests | `toolchain/tests/v2/*.tin` | `tools/dev/v2test.sh`: compiles and runs each, sorts the output and compares it with `NAME.out`; `NAME_bad.tin` must fail to compile with exactly `NAME_bad.err` |
+| strict tests | `toolchain/tests/v2/*.tin` | `tools/dev/v2test.sh`: compiles and runs each and compares its output with `NAME.out` exactly, line order included (#626; a test whose order may vary has a `NAME.sorted` marker saying why, and only its lines are sorted first); `NAME_bad.tin` must fail to compile with exactly `NAME_bad.err` |
 | diagnostic codes | `toolchain/docs/ERRORS.md` | `tools/dev/v2test.sh` runs `tools/ci/diagnostics_check.py`: the compiler's codes, the page and the `.err` files agree, and every example on the page compiles to exactly the output it shows |
 | assembly checks | `toolchain/tests/v2/*_asm.tin` + `*_asm.check` | `tools/dev/v2test.sh`: compiles with `-S` and matches the listing against ordered `CHECK:`/`CHECK-NOT:` lines, lit-style; a `[arm64]`/`[amd64]` line selects a section, lines before any section apply to every CPU |
 | Linux | same files | `tools/dev/linuxtest.sh`: cross-compiles for linux-arm64, runs in `tin-debian-arm64`, compares with the same `.out` files |
@@ -188,10 +188,12 @@ declared on one line as `fn TestXxx(name mut crucible.T) {` (`mut crucible.B` fo
 benchmark); any other signature is reported as `FILE:LINE: wrong signature for TestXxx`
 with exit status 2, so no test is skipped silently.
 
-Adding a strict test: write `toolchain/tests/v2/NAME.tin` with deterministic output (no times,
-addresses or map-order dependence beyond what sorting hides), run it, check every line
-by hand, then save `bin/t | sort > toolchain/tests/v2/NAME.out`. `v2test.sh` never creates
-expected files itself.
+Adding a strict test: write `toolchain/tests/v2/NAME.tin` with deterministic output (no times
+or addresses), run it, check every line by hand, in order, then save
+`bin/t > toolchain/tests/v2/NAME.out`. The suite compares the output exactly, so the order a
+program prints in is part of what the test checks (#626). Only a test whose order truly
+varies (cores or tasks finishing in any order) sorts: save `bin/t | LC_ALL=C sort` and add
+`NAME.sorted` with one line saying why. `v2test.sh` never creates expected files itself.
 
 Adding a compiler error: report it with `err_code(pos, "E5NN NAME")` (or `err_code_at`,
 `err_code_quoted`), reusing the code of the rule it enforces or adding one: a new entry in
