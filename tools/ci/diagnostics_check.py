@@ -228,10 +228,36 @@ def run_example(compiler, root, entry):
             result = subprocess.run(argv, cwd=work, env=env, capture_output=True, timeout=60)
         except subprocess.TimeoutExpired:
             return f"{entry['code']} {entry['name']}: the example timed out"
-    got = result.stderr.decode(errors='replace')
-    if result.returncode != 1 or got != output:
-        return (f"{DOC}:{entry['line']}: {entry['code']} {entry['name']}: the example printed "
-                f'(exit {result.returncode}):\n{got}instead of:\n{output}')
+        got = result.stderr.decode(errors='replace')
+        if result.returncode != 1 or got != output:
+            return (f"{DOC}:{entry['line']}: {entry['code']} {entry['name']}: the example printed "
+                    f'(exit {result.returncode}):\n{got}instead of:\n{output}')
+        if not [1 for kind, _, _, name in entry['blocks'] if kind == 'sh' and name is None]:
+            return check_json(compiler, root, entry, work, edition, output)
+    return None
+
+
+TEXT_ERROR = re.compile(r'^(?:(.*?):(\d+)(?::(\d+))?: )?error (E\d{3}) ([A-Z][A-Z0-9_]*): (.*)$')
+
+
+def check_json(compiler, root, entry, work, edition, expected):
+    """The -check -json form of an example agrees with the text form: the same diagnostics at the same
+    positions, with a range that ends after it starts (toolchain/docs/TOOLING.md, section 3)."""
+    env = dict(os.environ, TIN_ROOT=str(root), LC_ALL='C')
+    result = subprocess.run([str(compiler), '-edition', edition, '-check', '-json', 'example.tin'],
+                            cwd=work, env=env, capture_output=True, timeout=60)
+    # an error with no position in the text form has file "" and line 0 in the JSON form
+    want = [(m[1] or '', m[2] or '0', m[3] or ('1' if m[2] else '0'), m[4], m[5], m[6])
+            for m in map(TEXT_ERROR.match, expected.splitlines()) if m]
+    got = []
+    for line in result.stdout.decode(errors='replace').splitlines():
+        d = json.loads(line)
+        if d['line'] > 0 and d['endLine'] < d['line'] or d['line'] > 0 and (d['endLine'] == d['line'] and d['endCol'] <= d['col']):
+            return f"{entry['code']} {entry['name']}: -json range {d['line']}:{d['col']}-{d['endLine']}:{d['endCol']} is empty"
+        got.append((d['file'], str(d['line']), str(d['col']), d['code'], d['name'], d['message']))
+    if result.returncode != 1 or got != want:
+        return (f"{DOC}:{entry['line']}: {entry['code']} {entry['name']}: -check -json printed {got} "
+                f'(exit {result.returncode}) instead of {want}')
     return None
 
 

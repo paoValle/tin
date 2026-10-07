@@ -11,6 +11,21 @@ shared mut tokens_dump i64 // -tokens: print every file's tokens instead of buil
 shared mut let_fix i64 // -fix-let: collect E711 declarations instead of reporting them (#526)
 shared mut let_fix_decls []i64
 shared mut compiler_parse_only i64 // -parse-only: like -fix, a library file reads trusted
+shared mut check_only i64 // -check: lex, parse and check, write nothing (#393)
+shared mut overlay_files []str // -overlay FILE=PATH: FILE is read from PATH
+shared mut overlay_paths []str
+
+// overlay_of is the path file's content is read from: the -overlay replacement when there is one.
+fn overlay_of(path str) str {
+	mut i = 0
+	for i < len(overlay_files) {
+		if overlay_files[i] == path {
+			return overlay_paths[i]
+		}
+		i = i + 1
+	}
+	return path
+}
 
 // read_file returns a buffer holding the whole file, or 0 if it cannot be opened.
 fn try_read_file(path str) i64 {
@@ -318,7 +333,7 @@ fn path_in_root_dir(path str, dir str) i64 {
 // Standard library files may use the runtime's raw memory operations.
 fn load_file_trusted(path str, trusted_in i64) {
 	mut trusted = trusted_in
-	let text = str(cast([]u8, read_file(path)))
+	let text = str(cast([]u8, read_file(overlay_of(path))))
 	files = append(files, path)
 	file_trusted = append(file_trusted, trusted)
 	file_cap_pkg = append(file_cap_pkg, cast(CapsRec, 0))
@@ -361,6 +376,7 @@ fn load_file_trusted(path str, trusted_in i64) {
 	}
 	let toks = lex(cur_file, text, edition)
 	file_sources = append(file_sources, text)
+	json_sources = append(json_sources, text)
 	file_tokens = append(file_tokens, toks)
 	if edition == 1 {
 		parse_edition1(cast([]i64, toks))
@@ -782,6 +798,9 @@ fn compiler_main(argc i64, argv i64) i64 {
 		return print_hashes(argc, av)
 	}
 	files = []str{}
+	json_sources = []str{}
+	overlay_files = []str{}
+	overlay_paths = []str{}
 	file_trusted = []i64{}
 	file_cap_pkg = cast([]CapsRec, []i64{})
 	cap_pkgs = cast([]CapsRec, []i64{})
@@ -858,6 +877,18 @@ fn compiler_main(argc i64, argv i64) i64 {
 		} else if a == "-strip" {
 			// -strip: a Linux executable without section headers and symbol table (#351)
 			link_strip = 1
+		} else if a == "-check" {
+			check_only = 1
+		} else if a == "-json" {
+			json_diag = 1
+		} else if a == "-overlay" && i + 1 < argc {
+			// -overlay FILE=PATH: check the text in PATH as FILE (an editor's unsaved buffer)
+			i = i + 1
+			let eq = json_index(av[i], "=", 0)
+			if eq > 0 {
+				overlay_files = append(overlay_files, av[i][:eq])
+				overlay_paths = append(overlay_paths, av[i][eq + 1:])
+			}
 		} else if a == "-tokens" {
 			tokens_dump = 1
 		} else if a == "-S" {
@@ -949,6 +980,9 @@ fn compiler_main(argc i64, argv i64) i64 {
 	rc_mark()
 	if error_count > 0 {
 		return 1
+	}
+	if check_only != 0 {
+		return 0
 	}
 	generate()
 	if error_count > 0 {

@@ -73,6 +73,8 @@ type Editor struct {
 	fresh    bool
 	Clip     str
 	Output   []str
+	Diags    []Diag
+	DiagFor  i64
 	OutputOpen bool
 	Redraw   bool
 	Blink    bool
@@ -90,7 +92,11 @@ type Editor struct {
 fn newEditor(buf textedit.Buffer) Editor {
 	let ed = Editor{Buf: buf, Win: appkit.Window{}, Bmp: appkit.Bitmap{}, FindFrom: textedit.Pos{}, FontSize: 13.0, Scale: 2.0, PtW: 900.0, PtH: 600.0, Redraw: true, Blink: true}
 	ed.rawFor = -1
+	ed.Diags = []Diag{}
+	ed.DiagFor = -1
 	ed.Tabs = []Tab{Tab{Buf: buf}}
+	ed.Diags = []Diag{}
+	ed.DiagFor = -1
 	return ed
 }
 
@@ -130,6 +136,8 @@ fn (ed mut Editor) activate(i i64) {
 	ed.Scroll = ed.Tabs[i].Scroll
 	ed.HScroll = ed.Tabs[i].HScroll
 	ed.rawFor = -1
+	ed.Diags = []Diag{}
+	ed.DiagFor = -1
 	ed.Mode = modeEdit
 	ed.Redraw = true
 }
@@ -219,6 +227,8 @@ fn (ed mut Editor) closeTab() {
 	ed.HScroll = ed.Tabs[next].HScroll
 	ed.Active = next
 	ed.rawFor = -1
+	ed.Diags = []Diag{}
+	ed.DiagFor = -1
 	ed.Redraw = true
 }
 

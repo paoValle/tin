@@ -72,6 +72,7 @@ fn (ed Editor) dump() {
 //   key:SPEC         one key press, such as key:cmd+shift+z or key:left
 //   dump             prints the text and the cursor
 //   jump:TEXT        jumps to the place a compiler message names
+//   check            checks the text with the compiler and prints the errors
 //   output           prints the output panel
 //   prompt           prints the find or go-to-line prompt
 //   open:PATH        loads a file
@@ -104,6 +105,15 @@ fn runScript(ed mut Editor, script str) {
 			ed.dump()
 		} else if twine.HasPrefix(step, "jump:") {
 			say.Line("jumped:", ed.jumpTo(step[5:]))
+		} else if step == "check" {
+			ed.checkNow()
+			mut d = 0
+			for d < len(ed.Diags) {
+				let x = ed.Diags[d]
+				say.Line("diag:", x.Line, x.Col, x.EndLine, x.EndCol, x.Code, x.Message)
+				d += 1
+			}
+			say.Line("diags:", len(ed.Diags))
 		} else if step == "output" {
 			say.Line("output:", ed.OutputOpen)
 			say.Line(twine.Join(ed.Output, "\n"))

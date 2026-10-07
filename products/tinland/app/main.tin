@@ -125,7 +125,10 @@ fn run(ed mut Editor) {
 		let pool = appkit.PoolPush()
 		mut e = appkit.WaitEvent(win, 0.5)
 		if e == 0 {
-			// nothing happened for half a second: blink the caret
+			// nothing happened for half a second: check what was typed, and blink the caret
+			if ed.DiagFor != ed.Buf.Version {
+				ed.checkNow()
+			}
 			ed.Blink = !ed.Blink
 			ed.Redraw = true
 			ticks += 1

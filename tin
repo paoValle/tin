@@ -11,6 +11,7 @@
 #   tin replay CAPSULE --against BUILD [--live KIND]... [--save-test NAME --issue N]  replay a recorded request
 #   tin vendor [DIR]                copy tin.mod's requires into vendor/ and write tin.lock
 #   tin fmt [-l] [-d] [-w] FILE.tin... | DIR | -stdin   format source: the canonical whitespace
+#   tin check [-json] [-overlay FILE=PATH]... FILE.tin...  check without building; errors as text or JSON
 #   tin caps FILE.tin...            print the capabilities each package can reach
 #   tin suite                       run the compiler's strict test suite (toolchain/tests/v2)
 #   tin bootstrap                   rebuild the compiler with itself and check the fixed point
@@ -79,6 +80,10 @@ case $1 in
     set --
     while IFS= read -r a; do set -- "$@" "$a"; done < "$list"
     "$exe" "$@" ;;
+  check)
+    shift
+    [ $# -gt 0 ] || { echo "tin: check: no files" >&2; exit 2; }
+    "$tinc" -check "$@" ;;
   caps)
     shift
     [ $# -gt 0 ] || { echo "tin: caps: no files" >&2; exit 2; }

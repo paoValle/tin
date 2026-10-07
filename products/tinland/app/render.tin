@@ -242,6 +242,27 @@ fn (ed mut Editor) render() {
 			}
 			i = j
 		}
+		// errors on this line: a red bar in the gutter and a line under the offending text
+		let di = ed.diagAt(row)
+		if di >= 0 {
+			ed.rect(0.0, top, ed.Scale * 3.0, ed.LineH, 0.95, 0.35, 0.35)
+			mut k = 0
+			for k < len(ed.Diags) {
+				let d = ed.Diags[k]
+				if d.Line == row + 1 {
+					let from = textedit.DisplayCol(line, d.Col - 1, 4)
+					mut to = textedit.DisplayCol(line, d.EndCol - 1, 4)
+					if d.EndCol - 1 > len(line) {
+						to = textedit.DisplayCol(line, len(line), 4) + (d.EndCol - 1 - len(line))
+					}
+					if to <= from {
+						to = from + 1
+					}
+					ed.rect(textX + f64(from - ed.HScroll) * ed.CharW, top + ed.LineH - ed.Scale * 2.0, f64(to - from) * ed.CharW, ed.Scale * 1.5, 0.95, 0.35, 0.35)
+				}
+				k += 1
+			}
+		}
 		// the line number, right aligned in the gutter (the current line brighter)
 		let label = mint.Itoa(row + 1)
 		let lx = gutter - ed.CharW * 1.5 - f64(len(label)) * ed.CharW
@@ -293,6 +314,10 @@ fn (ed mut Editor) statusBar() {
 		left = left + "   " + ed.Message
 	}
 	ed.draw(ed.CharW, ty, left, 0.85, 0.87, 0.9)
+	let problem = ed.diagSummary()
+	if len(problem) > 0 {
+		ed.draw(ed.CharW * f64(len(left) + 4), ty, problem, 0.95, 0.5, 0.5)
+	}
 	let pos = "Ln " + mint.Itoa(ed.Buf.Row + 1) + ", Col " + mint.Itoa(textedit.DisplayCol(ed.Buf.Lines[ed.Buf.Row], ed.Buf.Col, 4) + 1) + "   " + mint.Itoa(len(ed.Buf.Lines)) + " lines"
 	ed.draw(w - f64(len(pos) + 2) * ed.CharW, ty, pos, 0.6, 0.64, 0.72)
 }

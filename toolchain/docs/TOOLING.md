@@ -40,6 +40,7 @@ moving or deleting the tree breaks it.
 | `tin replay CAPSULE --against BUILD [--live KIND]... [--save-test NAME --issue N]` | run a recorded request again with every effect served from its capsule, and report the first divergence (see §8.1) |
 | `tin fix -edition 1 FILE.tin...` | translate each file to edition 1 in place, and declare `mut` every `let` the program reassigns (E711). A file whose translation does not parse as edition 1, or changes when translated again, is left unchanged with the reason (for example a `const` in a nested block, which has to move by hand); exit status 1 when any file was left unchanged |
 | `tin vendor [DIR]` | copy every package `DIR/tin.mod` requires (transitively, from local source directories) into `DIR/vendor/<path>` and write `DIR/tin.lock` with each vendored file's SHA-256 (see §2.1) |
+| `tin check [-json] [-overlay FILE=PATH]... FILE.tin...` | lex, parse and check the program and write nothing: exit 0 when it is correct, 1 with the errors (text form, or one JSON object per line with `-json`, §3.1); `-overlay` reads FILE's content from PATH, so an editor checks what is typed, not what is saved |
 | `tin caps FILE.tin...` | check the program and print, per package, the capabilities (`net`, `files`, `spawn`, `exec`, `unsafe`) its exported functions can reach |
 | `tin suite` | run the compiler's strict test suite (`tools/dev/v2test.sh`) |
 | `tin bootstrap` | rebuild the compiler with itself; the binaries must be identical |
@@ -95,6 +96,9 @@ tinc [-o OUT] [-S] [-edition 1] [-target darwin-arm64|linux-arm64|linux-amd64] F
   files only for the target) automatically; imports are resolved as in LANGUAGE.md §1.
 - Errors print as `file:line:col: error E502 TYPE_ARG_COUNT: message` (code and name from
   [ERRORS.md](ERRORS.md)), every error in one run; the exit code is 1. A compiler crash prints a backtrace only under a debugger (see §8).
+- `-check`: lex, parse and check the program through every analysis pass, and stop before generating code (`tin check`).
+  `-json` prints each error as a JSON object on standard output (§3.1); `-overlay FILE=PATH` (repeatable) reads
+  FILE's content from PATH.
 - `-caps`: check the program and print the capabilities each package can reach instead of
   building (`tin caps`; PACKAGES.md, "Capabilities").
 - `-fix -edition 1 FILE.tin` prints the file translated to edition 1 (`tin fix`, which also
@@ -104,6 +108,24 @@ tinc [-o OUT] [-S] [-edition 1] [-target darwin-arm64|linux-arm64|linux-amd64] F
 - `TINC_TRACE=1` prints each function as it is generated (to find which one crashes the
   code generator).
 
+### 3.1 Diagnostics as JSON (protocol version 1)
+
+`tinc -check -json FILE.tin...` prints one JSON object per error, one per line, on standard output (nothing when the
+program checks; exit status 1 otherwise). Fields:
+
+| field | meaning |
+|---|---|
+| `file` | the path as given (`""` for an error with no position, such as E120) |
+| `line`, `col` | where it starts, 1-based, the column in bytes; both 0 for an error with no position |
+| `endLine`, `endCol` | where it ends (exclusive): the end of the token at the start (an identifier or number, a string or rune literal, a comment's line, otherwise one character) |
+| `code`, `name` | `"E502"`, `"TYPE_ARG_COUNT"` ([ERRORS.md](ERRORS.md)) |
+| `severity` | `"error"` (reserved for future warnings) |
+| `message` | the text of the text form after `code name: ` |
+| `fix` | the fix text of [ERRORS.md](ERRORS.md) when the compiler knows it; `""` today |
+
+The text form and the JSON form carry the same code, name, position and message; `tools/ci/diagnostics_check.py` checks
+this for every example in ERRORS.md. The compiler stops at the first syntax error, so a file that does not parse
+reports one error; a file that parses reports every checker error. `tin lsp` publishes the same objects.
 ### 3.2 Formatting: `tin fmt`
 
 `tin fmt` (the package `packages/tinfmt`, the command `tools/fmt`) rewrites whitespace and nothing else: formatting never

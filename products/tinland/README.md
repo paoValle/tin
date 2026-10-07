@@ -26,7 +26,10 @@ bin/tinc -o tinland products/tinland/app/*.tin
 | Alt+Left/Right, Cmd+Left/Right/Up/Down | by word, line start/end, document start/end |
 | Cmd+R | compile and run the file with `tinc` (output in a panel; click a compiler message to jump to it) |
 
-Every key command is also in the menu bar. Double click selects a word, triple click a line; the wheel scrolls; Escape closes the output panel.
+Every key command is also in the menu bar. Errors are underlined while you type: after a pause the compiler checks the text (`tinc -check -json` with the
+unsaved buffer as an overlay), the line gets a red mark and its message shows in the status line.
+
+Double click selects a word, triple click a line; the wheel scrolls; Escape closes the output panel.
 
 ## Without a window
 

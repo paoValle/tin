@@ -137,6 +137,8 @@ shared mut files []str
 shared mut tgt_linux i64 // the target OS is Linux (else macOS)
 shared mut tgt_x64 i64 // the target CPU is x86-64 (else arm64)
 shared mut error_count i64
+shared mut json_diag i64 // -json: errors print as one JSON object per line on standard output (#393)
+shared mut json_sources []str // each loaded file's text, for the end of the token an error is at (set by load_file_trusted)
 
 fn pos_make(file i64, line i64, col i64) i64 {
 	return (file << 48) | (line << 16) | col
@@ -151,8 +153,193 @@ fn buf_pos(b []u8, pos i64) {
 }
 
 fn err_end(b []u8) {
+	if json_diag != 0 {
+		json_error(b)
+		return
+	}
 	buf_byte(b, '\n')
 	write_all(2, cast([]u8, b))
+	error_count = error_count + 1
+}
+
+// json_quote appends s as a JSON string.
+fn json_quote(b []u8, s str) {
+	buf_byte(b, '"')
+	mut i = 0
+	for i < len(s) {
+		let c = i64(s[i])
+		if c == '"' || c == '\\' {
+			buf_byte(b, '\\')
+			buf_byte(b, c)
+		} else if c == '\n' {
+			buf_str(b, "\\n")
+		} else if c == '\t' {
+			buf_str(b, "\\t")
+		} else if c < 32 {
+			buf_str(b, "\\u00")
+			buf_byte(b, i64("0123456789abcdef"[c >> 4]))
+			buf_byte(b, i64("0123456789abcdef"[c & 15]))
+		} else {
+			buf_byte(b, c)
+		}
+		i = i + 1
+	}
+	buf_byte(b, '"')
+}
+
+// json_index is where sub first occurs in s at or after from (-1 when it does not).
+fn json_index(s str, sub str, from i64) i64 {
+	mut i = from
+	for i + len(sub) <= len(s) {
+		if s[i:i + len(sub)] == sub {
+			return i
+		}
+		i = i + 1
+	}
+	return -1
+}
+
+// json_number is the decimal number at the start of s (-1 when s does not start with a digit).
+fn json_number(s str) i64 {
+	mut n = 0
+	mut i = 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		n = n * 10 + (i64(s[i]) - '0')
+		i = i + 1
+	}
+	if i == 0 {
+		return -1
+	}
+	return n
+}
+
+// json_token_end is the column just past the token that starts at (line, col) of file's source: an identifier or
+// number run, a string or rune literal on the line, a comment's line, or one character.
+fn json_token_end(file i64, line i64, col i64) i64 {
+	if file < 0 || file >= len(json_sources) {
+		return col + 1
+	}
+	let src = json_sources[file]
+	mut at = 0
+	mut l = 1
+	for l < line && at < len(src) {
+		if src[at] == '\n' {
+			l = l + 1
+		}
+		at = at + 1
+	}
+	let start = at + col - 1
+	if start >= len(src) || start < 0 || src[start] == '\n' {
+		return col + 1
+	}
+	let c = i64(src[start])
+	mut end = start + 1
+	if c == '"' || c == '\'' {
+		for end < len(src) && src[end] != '\n' && i64(src[end]) != c {
+			if src[end] == '\\' {
+				end = end + 1
+			}
+			end = end + 1
+		}
+		if end < len(src) && src[end] != '\n' {
+			end = end + 1
+		}
+	} else if c == '/' && start + 1 < len(src) && src[start + 1] == '/' {
+		for end < len(src) && src[end] != '\n' {
+			end = end + 1
+		}
+	} else if c >= '0' && c <= '9' {
+		for end < len(src) && ((src[end] >= 'a' && src[end] <= 'z') || (src[end] >= 'A' && src[end] <= 'Z') || src[end] == '_' || (src[end] >= '0' && src[end] <= '9') || (src[end] == '.' && end + 1 < len(src) && src[end + 1] >= '0' && src[end + 1] <= '9')) {
+			end = end + 1
+		}
+	} else if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (c >= '0' && c <= '9') || c >= 128 {
+		for end < len(src) && ((src[end] >= 'a' && src[end] <= 'z') || (src[end] >= 'A' && src[end] <= 'Z') || src[end] == '_' || (src[end] >= '0' && src[end] <= '9') || i64(src[end]) >= 128) {
+			end = end + 1
+		}
+	}
+	if end > len(src) {
+		end = len(src)
+	}
+	return col + (end - start)
+}
+
+// json_error prints a finished error text ("file:line:col: error E502 NAME: message") as the JSON object of
+// toolchain/docs/TOOLING.md section 3, on standard output, and counts it.
+fn json_error(b []u8) {
+	let text = str(b)
+	let e = json_index(text, "error ", 0)
+	mut file = ""
+	mut line = 0
+	mut col = 0
+	mut fileidx = -1
+	mut rest = text
+	if e >= 0 {
+		rest = text[e + 6:]
+	}
+	if e > 2 {
+		// the prefix "file:line:col: ": file, then the two numbers after the last two colons
+		let prefix = text[:e - 2]
+		mut c2 = len(prefix) - 1
+		for c2 >= 0 && prefix[c2] != ':' {
+			c2 = c2 - 1
+		}
+		mut c1 = c2 - 1
+		for c1 >= 0 && prefix[c1] != ':' {
+			c1 = c1 - 1
+		}
+		if c1 > 0 && c2 > c1 && json_number(prefix[c1 + 1:c2]) >= 0 {
+			file = prefix[:c1]
+			line = json_number(prefix[c1 + 1:c2])
+			col = json_number(prefix[c2 + 1:])
+		} else if c2 > 0 && json_number(prefix[c2 + 1:]) >= 0 {
+			// "file:line" (a tin.mod or tin.lock line): column 1
+			file = prefix[:c2]
+			line = json_number(prefix[c2 + 1:])
+			col = 1
+		}
+	}
+	mut k = 0
+	for k < len(files) {
+		if files[k] == file {
+			fileidx = k
+		}
+		k = k + 1
+	}
+	mut code = ""
+	mut name = ""
+	mut msg = rest
+	let sp = json_index(rest, " ", 0)
+	let colon = json_index(rest, ": ", 0)
+	if sp > 0 && colon > sp && rest[0] == 'E' {
+		code = rest[:sp]
+		name = rest[sp + 1:colon]
+		msg = rest[colon + 2:]
+	} else if colon >= 0 {
+		msg = rest[colon + 2:]
+	}
+	let o = buf_new()
+	buf_str(o, "{{\"file\":")
+	json_quote(o, file)
+	buf_str(o, ",\"line\":")
+	buf_int(o, line)
+	buf_str(o, ",\"col\":")
+	buf_int(o, col)
+	buf_str(o, ",\"endLine\":")
+	buf_int(o, line)
+	buf_str(o, ",\"endCol\":")
+	if line > 0 {
+		buf_int(o, json_token_end(fileidx, line, col))
+	} else {
+		buf_int(o, 0)
+	}
+	buf_str(o, ",\"code\":")
+	json_quote(o, code)
+	buf_str(o, ",\"name\":")
+	json_quote(o, name)
+	buf_str(o, ",\"severity\":\"error\",\"message\":")
+	json_quote(o, msg)
+	buf_str(o, ",\"fix\":\"\"}}\n")
+	write_all(1, cast([]u8, o))
 	error_count = error_count + 1
 }
 
