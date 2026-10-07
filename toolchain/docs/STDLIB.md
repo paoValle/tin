@@ -536,6 +536,10 @@ Package gauge is floating-point math and a few integer helpers (like Go's math);
 - `Asin(x f64) f64`: Asin returns the arcsine of x, in [-Pi/2, Pi/2]. NaN for |x| > 1.
 - `Acos(x f64) f64`: Acos returns the arccosine of x, in [0, Pi]. NaN for |x| > 1.
 - `Cbrt(x f64) f64`: Cbrt returns the cube root of x. Cbrt(±0) = ±0, Cbrt(±Inf) = ±Inf, Cbrt(NaN) = NaN.
+- `Erf(x f64) f64`: Erf returns the error function of x. Erf(±Inf) = ±1, Erf(NaN) = NaN.
+- `Erfc(x f64) f64`: Erfc returns the complementary error function of x, 1 - Erf(x) without cancellation for large x. Erfc(+Inf) = 0, Erfc(-Inf) = 2, Erfc(NaN) = NaN.
+- `Erfinv(x f64) f64`: Erfinv returns the inverse error function of x. Erfinv(1) = +Inf, Erfinv(-1) = -Inf, Erfinv(x) = NaN outside [-1, 1] and for NaN.
+- `Erfcinv(x f64) f64`: Erfcinv returns the inverse of Erfc: Erfcinv(0) = +Inf, Erfcinv(2) = -Inf, Erfcinv(x) = NaN outside [0, 2] and for NaN.
 - `Exp(x f64) f64`: Exp returns e**x. Exp(+Inf) = +Inf, Exp(-Inf) = 0, Exp(NaN) = NaN; it overflows above 709.78.
 - `const Exp2Overflow = 1.0239999999999999e+03`
 - `const Exp2Underflow = -1.0740e+03`
@@ -559,10 +563,11 @@ Package gauge is floating-point math and a few integer helpers (like Go's math);
 - `Nextafter(x f64, y f64) f64`: Nextafter returns the next representable f64 after x towards y, like Go's math.Nextafter; NaN when either is NaN.
 - `Nextafter32(x f32, y f32) f32`: Nextafter32 is Nextafter for f32 values.
 - `Dim(x f64, y f64) f64`: Dim returns the maximum of x-y or 0, like Go's math.Dim: Dim(+Inf, +Inf) = Dim(-Inf, -Inf) = NaN, and any NaN gives NaN.
-- `FMA(x f64, y f64, z f64) f64`: FMA returns x*y + z with a single rounding (a fused multiply-add), like Go's math.FMA.
+- `FMA(x f64, y f64, z f64) f64`
 - `Frexp(f f64) (f64, i64)`: Frexp breaks f into a fraction in [0.5, 1) and a power of two: f = frac * 2**exp. Frexp(0), Frexp(±Inf) and Frexp(NaN) return f and 0.
 - `Ldexp(frac f64, exp i64) f64`: Ldexp returns frac * 2**exp, the inverse of Frexp.
 - `Modf(f f64) (f64, f64)`: Modf returns the integer and fractional parts of f, both with the sign of f.
+- `Gamma(x f64) f64`: Gamma returns the gamma function of x. Gamma(±Inf) = +Inf, Gamma(0) = ±Inf by sign, Gamma(NaN) = Gamma(negative integer) = NaN.
 - `const Pi = 3.141592653589793`: Pi is the ratio of a circle's circumference to its diameter.
 - `const E = 2.718281828459045`: E is the base of natural logarithms.
 - `const Sqrt2 = 1.4142135623730951`: Sqrt2 is the square root of 2.
@@ -599,6 +604,7 @@ Package gauge is floating-point math and a few integer helpers (like Go's math);
 - `ClampI(x i64, lo i64, hi i64) i64`: ClampI returns x limited to [lo, hi].
 - `Gcd(a i64, b i64) i64`: Gcd returns the greatest common divisor of |a| and |b| (0 when both are 0).
 - `Lcm(a i64, b i64) i64`: Lcm returns the least common multiple of |a| and |b| (0 when either is 0; wraps on overflow).
+- `Lgamma(x f64) (f64, i64)`: Lgamma returns the natural logarithm of the absolute value of Gamma(x) and its sign (+1 or -1), like Go's math.Lgamma. Lgamma(±Inf) = +Inf, Lgamma(0) = +Inf, Lgamma(NaN) = NaN.
 - `Log(x f64) f64`: Log returns the natural logarithm of x. Log(+Inf) = +Inf, Log(0) = -Inf, Log(x < 0) = NaN.
 - `Log2(x f64) f64`: Log2 returns the binary logarithm of x, exact for powers of two.
 - `Log10(x f64) f64`: Log10 returns the decimal logarithm of x.

@@ -44,7 +44,15 @@ GAUGE_FUNCS = [
     ('expm1', 1, 1), ('asinh', 1, 1), ('acosh', 1, 1), ('atanh', 1, 1), ('sincos', 2, 1),
     ('logb', 1, 0), ('f32bits', 1, 0), ('f32frombits', 1, 0),
     ('dim', 1, 0), ('remainder', 1, 0), ('nextafter', 1, 0), ('nextafter32', 1, 0), ('fma', 1, 0),
+    # #575's second half: erf, erfc, erfcinv and gamma are bit-identical; erfinv uses Log and
+    # lgamma uses Log and Sin, so they inherit the documented one-ulp log difference.
+    ('erf', 1, 0), ('erfc', 1, 0), ('erfcinv', 1, 0), ('gamma', 1, 0), ('erfinv', 1, 1),
 ]
+
+# lgamma's result can lose precision through cancellation (nadj - lgamma near its zero
+# crossings), which turns the inherited one-ulp Log difference into a few ulps of the result;
+# it is checked with a relative tolerance instead, and the sign must match exactly.
+GAUGE_RELATIVE = [('lgamma', 2, (1e-14, 1e-13))]
 
 GAUGE_INPUTS = 120000
 
@@ -66,6 +74,42 @@ def ulps(a, b):
     if (xa < 0) != (xb < 0):
         return None
     return abs(a - b)
+
+
+def gauge_relative(root, work, name, results, tolerance):
+    """gauge_relative checks one function whose result may cancel, with a relative tolerance."""
+    env = dict(os.environ, TIN_ROOT=str(root), GAUGE_N=str(GAUGE_INPUTS), GAUGE_FUNC=name)
+    outs = []
+    for exe in (work / 'gauge-go', work / 'gauge-tin'):
+        result = subprocess.run([str(exe), 'dump'], capture_output=True, check=True,
+                                cwd=root, env=env, timeout=300)
+        outs.append([line.split() for line in result.stdout.splitlines()])
+    want, got = outs
+    assert len(got) == len(want) > GAUGE_INPUTS, f'gauge {name}: line counts differ'
+    worst_rel = 0.0
+    differing = 0
+    bad = 0
+    for i, (a, b) in enumerate(zip(want, got)):
+        assert a[:-results] == b[:-results], f'gauge {name} case {i}: inputs differ'
+        g = struct.unpack('<d', struct.pack('<Q', int(a[-2], 16)))[0]
+        t = struct.unpack('<d', struct.pack('<Q', int(b[-2], 16)))[0]
+        if a[-1] != b[-1]:
+            bad += 1
+        if g != g and t != t:
+            continue
+        if g == t:  # includes equal infinities and signed zeros
+            continue
+        absolute = abs(t - g)
+        relative = absolute / abs(g) if g != 0 else 0.0
+        if absolute != 0:
+            differing += 1
+            worst_rel = max(worst_rel, relative)
+        if g != g or t != t or absolute > tolerance[0] + tolerance[1] * abs(g):
+            bad += 1
+    assert bad == 0, f'gauge {name}: {bad} of {len(got)} results outside the tolerance'
+    print(f'PASS gauge {name}: {len(got)} inputs, {len(got) - differing} bit-identical, '
+          f'worst relative difference {worst_rel:.2e}')
+    return len(got) * results
 
 
 def gauge(root, work):
@@ -103,8 +147,10 @@ def gauge(root, work):
         exact = (len(got) * results) - within
         print(f'PASS gauge {name}: {len(got)} inputs, {exact} bit-identical, {within} within '
               f'{allowed} ulp')
-    print(f'PASS gauge: {total} results, {len(GAUGE_FUNCS)} functions, at least '
-          f'{GAUGE_INPUTS} inputs each')
+    for name, results, tolerance in GAUGE_RELATIVE:
+        total += gauge_relative(root, work, name, results, tolerance)
+    print(f'PASS gauge: {total} results, {len(GAUGE_FUNCS) + len(GAUGE_RELATIVE)} functions, '
+          f'at least {GAUGE_INPUTS} inputs each')
     return total
 
 

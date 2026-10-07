@@ -116,6 +116,26 @@ fn unary(name str, f fn(f64) f64, xs []f64, dump bool) {
 	}
 }
 
+// unarylg hashes a float result and an integer sign per input, as Lgamma returns.
+fn unarylg(name str, f fn(f64) (f64, i64), xs []f64, dump bool) {
+	if !wanted(name) {
+		return
+	}
+	mut h = u64(14695981039346656037)
+	for i, x in xs {
+		let (lg, sign) = f(x)
+		let b = canon(lg)
+		h = mix(h, b)
+		h = mix(h, u64(sign))
+		if dump {
+			say.Line(name, i, hex(gauge.F64bits(x)), hex(b), hex(u64(sign)))
+		}
+	}
+	if !dump {
+		say.Line(name, len(xs), hex(h))
+	}
+}
+
 // unary2 hashes two results per input, as Sincos returns.
 fn unary2(name str, f fn(f64) (f64, f64), xs []f64, dump bool) {
 	if !wanted(name) {
@@ -279,6 +299,12 @@ fn main() {
 	unary("acosh", gauge.Acosh, xs, dump)
 	unary("atanh", gauge.Atanh, xs, dump)
 	unary("logb", gauge.Logb, xs, dump)
+	unary("erf", gauge.Erf, xs, dump)
+	unary("erfc", gauge.Erfc, xs, dump)
+	unary("erfinv", gauge.Erfinv, xs, dump)
+	unary("erfcinv", gauge.Erfcinv, xs, dump)
+	unary("gamma", gauge.Gamma, xs, dump)
+	unarylg("lgamma", gauge.Lgamma, xs, dump)
 	unaryi("ilogb", gauge.Ilogb, xs, dump)
 	unary2("sincos", gauge.Sincos, xs, dump)
 	unaryu32("f32bits", f32bitsf, xs, dump)

@@ -123,6 +123,28 @@ fn main() {
 		say.Line("fma", ub(p[0]), ub(p[1]), ub(p[2]), ub(gauge.FMA(p[0], p[1], p[2])))
 	}
 
+	// The error functions and gamma. erf, erfc, erfcinv and gamma are bit-identical to Go in the
+	// twin; erfinv and lgamma go through Log, whose documented one-ulp difference shows here (at
+	// lgamma's zero crossings cancellation can amplify it), so they print to 12 digits too.
+	let es = []f64{0, gauge.Copysign(0, -1), 1e-30, 0.5, -0.5, 0.84375, 1, -1, 1.25, 2, -2, 6, -6, 27.9, 28,
+		-28, 1e-300, gauge.Inf(1), gauge.Inf(-1), gauge.NaN()}
+	unaryr("erf", gauge.Erf, es)
+	unaryr("erfc", gauge.Erfc, es)
+	let is = []f64{0, 0.5, -0.5, 0.85, -0.85, 0.9, 0.99, 1, -1, 1.0000000000000002, -1.0000000000000002, 1.5,
+		-1.5, 1e-10, gauge.NaN()}
+	unaryr("erfinv", gauge.Erfinv, is)
+	let ics = []f64{0, 0.5, 1, 1.5, 2, -0.5, 3, 2.5, 1e-10, gauge.NaN()}
+	unaryr("erfcinv", gauge.Erfcinv, ics)
+	let gs = []f64{0, gauge.Copysign(0, -1), 0.5, 1, 1.5, 2, 2.5, 3, 5.5, 10, 33, 34, 143.01608, 143.02, 200,
+		1e300, -0.5, -1.5, -2, -3, -33.5, -34.5, 1e-10, -1e-10, -1e-21, gauge.Inf(1), gauge.Inf(-1), gauge.NaN()}
+	unaryr("gamma", gauge.Gamma, gs)
+	for _, x in []f64{0, gauge.Copysign(0, -1), 0.5, 0.9, 1, 1.5, 2, 2.5, 3, 5.5, 7.9, 8, 10, 33, 34, 1e10,
+		1e18, 1e300, -0.5, -1.5, -2, -3, -33.5, -34.5, 1e-10, -1e-10, -1e-21, gauge.Inf(1), gauge.Inf(-1),
+		gauge.NaN()} {
+		let (lg, sign) = gauge.Lgamma(x)
+		say.Line("lgamma", ub(x), r(lg), sign)
+	}
+
 	// The constants added with these functions.
 	say.Line("consts", ub(gauge.Ln10), ub(gauge.Log2E), ub(gauge.Log10E), ub(gauge.Phi), ub(gauge.SqrtE),
 		ub(gauge.SqrtPi), ub(gauge.SqrtPhi), ub(gauge.MaxF32))

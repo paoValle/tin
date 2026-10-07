@@ -1,0 +1,275 @@
+package gauge
+
+// The log-gamma function: FreeBSD's e_lgamma_r.c through Go's lgamma.go. The coefficient tables
+// keep Go's names; Go's fallthrough and switch cases are the conditionals below.
+
+let lgamA = []f64{
+	7.72156649015328655494e-02,
+	3.22467033424113591611e-01,
+	6.73523010531292681824e-02,
+	2.05808084325167332806e-02,
+	7.38555086081402883957e-03,
+	2.89051383673415629091e-03,
+	1.19270763183362067845e-03,
+	5.10069792153511336608e-04,
+	2.20862790713908385557e-04,
+	1.08011567247583939954e-04,
+	2.52144565451257326939e-05,
+	4.48640949618915160150e-05,
+}
+
+
+let lgamR = []f64{
+	1.0,
+	1.39200533467621045958e+00,
+	7.21935547567138069525e-01,
+	1.71933865632803078993e-01,
+	1.86459191715652901344e-02,
+	7.77942496381893596434e-04,
+	7.32668430744625636189e-06,
+}
+
+
+let lgamS = []f64{
+	-7.72156649015328655494e-02,
+	2.14982415960608852501e-01,
+	3.25778796408930981787e-01,
+	1.46350472652464452805e-01,
+	2.66422703033638609560e-02,
+	1.84028451407337715652e-03,
+	3.19475326584100867617e-05,
+}
+
+
+let lgamT = []f64{
+	4.83836122723810047042e-01,
+	-1.47587722994593911752e-01,
+	6.46249402391333854778e-02,
+	-3.27885410759859649565e-02,
+	1.79706750811820387126e-02,
+	-1.03142241298341437450e-02,
+	6.10053870246291332635e-03,
+	-3.68452016781138256760e-03,
+	2.25964780900612472250e-03,
+	-1.40346469989232843813e-03,
+	8.81081882437654011382e-04,
+	-5.38595305356740546715e-04,
+	3.15632070903625950361e-04,
+	-3.12754168375120860518e-04,
+	3.35529192635519073543e-04,
+}
+
+
+let lgamU = []f64{
+	-7.72156649015328655494e-02,
+	6.32827064025093366517e-01,
+	1.45492250137234768737e+00,
+	9.77717527963372745603e-01,
+	2.28963728064692451092e-01,
+	1.33810918536787660377e-02,
+}
+
+
+let lgamV = []f64{
+	1.0,
+	2.45597793713041134822e+00,
+	2.12848976379893395361e+00,
+	7.69285150456672783825e-01,
+	1.04222645593369134254e-01,
+	3.21709242282423911810e-03,
+}
+
+
+let lgamW = []f64{
+	4.18938533204672725052e-01,
+	8.33333333333329678849e-02,
+	-2.77777777728775536470e-03,
+	7.93650558643019558500e-04,
+	-5.95187557450339963135e-04,
+	8.36339918996282139126e-04,
+	-1.63092934096575273989e-03,
+}
+
+
+const lgamYmin = 1.461632144968362245
+
+const lgamTwo52 = 1 << 52
+
+const lgamTwo53 = 1 << 53
+
+const lgamTwo58 = 1 << 58
+
+const lgamTiny = 8.470329472543003e-22 // 2**-70, 0x3b90000000000000
+
+const lgamTc = 1.46163214496836224576e+00
+
+const lgamTf = -1.21486290535849611461e-01
+
+const lgamTt = -3.63867699703950536541e-18
+
+// Lgamma returns the natural logarithm of the absolute value of Gamma(x) and its sign
+// (+1 or -1), like Go's math.Lgamma. Lgamma(±Inf) = +Inf, Lgamma(0) = +Inf, Lgamma(NaN) = NaN.
+fn Lgamma(x f64) (f64, i64) {
+	if IsNaN(x) {
+		return x, 1
+	}
+	if IsInf(x, 0) {
+		return x, 1
+	}
+	if x == 0 {
+		return Inf(1), 1
+	}
+	mut sign = i64(1)
+	mut v = x
+	mut neg = false
+	if v < 0 {
+		v = -v
+		neg = true
+	}
+	if v < lgamTiny { // if |x| < 2**-70, return -log(|x|)
+		if neg {
+			sign = -1
+		}
+		return -Log(v), sign
+	}
+	mut nadj = 0.0
+	if neg {
+		if v >= lgamTwo52 { // |x| >= 2**52, must be -integer
+			return Inf(1), sign
+		}
+		let t = sinPi(v)
+		if t == 0 {
+			return Inf(1), sign // -integer
+		}
+		nadj = Log(Pi / Abs(t*v))
+		if t < 0 {
+			sign = -1
+		}
+	}
+	if v == 1 || v == 2 { // purge off 1 and 2
+		return 0, sign
+	}
+	mut lg = 0.0
+	if v < 2 { // use lgamma(x) = lgamma(x+1) - log(x)
+		mut y = 0.0
+		mut i = 0
+		if v <= 0.9 {
+			lg = -Log(v)
+			if v >= (lgamYmin - 1 + 0.27) { // 0.7316 <= x <=  0.9
+				y = 1 - v
+				i = 0
+			} else if v >= (lgamYmin - 1 - 0.27) { // 0.2316 <= x < 0.7316
+				y = v - (lgamTc - 1)
+				i = 1
+			} else { // 0 < x < 0.2316
+				y = v
+				i = 2
+			}
+		} else {
+			lg = 0
+			if v >= (lgamYmin + 0.27) { // 1.7316 <= x < 2
+				y = 2 - v
+				i = 0
+			} else if v >= (lgamYmin - 0.27) { // 1.2316 <= x < 1.7316
+				y = v - lgamTc
+				i = 1
+			} else { // 0.9 < x < 1.2316
+				y = v - 1
+				i = 2
+			}
+		}
+		if i == 0 {
+			let z = y * y
+			let p1 = lgamA[0] + z*(lgamA[2]+z*(lgamA[4]+z*(lgamA[6]+z*(lgamA[8]+z*lgamA[10]))))
+			let p2 = z * (lgamA[1] + z*(lgamA[3]+z*(lgamA[5]+z*(lgamA[7]+z*(lgamA[9]+z*lgamA[11])))))
+			let p = y*p1 + p2
+			lg += (p - 0.5*y)
+		} else if i == 1 {
+			let z = y * y
+			let w = z * y
+			let p1 = lgamT[0] + w*(lgamT[3]+w*(lgamT[6]+w*(lgamT[9]+w*lgamT[12]))) // parallel comp
+			let p2 = lgamT[1] + w*(lgamT[4]+w*(lgamT[7]+w*(lgamT[10]+w*lgamT[13])))
+			let p3 = lgamT[2] + w*(lgamT[5]+w*(lgamT[8]+w*(lgamT[11]+w*lgamT[14])))
+			let p = z*p1 - (lgamTt - w*(p2+y*p3))
+			lg += (lgamTf + p)
+		} else {
+			let p1 = y * (lgamU[0] + y*(lgamU[1]+y*(lgamU[2]+y*(lgamU[3]+y*(lgamU[4]+y*lgamU[5])))))
+			let p2 = 1 + y*(lgamV[1]+y*(lgamV[2]+y*(lgamV[3]+y*(lgamV[4]+y*lgamV[5]))))
+			lg += (-0.5*y + p1/p2)
+		}
+	} else if v < 8 { // 2 <= x < 8
+		let i = i64(v)
+		let y = v - f64(i)
+		let p = y * (lgamS[0] + y*(lgamS[1]+y*(lgamS[2]+y*(lgamS[3]+y*(lgamS[4]+y*(lgamS[5]+y*lgamS[6]))))))
+		let q = 1 + y*(lgamR[1]+y*(lgamR[2]+y*(lgamR[3]+y*(lgamR[4]+y*(lgamR[5]+y*lgamR[6])))))
+		lg = 0.5*y + p/q
+		// Go's fallthrough: Lgamma(1+s) = Log(s) + Lgamma(s)
+		mut z = 1.0
+		if i >= 7 {
+			z *= y + 6
+		}
+		if i >= 6 {
+			z *= y + 5
+		}
+		if i >= 5 {
+			z *= y + 4
+		}
+		if i >= 4 {
+			z *= y + 3
+		}
+		if i >= 3 {
+			z *= y + 2
+			lg += Log(z)
+		}
+	} else if v < lgamTwo58 { // 8 <= x < 2**58
+		let t = Log(v)
+		let z = 1 / v
+		let y = z * z
+		let w = lgamW[0] + z*(lgamW[1]+y*(lgamW[2]+y*(lgamW[3]+y*(lgamW[4]+y*(lgamW[5]+y*lgamW[6])))))
+		lg = (v-0.5)*(t-1) + w
+	} else { // 2**58 <= x <= Inf
+		lg = v * (Log(v) - 1)
+	}
+	if neg {
+		lg = nadj - lg
+	}
+	return lg, sign
+}
+
+// sinPi returns sin(Pi*x), accurate for integral x, as Go's lgamma.go uses it.
+fn sinPi(x f64) f64 {
+	mut v = x
+	if v < 0.25 {
+		return -Sin(Pi * v)
+	}
+	mut z = Floor(v)
+	mut n = i64(0)
+	if z != v { // inexact
+		v = Mod(v, 2)
+		n = i64(v * 4)
+	} else {
+		if v >= lgamTwo53 { // x must be even
+			v = 0
+			n = 0
+		} else {
+			if v < lgamTwo52 {
+				z = v + lgamTwo52 // exact
+			}
+			n = i64(1 & F64bits(z))
+			v = f64(n)
+			n <<= 2
+		}
+	}
+	if n == 0 {
+		v = Sin(Pi * v)
+	} else if n == 1 || n == 2 {
+		v = Cos(Pi * (0.5 - v))
+	} else if n == 3 || n == 4 {
+		v = Sin(Pi * (1 - v))
+	} else if n == 5 || n == 6 {
+		v = -Cos(Pi * (v - 1.5))
+	} else {
+		v = Sin(Pi * (v - 2))
+	}
+	return -v
+}

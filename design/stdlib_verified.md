@@ -48,7 +48,9 @@ cbrt, hypot, mod, and the functions of #575 that touch no fused expression (logb
 f32bits, f32frombits, dim, remainder, nextafter, nextafter32, fma). The ten that differ are log, log2,
 log10, log1p, pow and the pow subset, plus expm1, asinh, acosh and atanh (#575), whose algorithms call
 the log family or have fused expressions of their own: for about one input in a thousand the result
-differs by exactly one ulp. The cause is the fused multiply-add. Both
+differs by exactly one ulp. #575's error functions and gamma (erf, erfc, erfinv, erfcinv, gamma and
+lgamma) are in the corpus too: all but lgamma are bit-identical or one ulp, and lgamma's few-ulp
+results are the same Log difference amplified at its zero crossings. The cause is the fused multiply-add. Both
 compilers fuse on arm64, but not the same products. In the disassembly of Go's `math.log` the last
 line `k*Ln2Hi - (...)` is one fused instruction and `hfsq = 0.5*f*f` is folded into the fused operations
 that use it rather than rounded once; Tin's compiler has no `x*y - a` form, fuses the right-hand product
@@ -57,10 +59,15 @@ Neither is wrong, and Go's own results differ between its arm64 and amd64 builds
 
 `tools/ci/number_check.py` runs the same functions from `bench/ref/gauge` over 120,000 inputs each
 (GAUGE_N, one function at a time) and compares every result bit for bit: logb, ilogb, sincos,
-f32bits, f32frombits, dim, remainder, nextafter, nextafter32 and fma are bit-identical, and expm1,
-asinh, acosh and atanh stay within one ulp (on macOS arm64: 224, 150, 76 and 17 results of 120,077).
-The special values are pinned in `toolchain/tests/v2/gauge_more.tin`, which agrees with Go's line
-for line.
+f32bits, f32frombits, dim, remainder, nextafter, nextafter32, fma, erf, erfc, erfcinv and gamma are
+bit-identical, and expm1, asinh, acosh, atanh and erfinv stay within one ulp (on macOS arm64: 224,
+150, 76, 17 and 1 results of 120,077). lgamma goes through Log and Sin and cancels near its zero
+crossings, so it is checked with a 1e-14 absolute plus 1e-13 relative tolerance (its Go twin uses
+pureLog, because math.Log is assembly on amd64 and its subnormal results differ from Go's own pure
+algorithm): 119,833 of 120,077
+results are bit-identical and the worst relative difference is 7.7e-15, the inherited Log
+difference amplified by cancellation. The special values are pinned in
+`toolchain/tests/v2/gauge_more.tin`, which agrees with Go's line for line.
 
 Error against exact arithmetic (Python `decimal`, 800 digits for log1p), in ulps, on the inputs where the
 result is a normal number:
