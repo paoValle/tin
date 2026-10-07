@@ -1,0 +1,276 @@
+package ledger
+
+import "fault"
+import "glyph"
+import "say"
+import "twine"
+
+// Read returns the next record: the fields with their quotes removed and escapes decoded, or
+// the fault Done at the end of the input. A parse fault carries one of ErrBareQuote, ErrQuote,
+// ErrFieldCount or ErrInvalidDelim (fault.Is) and the record's position in its message. On a
+// parse fault no partial record is returned, where Go's Read returns the fields read so far.
+fn (r mut Reader) Read() ![]str {
+	if !validDelim(r.Comma) || (r.Comment != 0 && (!validDelim(r.Comment) || r.Comment == r.Comma)) {
+		fail fault.Wrap(ErrInvalidDelim, "ledger")
+	}
+	// Find the first line that is neither blank nor a comment.
+	mut line = ""
+	mut eol = false
+	mut found = false
+	for !found {
+		let (l, e, ok) = try r.line()
+		if !ok {
+			break
+		}
+		if r.Comment != 0 && len(l) > 0 && l[0] == r.Comment {
+			continue
+		}
+		if len(l) == 0 {
+			continue
+		}
+		line = l
+		eol = e
+		found = true
+	}
+	if !found {
+		fail Done
+	}
+	let recLine = r.numLine
+	mut posLine = r.numLine
+	mut posCol i64 = 1
+	mut firstCol i64 = 0
+	mut fields = make([]str, 0, 8)
+	mut fb = make([]u8, 0, 64)
+	parseField: for {
+		if r.TrimLeadingSpace {
+			let i = skipSpace(line)
+			line = line[i:len(line)]
+			posCol += i
+		}
+		if firstCol == 0 {
+			firstCol = posCol
+		}
+		if len(line) == 0 || line[0] != '"' {
+			// A non-quoted field ends at the comma or at the end of the line.
+			let i = twine.IndexByte(line, r.Comma)
+			mut field = line
+			if i >= 0 {
+				field = line[0:i]
+			}
+			if !r.LazyQuotes {
+				let j = twine.IndexByte(field, '"')
+				if j >= 0 {
+					try parseFault(ErrBareQuote, recLine, posLine, posCol + j)
+				}
+			}
+			fb = append(fb, field...)
+			fields = append(fields, str(fb))
+			fb = fb[0:0]
+			if i >= 0 {
+				line = line[i+1:len(line)]
+				posCol += i + 1
+				continue parseField
+			}
+			break parseField
+		}
+		// A quoted field may hold commas and newlines; "" is one quote.
+		line = line[1:len(line)]
+		posCol += 1
+		for {
+			let i = twine.IndexByte(line, '"')
+			if i >= 0 {
+				fb = append(fb, line[0:i]...)
+				line = line[i+1:len(line)]
+				posCol += i + 1
+				if len(line) == 0 {
+					fields = append(fields, str(fb))
+					fb = fb[0:0]
+					break parseField
+				}
+				if line[0] == '"' {
+					fb = append(fb, '"')
+					line = line[1:len(line)]
+					posCol += 1
+					continue
+				}
+				if line[0] == r.Comma {
+					fields = append(fields, str(fb))
+					fb = fb[0:0]
+					line = line[1:len(line)]
+					posCol += 1
+					continue parseField
+				}
+				if r.LazyQuotes {
+					fb = append(fb, '"')
+					continue
+				}
+				try parseFault(ErrQuote, recLine, posLine, posCol - 1)
+			}
+			// No quote in what is left of the line: the field goes on on the next line.
+			fb = append(fb, line...)
+			posCol += len(line)
+			if !eol {
+				if !r.LazyQuotes {
+					try parseFault(ErrQuote, recLine, posLine, posCol)
+				}
+				fields = append(fields, str(fb))
+				fb = fb[0:0]
+				break parseField
+			}
+			fb = append(fb, '\n')
+			posCol += 1
+			let (l, e, ok) = try r.line()
+			if !ok {
+				if !r.LazyQuotes {
+					try parseFault(ErrQuote, recLine, posLine, posCol)
+				}
+				fields = append(fields, str(fb))
+				fb = fb[0:0]
+				break parseField
+			}
+			line = l
+			eol = e
+			posLine += 1
+			posCol = 1
+		}
+	}
+	if r.FieldsPerRecord > 0 {
+		if len(fields) != r.FieldsPerRecord {
+			try countFault(recLine)
+		}
+	} else if r.FieldsPerRecord == 0 {
+		r.FieldsPerRecord = len(fields)
+	}
+	r.recLine = recLine
+	r.recCol = firstCol
+	return fields
+}
+
+// validDelim reports whether c may be a Comma or Comment (Go's csv.validDelim, one byte).
+fn validDelim(c u8) bool {
+	return c != 0 && c != '"' && c != '\r' && c != '\n'
+}
+
+// parseFault fails with sentinel at the record's start line and the fault's line and column,
+// like Go's csv.ParseError text.
+fn parseFault(sentinel fault, recLine i64, line i64, col i64) ! {
+	if line == recLine {
+		fail fault.Wrap(sentinel, say.Fmt("ledger: line %d, column %d", line, col))
+	}
+	fail fault.Wrap(sentinel, say.Fmt("ledger: record on line %d; line %d, column %d", recLine, line, col))
+}
+
+// countFault fails with ErrFieldCount at the record's line.
+fn countFault(recLine i64) ! {
+	fail fault.Wrap(ErrFieldCount, say.Fmt("ledger: record on line %d", recLine))
+}
+
+// isSpaceByte reports whether c is ASCII white space.
+fn isSpaceByte(c u8) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 0x0b || c == 0x0c
+}
+
+// skipSpace returns the byte offset of the first rune of s that is not white space.
+fn skipSpace(s str) i64 {
+	mut i = 0
+	for i < len(s) {
+		let c = s[i]
+		if c < 0x80 {
+			if !isSpaceByte(c) {
+				break
+			}
+			i += 1
+			continue
+		}
+		let (r, n) = glyph.DecodeRune(s, i)
+		if !glyph.IsSpace(r) {
+			break
+		}
+		i += n
+	}
+	return i
+}
+
+// line returns the next line without its newline: eol is true when a "\n" ended it, and exists
+// is false at the end of the input. A "\r\n" ending loses its "\r", and a trailing "\r" at the
+// end of the input is dropped, as in Go's encoding/csv.
+fn (r mut Reader) line() !(str, bool, bool) {
+	r.numLine += 1
+	if !r.hasStream {
+		if r.tpos >= len(r.text) {
+			return "", false, false
+		}
+		let rest = r.text[r.tpos:len(r.text)]
+		let j = twine.IndexByte(rest, '\n')
+		if j < 0 {
+			mut line = rest
+			if line[len(line)-1] == '\r' {
+				line = line[0:len(line)-1]
+			}
+			r.tpos = len(r.text)
+			return line, false, true
+		}
+		mut line = rest[0:j]
+		if j > 0 && line[j-1] == '\r' {
+			line = line[0:j-1]
+		}
+		r.tpos += j + 1
+		return line, true, true
+	}
+	for {
+		let h = cast(i64, r.buf)
+		let p = memchr(h[2]+r.pos, i64('\n'), r.fill-r.pos)
+		if p != 0 {
+			mut end = p - h[2]
+			if end > r.pos && r.buf[end-1] == '\r' {
+				end -= 1
+			}
+			let line = rt_str_from_raw(h[2]+r.pos, end-r.pos)
+			r.pos = (p - h[2]) + 1
+			return line, true, true
+		}
+		let got = try r.more()
+		if !got {
+			if !r.eof {
+				fail fault.Wrap(fault.LimitExceeded, say.Fmt("ledger: line longer than %d bytes", len(r.buf)))
+			}
+			if r.pos >= r.fill {
+				return "", false, false
+			}
+			mut end = r.fill
+			if end > r.pos && r.buf[end-1] == '\r' {
+				end -= 1
+			}
+			let line = rt_str_from_raw(h[2]+r.pos, end-r.pos)
+			r.pos = r.fill
+			return line, false, true
+		}
+	}
+}
+
+// more compacts the window and reads more of the stream into it; false at the end of the stream,
+// or when the window is full with an unread line, which line reports as too long.
+fn (r mut Reader) more() !bool {
+	if r.eof || !r.hasStream {
+		return false
+	}
+	if r.pos > 0 {
+		let n = r.fill - r.pos
+		if n > 0 {
+			copy(r.buf[0:n], r.buf[r.pos:r.fill])
+		}
+		r.fill = n
+		r.pos = 0
+	}
+	if r.fill == len(r.buf) {
+		return false
+	}
+	let got = try r.pull(len(r.buf) - r.fill)
+	if len(got) == 0 {
+		r.eof = true
+		return false
+	}
+	copy(r.buf[r.fill:r.fill+len(got)], got)
+	r.fill += len(got)
+	return true
+}

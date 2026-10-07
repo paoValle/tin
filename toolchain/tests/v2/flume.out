@@ -10,6 +10,7 @@ eof byte false
 flush true
 missing flume: /tmp/tin-test-no/such/file: No such file or directory
 open true
+read true 100040 375668 0
 readall 100040 true alpha
 stdout -77!
 write true

@@ -50,6 +50,36 @@ fn main() {
 	let (_, ok3) = r2.Byte()
 	say.Line("eof byte", ok3)
 	r2.Close()
+	// Read is the io.Reader shape (ledger.NewStream): short buffers, all bytes, 0 at the end.
+	let r4 = flume.Open(path) catch err {
+		say.Line(err)
+		return
+	}
+	mut buf = make([]u8, 7)
+	mut nobuf = make([]u8, 0)
+	mut chunks = 0
+	mut total = 0
+	mut sum = 0
+	for {
+		let k = r4.Read(mut buf) catch err {
+			say.Line("read fault", err)
+			return
+		}
+		if k == 0 {
+			break
+		}
+		chunks += 1
+		total += k
+		for i in 0..k {
+			sum = (sum * 31 + i64(buf[i]) + 1) % 1000003
+		}
+	}
+	let zero = r4.Read(mut nobuf) catch err {
+		say.Line("zero fault", err)
+		return
+	}
+	r4.Close()
+	say.Line("read", chunks > 0, total, sum, zero)
 	let (_, e4) = flume.Open("/tmp/tin-test-no/such/file")
 	say.Line("missing", e4)
 	let empty = "/tmp/tin-test-flume_empty.txt"

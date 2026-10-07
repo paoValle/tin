@@ -33,6 +33,7 @@ Generated from the comments in `toolchain/std/*/` and `packages/*/` by `tools/ge
 | [cairn](#cairn) | containers (container/heap, sets, LRU) |
 | [stamp](#stamp) | hashes and checksums (hash/*) |
 | [squash](#squash) | compression: DEFLATE, gzip, zlib, Snappy, LZ4, Zstandard (compress/flate, compress/gzip, compress/zlib) |
+| [ledger](#ledger) | CSV reading and writing (encoding/csv) |
 | [seal](#seal) | crypto and encodings (crypto/sha256, hmac, encoding/hex, base64) |
 | [herald](#herald) | logging (log/slog) |
 | [crucible](#crucible) | testing helpers (testing) |
@@ -718,6 +719,7 @@ Package flume reads and writes file descriptors through 64 KiB buffers: lines, w
 - `(r mut Reader) Close()`: Close closes the reader's descriptor.
 - `(r mut Reader) Line() !(str, bool)`: Line returns the next line without its "\n" (or "\r\n"); ok is false at the end.
 - `(r mut Reader) Byte() (u8, bool)`: Byte returns the next byte; ok is false at the end.
+- `(r mut Reader) Read(buf mut []u8) !i64`: Read fills buf with the next buffered bytes, waiting for them, and returns how many it wrote: 0 at the end. It is what makes a flume.Reader an io.Reader (ledger.NewStream).
 - `(r mut Reader) ReadAll() !str`: ReadAll returns everything left.
 - `ReadFile(path str) !str`: ReadFile returns the contents of the file at path.
 - `NewWriter(fd i64) Writer`: NewWriter writes to fd.
@@ -1078,6 +1080,26 @@ let back = try squash.Gunzip(z, 64mb)
 - `Unsnappy(data str, max i64) !str`: Unsnappy decompresses one Snappy block whose length is at most max.
 - `Unzstd(data str, max i64) !str`: Unzstd decompresses Zstandard data (any number of frames, and skippable frames), producing at most max bytes.
 - `Zstd(data str, level i64) str`: Zstd compresses data as one Zstandard frame at level (Store to Best; Store writes raw blocks).
+
+## ledger
+
+Package ledger reads and writes CSV records (RFC 4180), like Go's encoding/csv: quoting and escaping rules, \r\n normalization, comments, a fields-per-record check and parse faults with the record's line and column. The reader and writer port Go's encoding/csv (BSD licence: licenses/strconv.txt). Read faults carry the sentinels ErrBareQuote, ErrQuote, ErrFieldCount and ErrInvalidDelim (fault.Is), and Done at the end of the input.
+
+A Reader over a stream holds a fixed window (64 KiB by default; NewStreamSize changes it) because Tin has no GC: the reader never grows or replaces its buffers, so a Read inside an arena frees its records with the arena, and streaming a huge file keeps a flat footprint. The window bounds a line: a longer one fails with fault.LimitExceeded. A Reader over an in-memory str has no window and no line limit. A comma or comment character is one byte (Go's encoding/csv accepts any rune); UTF-8 delimiters are a known gap.
+
+- `type Reader struct`: Reader reads records from CSV text, like Go's csv.Reader. Set the exported fields before the first Read: Comma and Comment are single bytes.
+- `NewReader(text str) Reader`: NewReader reads records from text.
+- `NewStream[S io.Reader](src S) Reader`: NewStream reads records from a stream in a 64 KiB window (see NewStreamSize).
+- `NewStreamSize[S io.Reader](src S, maxLine i64) Reader`: NewStreamSize is NewStream with a window of maxLine bytes (0 gives the default 64 KiB); a line longer than the window fails with fault.LimitExceeded.
+- `(r mut Reader) ReadAll() ![][]str`: ReadAll returns the remaining records; a parse fault stops it instead, like Read.
+- `(r Reader) Pos() (i64, i64)`: Pos returns the line and column where the record of the last successful Read started (1-based), or (0, 0) before any Read.
+- `TrimBOM(s str) str`: TrimBOM returns s without a leading UTF-8 byte order mark; a BOM elsewhere (the Reader itself does not strip one, as Go's encoding/csv does not) is an ordinary field byte.
+- `(r mut Reader) Read() ![]str`: Read returns the next record: the fields with their quotes removed and escapes decoded, or the fault Done at the end of the input. A parse fault carries one of ErrBareQuote, ErrQuote, ErrFieldCount or ErrInvalidDelim (fault.Is) and the record's position in its message. On a parse fault no partial record is returned, where Go's Read returns the fields read so far.
+- `type Writer struct`: Writer writes records in CSV form into a buffer, like Go's csv.Writer. Set the exported fields before the first Write.
+- `NewWriter() Writer`: NewWriter returns a Writer with Comma set to ','.
+- `(w mut Writer) Write(fields []str) !`: Write appends one record, quoting fields that hold the delimiter, a quote, a newline or a leading space, and doubling quotes, as Go's encoding/csv does.
+- `(w mut Writer) WriteAll(records [][]str) !`: WriteAll writes every record in order.
+- `(w Writer) String() str`: String returns the bytes written so far as a str.
 
 ## seal
 

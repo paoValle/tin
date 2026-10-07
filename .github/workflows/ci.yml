@@ -70,7 +70,7 @@ jobs:
         run: python3 tools/ci/map_growth_check.py
       - name: Reclamation with long-lived tasks (a parked WebSocket does not pin dropped blocks)
         run: python3 tools/ci/limbo_check.py
-      - name: Arena blocks (flat peak RSS in a batch loop, arenas in waiting handlers)
+      - name: Arena blocks and CSV streaming (flat peak RSS; a 1 GiB file in a 64 KiB window)
         run: python3 tools/ci/arena_check.py
       - name: Replay tapes (record, replay, divergence)
         run: python3 tools/ci/replay_check.py

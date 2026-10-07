@@ -4,7 +4,7 @@ import os, re
 
 SKIP = {"runtime", "std", "fmt", "say"}
 ORDER = ["say", "fault", "argo", "io", "anvil", "hearth", "relay", "task", "wire", "tls", "hpack", "twine", "glyph", "mint", "gauge", "bits",
-         "link", "ore", "flume", "quarry", "trail", "lever", "tide", "dice", "sift", "atlas", "cairn", "stamp", "squash",
+         "link", "ore", "flume", "quarry", "trail", "lever", "tide", "dice", "sift", "atlas", "cairn", "stamp", "squash", "ledger",
          "seal", "herald", "crucible", "constraints", "policy", "redis", "mysql", "postgres", "kafka", "websocket", "atomic",
          "lane", "replay"]
 ROLE = {"say": "formatting and printing (fmt)", "fault": "fault chains and standard sentinels (errors)", "argo": "JSON (encoding/json)", "anvil": "HTTP/1.1 and HTTP/2 server, HTTPS with ServeTLS (net/http)",
@@ -15,6 +15,7 @@ ROLE = {"say": "formatting and printing (fmt)", "fault": "fault chains and stand
         "quarry": "files, environment, process (os)", "trail": "paths (path/filepath)", "lever": "command-line flags (flag)",
         "tide": "time (time)", "dice": "random numbers (math/rand)", "sift": "sorting, searching and the generic slice functions (sort, slices, cmp)", "atlas": "functions on maps (maps)",
         "cairn": "containers (container/heap, sets, LRU)", "stamp": "hashes and checksums (hash/*)", "squash": "compression: DEFLATE, gzip, zlib, Snappy, LZ4, Zstandard (compress/flate, compress/gzip, compress/zlib)",
+        "ledger": "CSV reading and writing (encoding/csv)",
         "seal": "crypto and encodings (crypto/sha256, hmac, encoding/hex, base64)", "herald": "logging (log/slog)",
         "crucible": "testing helpers (testing)", "constraints": "named generic constraint shapes",
         "policy": "with policies and slots (context values, retry/cache/trace middleware)",

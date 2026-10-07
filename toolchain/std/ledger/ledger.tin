@@ -1,0 +1,129 @@
+// Package ledger reads and writes CSV records (RFC 4180), like Go's encoding/csv: quoting and
+// escaping rules, \r\n normalization, comments, a fields-per-record check and parse faults with
+// the record's line and column. The reader and writer port Go's encoding/csv (BSD licence:
+// licenses/strconv.txt). Read faults carry the sentinels ErrBareQuote, ErrQuote,
+// ErrFieldCount and ErrInvalidDelim (fault.Is), and Done at the end of the input.
+//
+// A Reader over a stream holds a fixed window (64 KiB by default; NewStreamSize changes it)
+// because Tin has no GC: the reader never grows or replaces its buffers, so a Read inside an
+// arena frees its records with the arena, and streaming a huge file keeps a flat footprint.
+// The window bounds a line: a longer one fails with fault.LimitExceeded. A Reader over an
+// in-memory str has no window and no line limit. A comma or comment character is one byte
+// (Go's encoding/csv accepts any rune); UTF-8 delimiters are a known gap.
+package ledger
+
+import "fault"
+import "io"
+import "say"
+import "twine"
+
+// Done is the fault Read returns at the end of the input: fault.Is(err, ledger.Done).
+let Done = fault("ledger: end of input")
+
+// ErrBareQuote is the cause of a parse fault for a quote in a non-quoted field:
+// fault.Is(err, ledger.ErrBareQuote).
+let ErrBareQuote = fault(`bare " in non-quoted field`)
+
+// ErrQuote is the cause of a parse fault for an extraneous or missing quote in a quoted field:
+// fault.Is(err, ledger.ErrQuote).
+let ErrQuote = fault(`extraneous or missing " in quoted-field`)
+
+// ErrFieldCount is the cause of a fault for a record with the wrong number of fields:
+// fault.Is(err, ledger.ErrFieldCount).
+let ErrFieldCount = fault("wrong number of fields")
+
+// ErrInvalidDelim is the cause of a fault for a Comma or Comment that cannot delimit:
+// fault.Is(err, ledger.ErrInvalidDelim).
+let ErrInvalidDelim = fault("invalid field or comment delimiter")
+
+// Reader reads records from CSV text, like Go's csv.Reader. Set the exported fields before the
+// first Read: Comma and Comment are single bytes.
+type Reader struct {
+	Comma            u8 // field delimiter (default ',', set by NewReader and NewStream)
+	Comment          u8 // comment character, 0 for none (the default)
+	FieldsPerRecord  i64 // 0: the first record sets it; positive: the required count; negative: any
+	LazyQuotes       bool // a quote may appear in an unquoted field and not be doubled in a quoted one
+	TrimLeadingSpace bool // leading white space in a field is ignored
+
+	text      str // the in-memory input, "" for a stream
+	tpos      i64
+	hasStream bool
+	pull      fn(want i64) ![]u8 // the stream refill, through its own fixed chunk
+	buf       []u8               // the streaming window
+	pos       i64
+	fill      i64
+	eof       bool
+
+	numLine i64
+	recLine i64
+	recCol  i64
+}
+
+// nopPull is the pull of an in-memory reader, which never has a stream.
+fn nopPull(want i64) ![]u8 {
+	return []u8{}
+}
+
+// NewReader reads records from text.
+fn NewReader(text str) Reader {
+	return Reader{Comma: ',', text: text, pull: nopPull}
+}
+
+// NewStream reads records from a stream in a 64 KiB window (see NewStreamSize).
+fn NewStream[S io.Reader](src S) Reader {
+	return NewStreamSize(src, 0)
+}
+
+// NewStreamSize is NewStream with a window of maxLine bytes (0 gives the default 64 KiB); a
+// line longer than the window fails with fault.LimitExceeded.
+fn NewStreamSize[S io.Reader](src S, maxLine i64) Reader {
+	if maxLine <= 0 {
+		maxLine = 65536
+	}
+	mut x = src
+	mut chunk = make([]u8, 65536)
+	return Reader{Comma: ',', hasStream: true, buf: make([]u8, maxLine), pull: fn(want i64) ![]u8 {
+		mut n = want
+		if n > len(chunk) {
+			n = len(chunk)
+		}
+		if n <= 0 {
+			return []u8{}
+		}
+		let view = chunk[0:n]
+		let k = try x.Read(mut view)
+		if k <= 0 {
+			return []u8{}
+		}
+		return chunk[0:k]
+	}}
+}
+
+// ReadAll returns the remaining records; a parse fault stops it instead, like Read.
+fn (r mut Reader) ReadAll() ![][]str {
+	mut all = make([][]str, 0, 16)
+	for {
+		let rec = r.Read() catch err {
+			if fault.Is(err, Done) {
+				return all
+			}
+			fail err
+		}
+		all = append(all, rec)
+	}
+}
+
+// Pos returns the line and column where the record of the last successful Read started
+// (1-based), or (0, 0) before any Read.
+fn (r Reader) Pos() (i64, i64) {
+	return r.recLine, r.recCol
+}
+
+// TrimBOM returns s without a leading UTF-8 byte order mark; a BOM elsewhere (the Reader itself
+// does not strip one, as Go's encoding/csv does not) is an ordinary field byte.
+fn TrimBOM(s str) str {
+	if len(s) >= 3 && s[0] == 0xef && s[1] == 0xbb && s[2] == 0xbf {
+		return s[3:len(s)]
+	}
+	return s
+}

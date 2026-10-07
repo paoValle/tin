@@ -1,0 +1,55 @@
+// Command ledger_stream streams a CSV file through ledger.NewStream and prints how many
+// records and field bytes it saw. Every read runs in an arena, so the per-record memory is
+// released as the loop goes: VmHWM stays flat over any file size (#572).
+package main
+
+import "say"
+import "fault"
+import "ledger"
+import "flume"
+import "quarry"
+
+// run streams path and returns the record and field-byte counts.
+fn run(path str) !(i64, i64) {
+	let f = try flume.Open(path)
+	mut r = ledger.NewStream(f)
+	mut records i64 = 0
+	mut bytes i64 = 0
+	for {
+		let n = try arena {
+			mut done = false
+			let rec = r.Read() catch err {
+				if fault.Is(err, ledger.Done) {
+					done = true
+				} else {
+					fail err
+				}
+				[]str{}
+			}
+			mut sum i64 = 0
+			for _, field in rec {
+				sum += len(field)
+			}
+			if done {
+				sum = -1
+			}
+			sum
+		}
+		if n < 0 {
+			break
+		}
+		records += 1
+		bytes += n
+	}
+	return records, bytes
+}
+
+fn main() {
+	let path = quarry.Getenv("LEDGER_STREAM_FILE")
+	let (records, bytes, err) = run(path)
+	if err != nil {
+		say.Line("fault", err)
+		return
+	}
+	say.Line("records", records, "bytes", bytes)
+}

@@ -1,0 +1,481 @@
+package main
+
+import "say"
+import "fault"
+import "flume"
+import "ledger"
+import "twine"
+import "dice"
+import "quarry"
+
+// Case is one read test, the fields Go's encoding/csv reader_test sets.
+type Case struct {
+	name    str
+	input   str
+	comma   u8
+	comment u8
+	fpr     i64
+	lazy    bool
+	trim    bool
+}
+
+// WCase is one writer test from Go's encoding/csv writer_test.
+type WCase struct {
+	input [][]str
+	comma u8
+	crlf  bool
+}
+
+// Step is one Read outcome.
+type Step enum {
+	Ok([]str)
+	Err(fault)
+	End
+}
+
+// step reads one record as a case step.
+fn step(r mut ledger.Reader) Step {
+	let rec = r.Read() catch err {
+		if fault.Is(err, ledger.Done) {
+			return Step.End
+		}
+		return Step.Err(err)
+	}
+	return Step.Ok(rec)
+}
+
+// hex returns the lowercase hex of the bytes of s.
+fn hex(s str) str {
+	let digits = "0123456789abcdef"
+	mut b = twine.NewBuilder(len(s) * 2)
+	for i in 0..len(s) {
+		let c = s[i]
+		b.Byte(digits[c >> 4])
+		b.Byte(digits[c & 0xf])
+	}
+	return b.String()
+}
+
+// show renders a field: its hex bytes when short, its length when long.
+fn show(f str) str {
+	if len(f) <= 128 {
+		return hex(f)
+	}
+	return "L{len(f)}"
+}
+
+// runCase reads one case and prints its records, faults and end, with positions.
+fn runCase(c Case) {
+	say.Line("case", c.name)
+	mut r = ledger.NewReader(c.input)
+	if c.comma != 0 {
+		r.Comma = c.comma
+	}
+	r.Comment = c.comment
+	r.FieldsPerRecord = c.fpr
+	r.LazyQuotes = c.lazy
+	r.TrimLeadingSpace = c.trim
+	mut n i64 = 0
+	stop: for {
+		match step(mut r) {
+			Ok(rec) => {
+				let (pl, pc) = r.Pos()
+				mut out = say.Fmt("read %d ok pos=%d:%d nf=%d", n, pl, pc, len(rec))
+				for _, f in rec {
+					out += " " + show(f)
+				}
+				say.Line(out)
+			}
+			Err(err) => {
+				say.Line("read", n, "err", err)
+				if !fault.Is(err, ledger.ErrFieldCount) {
+					break stop
+				}
+			}
+			End => {
+				say.Line("read", n, "eof")
+				break stop
+			}
+		}
+		n += 1
+	}
+}
+
+// textCases returns Go's reader_test cases (the non-ASCII delimiter ones are a documented gap).
+fn textCases() []Case {
+	let huge = twine.Repeat("#ignore\n", 10000) + twine.Repeat("@", 5000) + "," + twine.Repeat("*", 5000)
+	return []Case{
+		Case{name: "Simple", input: "a,b,c\n", fpr: -1},
+		Case{name: "CRLF", input: "a,b\r\nc,d\r\n", fpr: -1},
+		Case{name: "BareCR", input: "a,b\rc,d\r\n", fpr: -1},
+		Case{name: "RFC4180test", input: "#field1,field2,field3\n\"aaa\",\"bb\nb\",\"ccc\"\n\"a,a\",\"b\"\"bb\",\"ccc\"\nzzz,yyy,xxx\n", fpr: 0},
+		Case{name: "NoEOLTest", input: "a,b,c", fpr: -1},
+		Case{name: "Semicolon", input: "a;b;c\n", comma: ';', fpr: -1},
+		Case{name: "MultiLine", input: "\"two\nline\",\"one line\",\"three\nline\nfield\"", fpr: -1},
+		Case{name: "BlankLine", input: "a,b,c\n\nd,e,f\n\n", fpr: -1},
+		Case{name: "BlankLineFieldCount", input: "a,b,c\n\nd,e,f\n\n", fpr: 0},
+		Case{name: "TrimSpace", input: " a,  b,   c\n", fpr: -1, trim: true},
+		Case{name: "LeadingSpace", input: " a,  b,   c\n", fpr: -1},
+		Case{name: "Comment", input: "#1,2,3\na,b,c\n#comment", comment: '#', fpr: -1},
+		Case{name: "NoComment", input: "#1,2,3\na,b,c", fpr: -1},
+		Case{name: "LazyQuotes", input: "a \"word\",\"1\"2\",a\",\"b", fpr: -1, lazy: true},
+		Case{name: "BareQuotes", input: "a \"word\",\"1\"2\",a\"", fpr: -1, lazy: true},
+		Case{name: "BareDoubleQuotes", input: "a\"\"b,c", fpr: -1, lazy: true},
+		Case{name: "BadDoubleQuotes", input: "a\"\"b,c", fpr: -1},
+		Case{name: "TrimQuote", input: " \"a\",\" b\",c", fpr: -1, trim: true},
+		Case{name: "BadBareQuote", input: "a \"word\",\"b\"", fpr: -1},
+		Case{name: "BadTrailingQuote", input: "\"a word\",b\"", fpr: -1},
+		Case{name: "ExtraneousQuote", input: "\"a \"word\",\"b\"", fpr: -1},
+		Case{name: "BadFieldCount", input: "a,b,c\nd,e", fpr: 0},
+		Case{name: "BadFieldCountMultiple", input: "a,b,c\nd,e\nf", fpr: 0},
+		Case{name: "BadFieldCount1", input: "a,b,c", fpr: 2},
+		Case{name: "FieldCount", input: "a,b,c\nd,e", fpr: -1},
+		Case{name: "TrailingCommaEOF", input: "a,b,c,", fpr: -1},
+		Case{name: "TrailingCommaEOL", input: "a,b,c,\n", fpr: -1},
+		Case{name: "TrailingCommaSpaceEOF", input: "a,b,c, ", fpr: -1, trim: true},
+		Case{name: "TrailingCommaSpaceEOL", input: "a,b,c, \n", fpr: -1, trim: true},
+		Case{name: "TrailingCommaLine3", input: "a,b,c\nd,e,f\ng,hi,", fpr: -1, trim: true},
+		Case{name: "NotTrailingComma3", input: "a,b,c, \n", fpr: -1},
+		Case{name: "CommaFieldTest", input: "x,y,z,w\nx,y,z,\nx,y,,\nx,,,\n,,,\n\"x\",\"y\",\"z\",\"w\"\n\"x\",\"y\",\"z\",\"\"\n\"x\",\"y\",\"\",\"\"\n\"x\",\"\",\"\",\"\"\n\"\",\"\",\"\",\"\"\n", fpr: -1},
+		Case{name: "TrailingCommaIneffective1", input: "a,b,\nc,d,e", fpr: -1, trim: true},
+		Case{name: "ReadAllReuseRecord", input: "a,b\nc,d", fpr: -1},
+		Case{name: "StartLine1", input: "a,\"b\nc\"d,e", fpr: -1},
+		Case{name: "StartLine2", input: "a,b\n\"d\n\n,e", fpr: -1},
+		Case{name: "CRLFInQuotedField", input: "A,\"Hello\r\nHi\",B\r\n", fpr: -1},
+		Case{name: "BinaryBlobField", input: "x09\x41\xb4\x1c,aktau", fpr: -1},
+		Case{name: "TrailingCR", input: "field1,field2\r", fpr: -1},
+		Case{name: "QuotedTrailingCR", input: "\"field\"\r", fpr: -1},
+		Case{name: "QuotedTrailingCRCR", input: "\"field\"\r\r", fpr: -1},
+		Case{name: "FieldCR", input: "field\rfield\r", fpr: -1},
+		Case{name: "FieldCRCR", input: "field\r\rfield\r\r", fpr: -1},
+		Case{name: "FieldCRCRLF", input: "field\r\r\nfield\r\r\n", fpr: -1},
+		Case{name: "FieldCRCRLFCR", input: "field\r\r\n\rfield\r\r\n\r", fpr: -1},
+		Case{name: "FieldCRCRLFCRCR", input: "field\r\r\n\r\rfield\r\r\n\r\r", fpr: -1},
+		Case{name: "MultiFieldCRCRLFCRCR", input: "field1,field2\r\r\n\r\rfield1,field2\r\r\n\r\r,", fpr: -1},
+		Case{name: "QuotedFieldMultipleLF", input: "\"\n\n\n\n\"", fpr: -1},
+		Case{name: "MultipleCRLF", input: "\r\n\r\n\r\n\r\n", fpr: -1},
+		Case{name: "HugeLines", input: huge, comment: '#', fpr: -1},
+		Case{name: "QuoteWithTrailingCRLF", input: "\"foo\"bar\"\r\n", fpr: -1},
+		Case{name: "LazyQuoteWithTrailingCRLF", input: "\"foo\"bar\"\r\n", fpr: -1, lazy: true},
+		Case{name: "DoubleQuoteWithTrailingCRLF", input: "\"foo\"\"bar\"\r\n", fpr: -1},
+		Case{name: "EvenQuotes", input: `""""""""`, fpr: -1},
+		Case{name: "OddQuotes", input: `"""""""`, fpr: -1},
+		Case{name: "LazyOddQuotes", input: `"""""""`, fpr: -1, lazy: true},
+		Case{name: "BadComma1", input: "", comma: '\n', fpr: -1},
+		Case{name: "BadComma2", input: "", comma: '\r', fpr: -1},
+		Case{name: "BadComma3", input: "", comma: '"', fpr: -1},
+		Case{name: "BadComment1", input: "", comment: '\n', fpr: -1},
+		Case{name: "BadComment2", input: "", comment: '\r', fpr: -1},
+		Case{name: "BadCommaComment", input: "", comma: 'X', comment: 'X', fpr: -1},
+	}
+}
+
+// writeCases are Go's writer_test cases.
+fn writeCases() []WCase {
+	return []WCase{
+		WCase{input: [][]str{{"abc"}}},
+		WCase{input: [][]str{{"abc"}}, crlf: true},
+		WCase{input: [][]str{{`"abc"`}}},
+		WCase{input: [][]str{{`a"b`}}},
+		WCase{input: [][]str{{`"a"b"`}}},
+		WCase{input: [][]str{{" abc"}}},
+		WCase{input: [][]str{{"abc,def"}}},
+		WCase{input: [][]str{{"abc", "def"}}},
+		WCase{input: [][]str{{"abc"}, {"def"}}},
+		WCase{input: [][]str{{"abc\ndef"}}},
+		WCase{input: [][]str{{"abc\ndef"}}, crlf: true},
+		WCase{input: [][]str{{"abc\rdef"}}, crlf: true},
+		WCase{input: [][]str{{"abc\rdef"}}},
+		WCase{input: [][]str{{""}}},
+		WCase{input: [][]str{{"", ""}}},
+		WCase{input: [][]str{{"", "", ""}}},
+		WCase{input: [][]str{{"", "", "a"}}},
+		WCase{input: [][]str{{"", "a", ""}}},
+		WCase{input: [][]str{{"", "a", "a"}}},
+		WCase{input: [][]str{{"a", "", ""}}},
+		WCase{input: [][]str{{"a", "", "a"}}},
+		WCase{input: [][]str{{"a", "a", ""}}},
+		WCase{input: [][]str{{"a", "a", "a"}}},
+		WCase{input: [][]str{{`\.`}}},
+		WCase{input: [][]str{{"x09\x41\xb4\x1c", "aktau"}}},
+		WCase{input: [][]str{{",x09\x41\xb4\x1c", "aktau"}}},
+		WCase{input: [][]str{{"a", "a", ""}}, comma: '|'},
+		WCase{input: [][]str{{",", ",", ""}}, comma: '|'},
+		WCase{input: [][]str{{"foo"}}, comma: '"'},
+	}
+}
+
+// digest is the rolling checksum of a record set, for the seeded round trip.
+fn digest(recs [][]str) i64 {
+	mut h i64 = 1
+	for _, rec in recs {
+		for _, f in rec {
+			h = h * 1000003 % 1000000007
+			h = (h + len(f) + 1) % 1000000007
+			for i in 0..len(f) {
+				h = h * 1000003 % 1000000007
+				h = (h + i64(f[i]) + 1) % 1000000007
+			}
+		}
+		h = h * 1000003 % 1000000007
+		h = (h + 7) % 1000000007
+	}
+	return h
+}
+
+// sameRecords compares two record sets field by field.
+fn sameRecords(a [][]str, b [][]str) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i in 0..len(a) {
+		if len(a[i]) != len(b[i]) {
+			return false
+		}
+		for j in 0..len(a[i]) {
+			if a[i][j] != b[i][j] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// randomRecords makes n records of random fields that hold separators, quotes, newlines and
+// UTF-8 (no "\r\n", which the format normalizes to "\n" by design).
+fn randomRecords(seed u64, n i64, alphabet str) [][]str {
+	mut r = dice.New(seed)
+	mut recs = make([][]str, 0, n)
+	for i in 0..n {
+		let nf = i64(r.Intn(5)) + 1
+		mut rec = make([]str, 0, nf)
+		for j in 0..nf {
+			let length = i64(r.Intn(20))
+			mut f = r.Str(length, alphabet)
+			if nf == 1 && len(f) == 0 {
+				// A record of one empty field would be a blank line, which the format ignores.
+				f = "x"
+			}
+			rec = append(rec, f)
+		}
+		recs = append(recs, rec)
+	}
+	return recs
+}
+
+// arenaCount streams path in arenas and returns the record and field-byte counts.
+fn arenaCount(path str) !(i64, i64) {
+	let f = try flume.Open(path)
+	mut r = ledger.NewStream(f)
+	r.Comment = '#'
+	mut records i64 = 0
+	mut bytes i64 = 0
+	for {
+		let n = try arena {
+			mut done = false
+			let rec = r.Read() catch err {
+				if fault.Is(err, ledger.Done) {
+					done = true
+				} else {
+					fail err
+				}
+				[]str{}
+			}
+			mut sum i64 = 0
+			for _, field in rec {
+				sum += len(field)
+			}
+			if done {
+				sum = -1
+			}
+			sum
+		}
+		if n < 0 {
+			break
+		}
+		records += 1
+		bytes += n
+	}
+	return records, bytes
+}
+
+fn main() {
+	// Go's reader_test and writer_test cases.
+	for _, c in textCases() {
+		runCase(c)
+	}
+	for n, c in writeCases() {
+		mut w = ledger.NewWriter()
+		w.UseCRLF = c.crlf
+		if c.comma != 0 {
+			w.Comma = c.comma
+		}
+		mut kind = "-"
+		w.WriteAll(c.input) catch err {
+			if fault.Is(err, ledger.ErrInvalidDelim) {
+				kind = "delim"
+			} else {
+				kind = "other"
+			}
+		}
+		say.Line("write", n, "out=" + hex(w.String()), "err=" + kind)
+	}
+
+	// Error identity and exact messages.
+	mut r = ledger.NewReader("a,\"b\nc\"d,e")
+	let (_, f1) = r.Read()
+	say.Line("fault quote", f1, fault.Is(f1, ledger.ErrQuote))
+	r = ledger.NewReader("a \"x\",b")
+	let (_, f2) = r.Read()
+	say.Line("fault bare", f2, fault.Is(f2, ledger.ErrBareQuote), fault.Is(f2, ledger.ErrQuote))
+	r = ledger.NewReader("a,b\nc,d,e")
+	let (rx, f3) = r.Read()
+	let (_, f4) = r.Read()
+	say.Line("fault count", f3 == nil, show(rx[0]), f4, fault.Is(f4, ledger.ErrFieldCount), fault.Is(f4, ledger.Done))
+	r = ledger.NewReader("x")
+	r.Comma = '"'
+	let (_, f5) = r.Read()
+	say.Line("fault delim", f5, fault.Is(f5, ledger.ErrInvalidDelim))
+	r = ledger.NewReader("ok\n")
+	let (_, ok1) = r.Read()
+	let (_, f7) = r.Read()
+	say.Line("done", ok1 == nil, f7, fault.Is(f7, ledger.Done))
+
+	// Pos, ReadAll and TrimBOM.
+	r = ledger.NewReader("  a,b\r\nc,\"d\ne\"\n")
+	r.TrimLeadingSpace = true
+	let rec1 = r.Read() catch err {
+		say.Line("rec1 fault", err)
+		[]str{}
+	}
+	let (p1l, p1c) = r.Pos()
+	let rec2 = r.Read() catch err {
+		say.Line("rec2 fault", err)
+		[]str{}
+	}
+	let (p2l, p2c) = r.Pos()
+	say.Line("pos1", p1l, p1c, show(rec1[0]))
+	say.Line("pos2", p2l, p2c, show(rec2[1]))
+	r = ledger.NewReader("a,b\n\n#c\nd,e")
+	r.Comment = '#'
+	let all = r.ReadAll() catch err {
+		say.Line("readall fault", err)
+		[][]str{}
+	}
+	say.Line("readall", len(all), show(all[0][0]), show(all[1][1]))
+	r = ledger.NewReader("a,b\n")
+	let (all2, e2) = r.ReadAll()
+	let (rpl, rpc) = r.Pos()
+	say.Line("readall2", e2 == nil, len(all2), rpl, rpc)
+	say.Line("bom", show(ledger.TrimBOM("\xef\xbb\xbfa,b")), show(ledger.TrimBOM("a,b")), show(ledger.TrimBOM("\xef\xbb")))
+	r = ledger.NewReader("\xef\xbb\xbfa,b\n")
+	let rec3 = r.Read() catch err {
+		say.Line("rec3 fault", err)
+		[]str{}
+	}
+	say.Line("bom reader", show(rec3[0]))
+
+	// Streaming: the same text through a file, arenas included, and the window limit.
+	let path = "/tmp/tin-test-ledger.txt"
+	let stream = "a,b,\"c,d\"\r\n\"e\nf\",g,h\n#comment\nlast,m,n\n"
+	let w = flume.Create(path) catch err {
+		say.Line("create fault", err)
+		return
+	}
+	w.Str(stream)
+	w.Close() catch err {
+		say.Line("close fault", err)
+		return
+	}
+	let sf = flume.Open(path) catch err {
+		say.Line("open fault", err)
+		return
+	}
+	mut sr = ledger.NewStream(sf)
+	sr.Comment = '#'
+	mut sn i64 = 0
+	stop: for {
+		match step(mut sr) {
+			Ok(rec) => {
+				mut line = say.Fmt("stream %d", sn)
+				for _, f in rec {
+					line += " " + show(f)
+				}
+				say.Line(line)
+			}
+			Err(err) => {
+				say.Line("stream err", err)
+				break stop
+			}
+			End => {
+				say.Line("stream eof", sn)
+				break stop
+			}
+		}
+		sn += 1
+	}
+	let (sc, sb, serr) = arenaCount(path)
+	say.Line("stream arena", sc, sb, serr)
+	let longf = flume.Create(path) catch err {
+		say.Line("create2 fault", err)
+		return
+	}
+	longf.Str(twine.Repeat("z", 66) + "\nok\n")
+	longf.Close() catch err {
+		say.Line("close2 fault", err)
+		return
+	}
+	let lf = flume.Open(path) catch err {
+		say.Line("open2 fault", err)
+		return
+	}
+	mut lr = ledger.NewStreamSize(lf, 64)
+	let lrec = lr.Read() catch err {
+		say.Line("window", err)
+		[]str{}
+	}
+	if len(lrec) > 0 {
+		say.Line("window ok", show(lrec[0]))
+	}
+	// 64 bytes fit a 63-byte line and its newline, and one more byte does not.
+	let fitf = flume.Create(path) catch err {
+		say.Line("create3 fault", err)
+		return
+	}
+	fitf.Str(twine.Repeat("y", 63) + "\n")
+	fitf.Close() catch err {
+		say.Line("close3 fault", err)
+		return
+	}
+	let ff = flume.Open(path) catch err {
+		say.Line("open3 fault", err)
+		return
+	}
+	mut fr = ledger.NewStreamSize(ff, 64)
+	let (frec, ferr) = fr.Read()
+	if ferr == nil {
+		say.Line("window fit", len(frec), len(frec[0]))
+	} else {
+		say.Line("window fit fault", ferr)
+	}
+
+	// A seeded round trip of 10,000 records through Writer and Reader.
+	let alphabet = "abcXYZ019 \t\"',;é🙂\n"
+	let want = randomRecords(42, 10000, alphabet)
+	mut w2 = ledger.NewWriter()
+	w2.WriteAll(want) catch err {
+		say.Line("roundtrip write fault", err)
+		return
+	}
+	let csv = w2.String()
+	mut r2 = ledger.NewReader(csv)
+	r2.FieldsPerRecord = -1
+	let got = r2.ReadAll() catch err {
+		say.Line("roundtrip read fault", err)
+		[][]str{}
+	}
+	say.Line("roundtrip", len(got), sameRecords(want, got), digest(want) == digest(got))
+	quarry.Remove(path) catch err {
+		say.Line("remove fault", err)
+	}
+}

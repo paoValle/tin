@@ -169,6 +169,24 @@ fn (r mut Reader) Byte() (u8, bool) {
 	return c, true
 }
 
+// Read fills buf with the next buffered bytes, waiting for them, and returns how many it wrote:
+// 0 at the end. It is what makes a flume.Reader an io.Reader (ledger.NewStream).
+fn (r mut Reader) Read(buf mut []u8) !i64 {
+	if len(buf) == 0 {
+		return 0
+	}
+	if r.pos >= r.fill && !r.more() {
+		if r.err != nil {
+			fail r.err
+		}
+		return 0
+	}
+	let n = min(len(buf), r.fill-r.pos)
+	copy(buf[0:n], r.buf[r.pos:r.pos+n])
+	r.pos += n
+	return n
+}
+
 // ReadAll returns everything left.
 fn (r mut Reader) ReadAll() !str {
 	for r.more() {

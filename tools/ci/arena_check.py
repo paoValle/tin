@@ -5,6 +5,9 @@ in request handlers that wait inside them interleave on one core with correct an
 The fixture (tools/ci/fixtures/arenas.tin, edition 1) writes every page of about 8 MB per
 step. Without arenas the steps pile up in the pool, which the check uses as a control: the
 measurement must see that growth, so a flat arena run is not a measurement that sees nothing.
+The check also streams a generated 1 GiB CSV file through ledger.NewStream with every read in
+an arena (fixture tools/ci/fixtures/ledger_stream.tin): the reader's fixed 64 KiB window makes
+the per-record memory arena memory, so it is released as the loop goes.
 Peak RSS is Linux acceptance (toolchain/docs/CI.md); macOS runs everything and reports the numbers.
 """
 import os
@@ -77,6 +80,62 @@ def handlers(port, server):
         assert peaks[-1] - peaks[0] < 32 * MIB, 'RSS grew across rounds: %s' % peaks
 
 
+def csv_streaming(out):
+    """A generated 1 GiB CSV file through ledger.NewStream, every Read in an arena (#572).
+
+    The fixture (tools/ci/fixtures/ledger_stream.tin) counts the records and field bytes over the
+    file with each read in an arena, so the reader's per-record memory is released as it goes; a
+    fixed window is what makes that possible, and a line longer than the window must fail.
+    """
+    exe = out / 'ledger_stream'
+    subprocess.run([str(ROOT / 'bin/tinc'), '-edition', '1', '-o', str(exe),
+                    'tools/ci/fixtures/ledger_stream.tin'],
+                   cwd=ROOT, env=dict(os.environ, TIN_ROOT=str(ROOT)), check=True)
+    path = out / 'stream.csv'
+    pad = 'x' * 100
+    records, field_bytes = 1150000, 0
+    with path.open('wb') as f:
+        for i in range(records):
+            row = []
+            for j in range(8):
+                v = 'f%07d-%02d-%s' % (i, j, pad)
+                if i % 1000 == 0 and j == 0:
+                    v += ',tail'
+                    row.append('"%s"' % v)
+                elif i % 997 == 0 and j == 1:
+                    v = 'line%d\nsecond' % i
+                    row.append('"%s"' % v)
+                else:
+                    row.append(v)
+                field_bytes += len(v)
+            f.write((','.join(row) + '\r\n').encode())
+    p = subprocess.Popen([str(exe)], stdout=subprocess.PIPE,
+                         env=dict(os.environ, LEDGER_STREAM_FILE=str(path), TIN_CORES='1'))
+    got = p.stdout.read()
+    _, status, usage = os.wait4(p.pid, 0)
+    p.stdout.close()
+    p.returncode = os.waitstatus_to_exitcode(status)
+    assert p.returncode == 0, (p.returncode, got)
+    want = b'records %d bytes %d\n' % (records, field_bytes)
+    assert got == want, (got[:200], want[:200])
+    peak = usage.ru_maxrss if sys.platform == 'darwin' else usage.ru_maxrss * 1024
+    print('CSV: %d records, %d field bytes, 1 GiB in a 64 KiB window; peak RSS %.1f MiB'
+          % (records, field_bytes, peak / MIB))
+    if sys.platform == 'linux':
+        assert peak < 64 * MIB, 'CSV streaming peak RSS %d over 64 MiB' % peak
+        print('CSV streaming: peak RSS stays under 64 MiB (Linux)')
+    path.unlink()
+    path.write_bytes(b'a' * 80000 + b'\nok,ok\n')
+    p = subprocess.Popen([str(exe)], stdout=subprocess.PIPE,
+                         env=dict(os.environ, LEDGER_STREAM_FILE=str(path), TIN_CORES='1'))
+    got = p.stdout.read()
+    p.wait()
+    p.stdout.close()
+    assert got.startswith(b'fault ledger: line longer than 65536 bytes'), got
+    print('CSV: an 80 KiB line stops inside the 64 KiB window')
+    path.unlink()
+
+
 def main():
     out = ROOT / 'bin/ci/arenas'
     out.mkdir(parents=True, exist_ok=True)
@@ -99,6 +158,7 @@ def main():
             except subprocess.TimeoutExpired:
                 server.kill()
                 server.wait()
+    csv_streaming(out)
 
 
 if __name__ == '__main__':

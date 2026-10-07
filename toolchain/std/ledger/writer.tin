@@ -1,0 +1,96 @@
+package ledger
+
+import "fault"
+import "glyph"
+import "twine"
+
+// Writer writes records in CSV form into a buffer, like Go's csv.Writer. Set the exported
+// fields before the first Write.
+type Writer struct {
+	Comma   u8   // field delimiter (default ',', set by NewWriter)
+	UseCRLF bool // end lines with "\r\n" instead of "\n"
+
+	buf twine.Builder
+}
+
+// NewWriter returns a Writer with Comma set to ','.
+fn NewWriter() Writer {
+	return Writer{Comma: ',', buf: twine.NewBuilder(256)}
+}
+
+// Write appends one record, quoting fields that hold the delimiter, a quote, a newline or a
+// leading space, and doubling quotes, as Go's encoding/csv does.
+fn (w mut Writer) Write(fields []str) ! {
+	if !validDelim(w.Comma) {
+		fail fault.Wrap(ErrInvalidDelim, "ledger")
+	}
+	for i, f in fields {
+		if i > 0 {
+			w.buf.Byte(w.Comma)
+		}
+		if !w.needsQuotes(f) {
+			w.buf.Str(f)
+			continue
+		}
+		w.buf.Byte('"')
+		mut rest = f
+		for len(rest) > 0 {
+			let j = twine.IndexAny(rest, "\"\r\n")
+			if j < 0 {
+				w.buf.Str(rest)
+				break
+			}
+			w.buf.Str(rest[0:j])
+			let c = rest[j]
+			if c == '"' {
+				w.buf.Str(`""`)
+			} else if c == '\r' {
+				if !w.UseCRLF {
+					w.buf.Byte('\r')
+				}
+			} else if w.UseCRLF {
+				w.buf.Str("\r\n")
+			} else {
+				w.buf.Byte('\n')
+			}
+			rest = rest[j+1:len(rest)]
+		}
+		w.buf.Byte('"')
+	}
+	if w.UseCRLF {
+		w.buf.Str("\r\n")
+	} else {
+		w.buf.Byte('\n')
+	}
+}
+
+// WriteAll writes every record in order.
+fn (w mut Writer) WriteAll(records [][]str) ! {
+	for _, rec in records {
+		try w.Write(rec)
+	}
+}
+
+// String returns the bytes written so far as a str.
+fn (w Writer) String() str {
+	return w.buf.String()
+}
+
+// needsQuotes reports whether f must be quoted: it holds the delimiter, a quote or a newline,
+// starts with white space, or is the data terminator `\.`; the empty string is not quoted.
+fn (w Writer) needsQuotes(f str) bool {
+	if len(f) == 0 {
+		return false
+	}
+	if f == `\.` {
+		return true
+	}
+	for i in 0..len(f) {
+		let c = f[i]
+		if c == w.Comma || c == '"' || c == '\r' || c == '\n' {
+			return true
+		}
+	}
+	let (r, _) = glyph.DecodeRune(f, 0)
+	return glyph.IsSpace(r)
+}

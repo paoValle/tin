@@ -1,0 +1,249 @@
+bom 612c62 612c62 efbb
+bom reader efbbbf61
+case BadBareQuote
+case BadComma1
+case BadComma2
+case BadComma3
+case BadCommaComment
+case BadComment1
+case BadComment2
+case BadDoubleQuotes
+case BadFieldCount
+case BadFieldCount1
+case BadFieldCountMultiple
+case BadTrailingQuote
+case BareCR
+case BareDoubleQuotes
+case BareQuotes
+case BinaryBlobField
+case BlankLine
+case BlankLineFieldCount
+case CRLF
+case CRLFInQuotedField
+case CommaFieldTest
+case Comment
+case DoubleQuoteWithTrailingCRLF
+case EvenQuotes
+case ExtraneousQuote
+case FieldCR
+case FieldCRCR
+case FieldCRCRLF
+case FieldCRCRLFCR
+case FieldCRCRLFCRCR
+case FieldCount
+case HugeLines
+case LazyOddQuotes
+case LazyQuoteWithTrailingCRLF
+case LazyQuotes
+case LeadingSpace
+case MultiFieldCRCRLFCRCR
+case MultiLine
+case MultipleCRLF
+case NoComment
+case NoEOLTest
+case NotTrailingComma3
+case OddQuotes
+case QuoteWithTrailingCRLF
+case QuotedFieldMultipleLF
+case QuotedTrailingCR
+case QuotedTrailingCRCR
+case RFC4180test
+case ReadAllReuseRecord
+case Semicolon
+case Simple
+case StartLine1
+case StartLine2
+case TrailingCR
+case TrailingCommaEOF
+case TrailingCommaEOL
+case TrailingCommaIneffective1
+case TrailingCommaLine3
+case TrailingCommaSpaceEOF
+case TrailingCommaSpaceEOL
+case TrimQuote
+case TrimSpace
+done true ledger: end of input true
+fault bare ledger: line 1, column 3: bare " in non-quoted field true false
+fault count true 61 ledger: record on line 2: wrong number of fields true false
+fault delim ledger: invalid field or comment delimiter true
+fault quote ledger: record on line 1; line 2, column 2: extraneous or missing " in quoted-field true
+pos1 1 3 61
+pos2 2 1 640a65
+read 0 eof
+read 0 err ledger: invalid field or comment delimiter
+read 0 err ledger: invalid field or comment delimiter
+read 0 err ledger: invalid field or comment delimiter
+read 0 err ledger: invalid field or comment delimiter
+read 0 err ledger: invalid field or comment delimiter
+read 0 err ledger: invalid field or comment delimiter
+read 0 err ledger: line 1, column 11: bare " in non-quoted field
+read 0 err ledger: line 1, column 2: bare " in non-quoted field
+read 0 err ledger: line 1, column 3: bare " in non-quoted field
+read 0 err ledger: line 1, column 4: extraneous or missing " in quoted-field
+read 0 err ledger: line 1, column 5: extraneous or missing " in quoted-field
+read 0 err ledger: line 1, column 7: extraneous or missing " in quoted-field
+read 0 err ledger: line 1, column 8: extraneous or missing " in quoted-field
+read 0 err ledger: record on line 1: wrong number of fields
+read 0 err ledger: record on line 1; line 2, column 2: extraneous or missing " in quoted-field
+read 0 ok pos=10001:1 nf=2 L5000 L5000
+read 0 ok pos=1:1 nf=1 0a0a0a0a
+read 0 ok pos=1:1 nf=1 222222
+read 0 ok pos=1:1 nf=1 222222
+read 0 ok pos=1:1 nf=1 6669656c64
+read 0 ok pos=1:1 nf=1 6669656c640d
+read 0 ok pos=1:1 nf=1 6669656c640d
+read 0 ok pos=1:1 nf=1 6669656c640d
+read 0 ok pos=1:1 nf=1 6669656c640d0d6669656c640d
+read 0 ok pos=1:1 nf=1 6669656c640d6669656c64
+read 0 ok pos=1:1 nf=1 666f6f22626172
+read 0 ok pos=1:1 nf=1 666f6f22626172
+read 0 ok pos=1:1 nf=2 61 62
+read 0 ok pos=1:1 nf=2 61 62
+read 0 ok pos=1:1 nf=2 61 62
+read 0 ok pos=1:1 nf=2 61222262 63
+read 0 ok pos=1:1 nf=2 6669656c6431 6669656c6432
+read 0 ok pos=1:1 nf=2 6669656c6431 6669656c64320d
+read 0 ok pos=1:1 nf=2 78303941b41c 616b746175
+read 0 ok pos=1:1 nf=3 2061 202062 20202063
+read 0 ok pos=1:1 nf=3 2331 32 33
+read 0 ok pos=1:1 nf=3 236669656c6431 6669656c6432 6669656c6433
+read 0 ok pos=1:1 nf=3 41 48656c6c6f0a4869 42
+read 0 ok pos=1:1 nf=3 61 62 
+read 0 ok pos=1:1 nf=3 61 62 63
+read 0 ok pos=1:1 nf=3 61 62 63
+read 0 ok pos=1:1 nf=3 61 62 63
+read 0 ok pos=1:1 nf=3 61 62 63
+read 0 ok pos=1:1 nf=3 61 62 63
+read 0 ok pos=1:1 nf=3 61 62 63
+read 0 ok pos=1:1 nf=3 61 62 63
+read 0 ok pos=1:1 nf=3 61 62 63
+read 0 ok pos=1:1 nf=3 61 62 63
+read 0 ok pos=1:1 nf=3 61 620d63 64
+read 0 ok pos=1:1 nf=3 612022776f726422 312232 6122
+read 0 ok pos=1:1 nf=3 74776f0a6c696e65 6f6e65206c696e65 74687265650a6c696e650a6669656c64
+read 0 ok pos=1:1 nf=4 61 62 63 
+read 0 ok pos=1:1 nf=4 61 62 63 
+read 0 ok pos=1:1 nf=4 61 62 63 
+read 0 ok pos=1:1 nf=4 61 62 63 
+read 0 ok pos=1:1 nf=4 61 62 63 20
+read 0 ok pos=1:1 nf=4 612022776f726422 312232 6122 62
+read 0 ok pos=1:1 nf=4 78 79 7a 77
+read 0 ok pos=1:2 nf=3 61 2062 63
+read 0 ok pos=1:2 nf=3 61 62 63
+read 0 ok pos=2:1 nf=3 61 62 63
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 eof
+read 1 err ledger: record on line 2: wrong number of fields
+read 1 err ledger: record on line 2: wrong number of fields
+read 1 err ledger: record on line 2; line 4, column 3: extraneous or missing " in quoted-field
+read 1 ok pos=2:1 nf=1 0d0d6669656c640d
+read 1 ok pos=2:1 nf=1 0d6669656c640d
+read 1 ok pos=2:1 nf=1 6669656c640d
+read 1 ok pos=2:1 nf=2 0d0d6669656c6431 6669656c64320d
+read 1 ok pos=2:1 nf=2 63 64
+read 1 ok pos=2:1 nf=2 63 64
+read 1 ok pos=2:1 nf=2 64 65
+read 1 ok pos=2:1 nf=3 61 62 63
+read 1 ok pos=2:1 nf=3 616161 62620a62 636363
+read 1 ok pos=2:1 nf=3 63 64 65
+read 1 ok pos=2:1 nf=3 64 65 66
+read 1 ok pos=2:1 nf=4 78 79 7a 
+read 1 ok pos=3:1 nf=3 64 65 66
+read 1 ok pos=3:1 nf=3 64 65 66
+read 10 eof
+read 2 eof
+read 2 eof
+read 2 eof
+read 2 eof
+read 2 eof
+read 2 eof
+read 2 eof
+read 2 eof
+read 2 eof
+read 2 eof
+read 2 err ledger: record on line 3: wrong number of fields
+read 2 ok pos=3:1 nf=1 0d
+read 2 ok pos=3:1 nf=2 0d0d 
+read 2 ok pos=3:1 nf=3 67 6869 
+read 2 ok pos=3:1 nf=4 78 79  
+read 2 ok pos=4:1 nf=3 612c61 62226262 636363
+read 3 eof
+read 3 eof
+read 3 eof
+read 3 eof
+read 3 ok pos=4:1 nf=4 78   
+read 3 ok pos=5:1 nf=3 7a7a7a 797979 787878
+read 4 eof
+read 4 ok pos=5:1 nf=4    
+read 5 ok pos=6:1 nf=4 78 79 7a 77
+read 6 ok pos=7:1 nf=4 78 79 7a 
+read 7 ok pos=8:1 nf=4 78 79  
+read 8 ok pos=9:1 nf=4 78   
+read 9 ok pos=10:1 nf=4    
+readall 2 61 65
+readall2 true 1 1 1
+roundtrip 10000 true true
+stream 0 61 62 632c64
+stream 1 650a66 67 68
+stream 2 6c617374 6d 6e
+stream arena 3 16 <nil>
+stream eof 3
+window fit 1 63
+window ledger: line longer than 64 bytes: limit exceeded
+write 0 out=6162630a err=-
+write 1 out=6162630d0a err=-
+write 10 out=226162630d0a646566220d0a err=-
+write 11 out=22616263646566220d0a err=-
+write 12 out=226162630d646566220a err=-
+write 13 out=0a err=-
+write 14 out=2c0a err=-
+write 15 out=2c2c0a err=-
+write 16 out=2c2c610a err=-
+write 17 out=2c612c0a err=-
+write 18 out=2c612c610a err=-
+write 19 out=612c2c0a err=-
+write 2 out=2222226162632222220a err=-
+write 20 out=612c2c610a err=-
+write 21 out=612c612c0a err=-
+write 22 out=612c612c610a err=-
+write 23 out=225c2e220a err=-
+write 24 out=78303941b41c2c616b7461750a err=-
+write 25 out=222c78303941b41c222c616b7461750a err=-
+write 26 out=617c617c0a err=-
+write 27 out=2c7c2c7c0a err=-
+write 28 out= err=delim
+write 3 out=2261222262220a err=-
+write 4 out=222222612222622222220a err=-
+write 5 out=2220616263220a err=-
+write 6 out=226162632c646566220a err=-
+write 7 out=6162632c6465660a err=-
+write 8 out=6162630a6465660a err=-
+write 9 out=226162630a646566220a err=-
