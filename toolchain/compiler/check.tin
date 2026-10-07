@@ -155,9 +155,36 @@ fn find_fn(name str) Fn {
 	return cast(Fn, 0)
 }
 
+// is_builtin_name reports whether name is a builtin function's (chk_builtin) or a builtin
+// type's (types_init). A top-level declaration of one would replace the builtin wherever the
+// name is looked up, the runtime's and the standard library's code included (#556).
+fn is_builtin_name(name str) bool {
+	if name == "append" || name == "bound" || name == "cap" || name == "cast" || name == "copy" || name == "delete" || name == "fail" || name == "fault" || name == "keep" || name == "len" {
+		return true
+	}
+	if name == "make" || name == "max" || name == "min" || name == "new" || name == "panic" || name == "print" || name == "println" || name == "reveal" || name == "same" {
+		return true
+	}
+	return name == "i8" || name == "i16" || name == "i32" || name == "i64" || name == "u8" || name == "u16" || name == "u32" || name == "u64" || name == "f32" || name == "f64" || name == "bool" || name == "str"
+}
+
+// unqualified is name without its package: "len" for "squash.len".
+fn unqualified(name str) str {
+	mut i = len(name) - 1
+	for i >= 0 && name[i] != '.' {
+		i = i - 1
+	}
+	return name[i+1:]
+}
+
 fn declare_global(s Sym) {
 	if intrinsic_arity(s.name) >= 0 {
 		err_code_quoted(s.pos, "E102 BUILTIN_NAME", "", s.name, " is a builtin and cannot be redeclared")
+		return
+	}
+	if (s.kind != SYM_FUNC || cast(Fn, s.fn_).recv == 0) && is_builtin_name(unqualified(s.name)) {
+		// A method may take a builtin's name: it is reached through its receiver only.
+		err_code_quoted(s.pos, "E102 BUILTIN_NAME", "", unqualified(s.name), " is a builtin and cannot be redeclared")
 		return
 	}
 	let prev = lookup_global(s.name)
@@ -591,7 +618,10 @@ fn check() {
 		let d = prog_types[i]
 		set_file(d.file)
 		let q = qual(ck_pkg, d.name)
-		if cast(i64, d.tparams) != 0 {
+		if is_builtin_name(d.name) {
+			// Not declared, so the builtin keeps the name everywhere (#556).
+			err_code_quoted(d.pos, "E102 BUILTIN_NAME", "", d.name, " is a builtin and cannot be redeclared")
+		} else if cast(i64, d.tparams) != 0 {
 		} else if cast(Node, d.type_).kind == TX_STRUCT {
 			name_type(q, ty_new(K_STRUCT, q))
 		}
@@ -602,7 +632,7 @@ fn check() {
 		let d = prog_types[i]
 		set_file(d.file)
 		let q = qual(ck_pkg, d.name)
-		if cast(i64, d.tparams) != 0 {
+		if cast(i64, d.tparams) != 0 || is_builtin_name(d.name) {
 		} else if cast(Node, d.type_).kind == TX_STRUCT {
 			resolve_fields(cast(Ty, find_type(q)), cast(TypeExpr, d.type_))
 			layout_struct(cast(Ty, find_type(q)))

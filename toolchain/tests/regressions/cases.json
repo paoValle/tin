@@ -877,5 +877,14 @@
       "exit": 1,
       "stderr_contains": "E046 EMPTY_TYPE_PARAMS"
     }
+  },
+  {
+    "source": "builtin-name-min.tin",
+    "issue": 556,
+    "expected": {
+      "phase": "compile",
+      "exit": 1,
+      "stderr_contains": "E102 BUILTIN_NAME: 'min' is a builtin and cannot be redeclared"
+    }
   }
 ]

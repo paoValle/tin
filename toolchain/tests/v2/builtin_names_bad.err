@@ -1,0 +1,5 @@
+toolchain/tests/v2/builtin_names_bad.tin:16:6: error E102 BUILTIN_NAME: 'str' is a builtin and cannot be redeclared
+toolchain/tests/v2/builtin_names_bad.tin:8:1: error E102 BUILTIN_NAME: 'min' is a builtin and cannot be redeclared
+toolchain/tests/v2/builtin_names_bad.tin:20:1: error E102 BUILTIN_NAME: 'f64' is a builtin and cannot be redeclared
+toolchain/tests/v2/builtin_names_bad.tin:14:7: error E102 BUILTIN_NAME: 'append' is a builtin and cannot be redeclared
+toolchain/tests/v2/builtin_names_bad.tin:12:5: error E102 BUILTIN_NAME: 'len' is a builtin and cannot be redeclared

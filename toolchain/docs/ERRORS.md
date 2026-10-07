@@ -647,14 +647,20 @@ Fix: rename one of the declarations, or merge them into one.
 
 ### E102 BUILTIN_NAME
 
-The compiler's intrinsics (`load8`, `store8` and the names that start with `__`, which the
-standard library uses) are names of their own; a declaration cannot take one of them.
+The builtins (`len`, `cap`, `append`, `copy`, `delete`, `make`, `new`, `min`, `max`,
+`panic`, `print`, `println`, `cast`, `keep`, `bound`, `fault`, `fail`, `reveal`, `same`), the
+builtin types (`i8` to `u64`, `f32`, `f64`, `bool`, `str`) and the compiler's intrinsics
+(`load8`, `store8` and the names that start with `__`, which the standard library uses) are
+names of their own: a top-level function, global, constant or type cannot take one of them.
+Such a declaration would replace the builtin wherever the name is looked up, in the runtime
+and the standard library too. A method may use one of these names, since it is reached through
+its receiver, and a local variable or parameter may shadow one inside its own scope.
 
 ```tin edition=1
 package main
 
-fn load8(p i64) i64 {
-	return p
+fn min(a i64, b i64) i64 {
+	return a + b
 }
 
 fn main() {
@@ -662,7 +668,7 @@ fn main() {
 ```
 
 ```text
-example.tin:3:1: error E102 BUILTIN_NAME: 'load8' is a builtin and cannot be redeclared
+example.tin:3:1: error E102 BUILTIN_NAME: 'min' is a builtin and cannot be redeclared
 ```
 
 Fix: give the declaration another name.
