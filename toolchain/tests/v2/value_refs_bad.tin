@@ -2,9 +2,9 @@ package main
 
 import "say"
 
-// #669: what a value struct with a str field cannot do yet. A capture by a function literal and an
-// arena block's value are E295 (the region rules for a kept one are in value_refs_escape_bad),
-// a slice field and a str in an inline array are E295 too, and an optional field has no ==.
+// #669: what a value struct with a str field cannot do yet: a func field and a str in an inline
+// array are E295, and an optional field has no == (the region rules for a kept one are in
+// value_refs_escape_bad).
 
 type Entry value struct {
 	key  str
@@ -12,7 +12,7 @@ type Entry value struct {
 }
 
 type Rows value struct {
-	ids []i64
+	ids fn() i64
 }
 
 type Codes value struct {
@@ -21,11 +21,5 @@ type Codes value struct {
 
 fn main() {
 	let e = Entry{key: "a"}
-	let f = fn() str {
-		return e.key
-	}
-	let v = arena {
-		Entry{key: "b"}
-	}
-	say.Line(f(), v.key, e == e)
+	say.Line(e == e)
 }

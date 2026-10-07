@@ -1,4 +1,4 @@
-toolchain/tests/v2/value_structs_bad.tin:14:8: error E295 NOT_YET: a value struct field of type []i64 is not built yet (#669): a value struct holds numbers, bool, str, pointer optionals and other value structs, and an inline array holds no str
+toolchain/tests/v2/value_structs_bad.tin:14:8: error E295 NOT_YET: a value struct field of type func() i64 is not built yet (#669): a value struct holds numbers, bool, str, slices, maps, structs, pointer optionals and other value structs, and an inline array holds none of the references
 toolchain/tests/v2/value_structs_bad.tin:34:3: error E701 NOT_MUT: cannot modify parameter 'p': declare it mut (a value struct parameter's bytes are its caller's)
 toolchain/tests/v2/value_structs_bad.tin:38:11: error E701 NOT_MUT: cannot modify parameter 'p': declare it mut (a value struct parameter's bytes are its caller's)
 toolchain/tests/v2/value_structs_bad.tin:39:2: error E701 NOT_MUT: cannot modify parameter 'p': declare it mut (a value struct parameter's bytes are its caller's)

@@ -332,16 +332,19 @@ argument, a result), so two names never share a value. (`value` is a contextual 
   u.b` ranges over a copy, and it compares, hashes, prints (`[a b c]`) and encodes to JSON as
   its elements do. It cannot be sliced or appended to. Outside a value struct `[N]T` keeps its
   meaning, a slice that starts with N zero elements.
-- A value struct holds numbers, `bool`, inline arrays of those, `str`, pointer optionals
-  (`?str`, `?Node`) and other value structs (#669). A `str` field starts as `""`, and copying
-  the value copies the field's word, so the string is shared as `str` values always are.
-  Stored into long-lived memory it follows the rule for its `str` fields: `keep` it first (E310
-  otherwise), and each long-lived slot that holds it (a global, a global slice's element, a
-  field of a kept object) counts what its fields point at, so a replaced value gives its
-  strings back. A function literal cannot capture one and an `arena` block cannot return one
-  yet. A slice, map, reference-struct or `dyn` field, a `str` in an inline
-  array, a map value, an optional value struct, a channel element and a `dyn` object of a
-  value struct are E295 too (#669, design/design_layouts.md).
+- A value struct holds numbers, `bool`, inline arrays of those, `str`, slices, maps, structs,
+  pointer optionals (`?str`, `?Node`) and other value structs (#669). A `str` field starts as
+  `""` and a slice field as an empty slice; a map or struct field cannot be nil, so a value
+  struct holding one has no zero value (E203 for `mut v V`, `make([]V, n)` and `[N]V`). Copying
+  the value copies each field's word, so strings, slices and objects are shared as they always
+  are; `type Tree value struct { kids []Tree }` is how a recursive value is built. Stored into
+  long-lived memory it follows the rule for its fields: `keep` it first (E310 otherwise), and
+  each long-lived slot that holds it (a global, a global slice's element, a field of a kept
+  object) counts what its fields point at, so a replaced value gives them back; a kept closure
+  that captured one keeps its fields, and an `arena` block's value has them copied out. A func
+  or `dyn` field,
+  a reference in an inline array, a map value, an optional value struct, a channel element and
+  a `dyn` object of a value struct are E295 (#669, design/design_layouts.md).
 
 ### Enums
 

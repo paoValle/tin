@@ -636,39 +636,10 @@ fn value_has_ref(t Ty) i64 {
 	for i < len(t.fields) {
 		let ft = cast(Ty, cast(Field, t.fields[i]).ty)
 		let fk = kind_of(ft)
-		if fk == K_STRING || (fk == K_OPT && opt_scalar(ft) == 0) || value_has_ref(ft) != 0 {
+		if fk == K_STRING || fk == K_SLICE || fk == K_MAP || (fk == K_STRUCT && is_value_struct(ft) == 0) || (fk == K_OPT && opt_scalar(ft) == 0) || value_has_ref(ft) != 0 {
 			return 1
 		}
 		i = i + 1
-	}
-	return 0
-}
-
-// holds_value_ref reports whether a value of type t is, or can reach, a value struct with a
-// reference field (#669): keep, globals and arenas cannot hold one yet.
-fn holds_value_ref(t Ty, seen []i64) i64 {
-	if cast(i64, t) == 0 || slice_has(seen, cast(i64, t)) != 0 {
-		return 0
-	}
-	if value_has_ref(t) != 0 {
-		return 1
-	}
-	seen = append(seen, cast(i64, t))
-	let k = kind_of(t)
-	if k == K_SLICE || k == K_OPT || k == K_CHAN {
-		return holds_value_ref(cast(Ty, t.elem), seen)
-	}
-	if k == K_MAP {
-		return i64(holds_value_ref(cast(Ty, t.key), seen) != 0 || holds_value_ref(cast(Ty, t.elem), seen) != 0)
-	}
-	if k == K_STRUCT {
-		mut i = 0
-		for i < len(t.fields) {
-			if holds_value_ref(cast(Ty, cast(Field, t.fields[i]).ty), seen) != 0 {
-				return 1
-			}
-			i = i + 1
-		}
 	}
 	return 0
 }

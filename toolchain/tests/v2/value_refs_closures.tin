@@ -1,0 +1,55 @@
+package main
+
+// #669: value structs with str fields captured by closures (a kept closure keeps the captured
+// value's strs) and returned from arena blocks (their strs are copied out of the arena), as one
+// value and as a slice of them.
+
+import "say"
+
+type Entry value struct {
+	key  str
+	n    i64
+	note ?str
+}
+
+type Pair value struct {
+	a Entry
+	b Entry
+}
+
+mut saved fn() str = fn() str {
+	return ""
+}
+
+fn build(n i64) {
+	let e = Entry{key: "key {n}", n: n, note: "note {n}"}
+	let p = Pair{a: e, b: Entry{key: "b{n}"}}
+	saved = keep(fn() str {
+		mut note = ""
+		if let t = e.note {
+			note = t
+		}
+		return "{e.key} {e.n} {note} {p.a.key} {p.b.key}"
+	})
+}
+
+fn main() {
+	build(7)
+	let local = Entry{key: "local"}
+	let f = fn(s str) str {
+		return local.key + s
+	}
+	let got = arena {
+		let bang = f("!")
+		let x = Entry{key: "made {bang}", n: 3}
+		Pair{a: x, b: Entry{key: f("?")}}
+	}
+	let es = arena {
+		mut out = []Entry{}
+		for i in 0..3 {
+			out = append(out, Entry{key: "e{i}", n: i})
+		}
+		out
+	}
+	say.Line(saved(), f("."), got.a.key, got.b.key, es[2].key, len(es))
+}

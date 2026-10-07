@@ -1,0 +1,33 @@
+package main
+
+import "say"
+
+// #669 step 4: a map or struct field cannot be nil, so a value struct holding one has no zero
+// value (E203 where one is needed), and a slice or map field has no == (E237).
+
+type Node struct {
+	v i64
+}
+
+type Row value struct {
+	name  str
+	owner Node
+}
+
+type Index value struct {
+	byName map[str]i64
+}
+
+type Bag value struct {
+	items []i64
+}
+
+fn main() {
+	mut r Row
+	let rows = make([]Row, 2)
+	let idx = make([]Index, 1)
+	let ok = Row{name: "a", owner: Node{v: 1}}
+	let half = Row{name: "b"}
+	let b = Bag{items: []i64{1}}
+	say.Line(r.name, len(rows), len(idx), ok.name, half.name, b == b)
+}

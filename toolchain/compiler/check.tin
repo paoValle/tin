@@ -649,6 +649,8 @@ fn array_make(pos i64, t Ty, n i64) i64 {
 	}
 	if (ek == K_STRUCT || ek == K_MAP || ek == K_FUNC) && is_value_struct(cast(Ty, t.elem)) == 0 {
 		err_code_type(pos, "E203 NO_ZERO_VALUE", "an array of ", t.elem, " would start with nil elements: use a slice and append")
+	} else if is_value_struct(cast(Ty, t.elem)) != 0 && value_no_zero(cast(Ty, t.elem)) != 0 {
+		err_code_type(pos, "E203 NO_ZERO_VALUE", "an array of ", t.elem, " would start with nil fields (a map or struct field cannot be nil): use a slice and append")
 	}
 	if ek == K_STRING {
 		return rt_call(pos, "rt_slice_make_str", args2(nn, mk_int(pos, n, ty_int)), cast(i64, t))
@@ -659,12 +661,6 @@ fn array_make(pos i64, t Ty, n i64) i64 {
 	return value_fill_strs(pos, rt_call(pos, "rt_slice_make", args3(nn, mk_int(pos, n, ty_int), mk_int(pos, elem_size(t), ty_int)), cast(i64, t)), t)
 }
 
-// global_value_ref reports a global of a type holding a value struct with a reference field,
-// which long-lived memory cannot count yet (#669).
-fn global_value_ref(pos i64, t i64) {
-	// Built (#669 step 2): long-lived slots count a value struct's str fields.
-}
-
 // value_fill_strs gives each element of the new slice made (of type t) "" in its str fields, when
 // they are value structs holding some (#669): a zeroed word is not a str.
 fn value_fill_strs(pos i64, made i64, t Ty) i64 {
@@ -673,26 +669,57 @@ fn value_fill_strs(pos i64, made i64, t Ty) i64 {
 		return made
 	}
 	mut offs = []i64{}
-	value_str_offsets(et, 0, offs)
+	mut slices = []i64{}
+	value_str_offsets(et, 0, offs, slices)
 	mut acc = made
 	mut i = 0
 	for i < len(offs) {
 		acc = rt_call(pos, "rt_slice_fill_str", args3(acc, mk_int(pos, elem_size(t), ty_int), mk_int(pos, offs[i], ty_int)), cast(i64, t))
 		i = i + 1
 	}
+	// A slice field starts as an empty slice of its own, as make([][]T, n)'s elements do.
+	i = 0
+	for i + 1 < len(slices) {
+		mut sargs = cast([]i64, args3(acc, mk_int(pos, elem_size(t), ty_int), mk_int(pos, slices[i], ty_int)))
+		sargs = append(sargs, mk_int(pos, slices[i + 1], ty_int))
+		acc = rt_call(pos, "rt_slice_fill_slices", cast(i64, sargs), cast(i64, t))
+		i = i + 2
+	}
 	return acc
 }
 
-// value_str_offsets adds the offsets of value struct t's str fields, nested ones too, at base.
-fn value_str_offsets(t Ty, base i64, offs []i64) {
+// value_no_zero is the type of a field of value struct t (nested ones too) that has no zero
+// value (a map or a struct, which cannot be nil), or 0 (#669).
+fn value_no_zero(t Ty) i64 {
+	mut i = 0
+	for i < len(t.fields) {
+		let ft = cast(Ty, cast(Field, t.fields[i]).ty)
+		let fk = kind_of(ft)
+		if fk == K_MAP || (fk == K_STRUCT && is_value_struct(ft) == 0) {
+			return cast(i64, ft)
+		}
+		if fk == K_STRUCT && is_value_struct(ft) != 0 && value_no_zero(ft) != 0 {
+			return value_no_zero(ft)
+		}
+		i = i + 1
+	}
+	return 0
+}
+
+// value_str_offsets adds the offsets of value struct t's str fields, nested ones too, at base,
+// and [offset, element size] of its slice fields.
+fn value_str_offsets(t Ty, base i64, offs []i64, slices []i64) {
 	mut i = 0
 	for i < len(t.fields) {
 		let ft = cast(Ty, cast(Field, t.fields[i]).ty)
 		let off = base + field_offset(t, i)
 		if kind_of(ft) == K_STRING {
 			offs = append(offs, off)
+		} else if kind_of(ft) == K_SLICE {
+			slices = append(slices, off)
+			slices = append(slices, elem_size(ft))
 		} else if kind_of(ft) == K_STRUCT && is_value_struct(ft) != 0 {
-			value_str_offsets(ft, off, offs)
+			value_str_offsets(ft, off, offs, slices)
 		}
 		i = i + 1
 	}
@@ -740,12 +767,12 @@ fn resolve_fields(st Ty, tx TypeExpr) {
 				ft = cast(Ty, ft.elem)
 			}
 			let fk = kind_of(ft)
-			let refok = i64(inline == 0 && (fk == K_STRING || (fk == K_OPT && opt_scalar(ft) == 0 && is_value_struct(cast(Ty, ft.elem)) == 0)))
+			let refok = i64(inline == 0 && (fk == K_STRING || fk == K_SLICE || fk == K_MAP || (fk == K_STRUCT && is_value_struct(ft) == 0) || (fk == K_OPT && opt_scalar(ft) == 0 && is_value_struct(cast(Ty, ft.elem)) == 0)))
 			if (fk != K_INT && fk != K_FLOAT && fk != K_BOOL && is_value_struct(ft) == 0 && refok == 0) || (inline != 0 && value_has_ref(ft) != 0) {
 				let m = err_code(cast(Node, cast(ParsedField, src[i]).ty).pos, "E295 NOT_YET")
 				buf_str(m, "a value struct field of type ")
 				type_name(cast([]u8, m), cast(Ty, cast(Field, fs[i]).ty))
-				buf_str(m, " is not built yet (#669): a value struct holds numbers, bool, str, pointer optionals and other value structs, and an inline array holds no str")
+				buf_str(m, " is not built yet (#669): a value struct holds numbers, bool, str, slices, maps, structs, pointer optionals and other value structs, and an inline array holds none of the references")
 				err_end(cast([]u8, m))
 			}
 			i = i + 1
@@ -2035,7 +2062,6 @@ fn check_var(v Decl) {
 	}
 	if v.type_ != 0 {
 		sb_forbid(v.pos, s.type_, "a global cannot hold ")
-		global_value_ref(v.pos, s.type_)
 	}
 	let pu = use_global_of(cast(i64, v))
 	if pu != 0 {
@@ -2098,7 +2124,6 @@ fn check_var(v Decl) {
 	if s.type_ == 0 {
 		s.type_ = default_type(t)
 		sb_forbid(v.pos, s.type_, "a global cannot hold ")
-		global_value_ref(v.pos, s.type_)
 	}
 	if s.tls != 0 && is_dyn_value(cast(Ty, s.type_)) != 0 {
 		// A dyn value is two words: the per-core global takes two fresh slots, its object
@@ -3265,9 +3290,6 @@ fn capture_sym(f Fn, os Sym) i64 {
 	if ci < 0 {
 		if os.mut_ != 0 {
 			err_code_at(f.pos, "E703 CAPTURE_MUT", "a function literal cannot capture the mut parameter '" + os.name + ("': copy it into a local first, or pass it as an argument"))
-		}
-		if value_has_ref(cast(Ty, os.type_)) != 0 {
-			err_code_at(f.pos, "E295 NOT_YET", "a function literal cannot capture '" + os.name + ("', a value struct with a str or optional field, yet (#669): pass it as an argument"))
 		}
 		ci = len(caps)
 		caps = append(caps, cast(i64, os))
@@ -10974,7 +10996,7 @@ fn arenacopy_fn(t Ty) Fn {
 		let et = t.elem
 		let out = temp(pos, rt_call(pos, "rt_arena_slice", args2(sym_ref_node(pos, x), mk_int(pos, type_width(cast(Ty, et)), ty_int)), cast(i64, t)), cast(i64, t))
 		body = append(body, cast(i64, out))
-		if is_ref(et) != 0 {
+		if is_ref(et) != 0 || value_has_ref(cast(Ty, et)) != 0 {
 			let n = temp(pos, mk_hdr(pos, sym_ref_node(pos, cast(Sym, out.sym)), 0), ty_int)
 			body = append(body, cast(i64, n))
 			let data = temp(pos, mk_hdr(pos, sym_ref_node(pos, cast(Sym, out.sym)), 2), ty_int)
@@ -11006,7 +11028,7 @@ fn arenacopy_fn(t Ty) Fn {
 			for kk < v.count {
 				mut fi = v.first + kk
 				let ft = field_type(t, fi)
-				if is_ref(ft) != 0 {
+				if is_ref(ft) != 0 || value_has_ref(cast(Ty, ft)) != 0 {
 					let src = mk_mem(pos, sym_ref_node(pos, cast(Sym, out.sym)), 0, 0, field_offset(t, fi), ft)
 					mut vs8 = cast(Block, ifs.then).stmts
 					vs8 = append(vs8, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, out.sym)), cast(i64, t), fi), keep_call(pos, arenacopy_fn(cast(Ty, ft)), src, ft)))
@@ -11023,7 +11045,7 @@ fn arenacopy_fn(t Ty) Fn {
 		mut fi = 0
 		for fi < len(t.fields) {
 			let ft = field_type(t, fi)
-			if is_ref(ft) != 0 {
+			if is_ref(ft) != 0 || value_has_ref(cast(Ty, ft)) != 0 {
 				let src = mk_mem(pos, sym_ref_node(pos, cast(Sym, out.sym)), 0, 0, field_offset(t, fi), ft)
 				body = append(body, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, out.sym)), cast(i64, t), fi), keep_call(pos, arenacopy_fn(cast(Ty, ft)), src, ft)))
 			}

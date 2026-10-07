@@ -2196,10 +2196,8 @@ Fix: end each block arm with its value, or leave from it.
 ### E295 NOT_YET
 
 A form the parser reads but the checker does not build yet: a generic tuple alias, or a value
-struct (#631) where it does not go yet (#669). Such places are a slice, map, reference-struct or
-`dyn` field inside it, a `str` in an inline array, a map value, an optional, a channel element
-and a `dyn` object. A value struct with a `str` or pointer-optional field also cannot yet be
-captured by a function literal or returned from an `arena` block. Until it is, write the result list out, or
+struct (#631) where it does not go yet (#669). Such places are a func or `dyn` field inside it,
+a reference in an inline array, a map value, an optional, a channel element and a `dyn` object. Until it is, write the result list out, or
 store the value struct's fields.
 
 ```tin edition=1

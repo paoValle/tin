@@ -1,0 +1,80 @@
+package main
+
+// #669 step 4: a value struct may hold slices, maps and reference structs. A slice field starts
+// as an empty slice of its own (make, a declaration, a field left out); copying the value copies
+// the field's word, so the slice is shared as slices always are; such values can be kept and
+// held in long-lived memory, whose slots count them; a recursive value goes through a slice.
+
+import "argo"
+import "hearth"
+import "say"
+
+type Node struct {
+	v i64
+}
+
+type Row value struct {
+	name  str
+	tags  []str
+	attrs map[str]i64
+	owner Node
+}
+
+type Bag value struct {
+	label str
+	items []i64
+}
+
+type Tree value struct {
+	v    i64
+	kids []Tree
+}
+
+mut kept = []Bag{}
+
+fn sum(t Tree) i64 {
+	mut s = t.v
+	for k in t.kids {
+		s += sum(k)
+	}
+	return s
+}
+
+fn main() {
+	mut b Bag
+	b.items = append(b.items, 1, 2)
+	let c = b
+	b.items[0] = 9
+	b.label = "b"
+	say.Line(b, c, len(c.items))
+	mut bags = make([]Bag, 3)
+	bags[1].items = append(bags[1].items, 5)
+	say.Line(bags, len(bags[2].items))
+	let r = Row{name: "r", tags: []str{"x"}, attrs: map[str]i64{"k": 1}, owner: Node{v: 3}}
+	mut rows = []Row{r}
+	rows[0].tags = append(rows[0].tags, "y")
+	rows[0].attrs["j"] = 2
+	say.Line(rows[0].name, rows[0].tags, len(rows[0].attrs), rows[0].owner.v, r.tags)
+	let t = Tree{v: 1, kids: []Tree{Tree{v: 2}, Tree{v: 3, kids: []Tree{Tree{v: 4}}}}}
+	say.Line(sum(t))
+	mut out = []u8{}
+	argo.Put(mut out, b)
+	say.Line(str(out))
+	mut back Bag
+	argo.Get(str(out), mut back) catch err {
+		say.Line(err)
+	}
+	say.Line(back)
+	for i in 0..3 {
+		kept = keep([]Bag{Bag{label: "w{i}", items: []i64{i}}})
+		hearth.Reset()
+	}
+	let (b0, _, _) = hearth.RcStats()
+	for i in 0..100 {
+		kept = keep([]Bag{Bag{label: "l{i}", items: []i64{i, i + 1}}})
+		kept[0].items = keep([]i64{i})
+		hearth.Reset()
+	}
+	let (b1, _, _) = hearth.RcStats()
+	say.Line(kept, b1 - b0 <= 4)
+}
