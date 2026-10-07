@@ -3,6 +3,7 @@ package main
 import "appkit"
 import "say"
 import "textedit"
+import "tide"
 import "twine"
 
 // keyFor turns "cmd+shift+z", "left" or "a" into a key press (the scripts that drive the editor without a
@@ -77,6 +78,7 @@ fn (ed Editor) dump() {
 //   whereFile        prints the name of the file the caret is in
 //   where            prints the file, line and column of the caret
 //   info             prints the quick info popup
+//   budget:KIND:N:MS repeats render, type or scroll N times and says whether each took at most MS milliseconds
 //   output           prints the output panel
 //   prompt           prints the find or go-to-line prompt
 //   open:PATH        loads a file
@@ -137,6 +139,36 @@ fn runScript(ed mut Editor, script str) {
 				d += 1
 			}
 			say.Line("diags:", len(ed.Diags))
+		} else if twine.HasPrefix(step, "budget:") {
+			// budget:render:N:MS, budget:type:N:MS, budget:scroll:N:MS: N repetitions must average at most MS
+			// milliseconds each (the performance gates of the editor: the numbers are generous, a real
+			// regression is orders of magnitude)
+			let nums = appkit.ParseNumbers(twine.ReplaceAll(step[7:], ":", " "))
+			let what = step[7:twine.Index(step[7:], ":") + 7]
+			if len(nums) >= 2 {
+				let reps = i64(nums[0])
+				let t0 = tide.Now()
+				mut r = 0
+				for r < reps {
+					if what == "render" {
+						ed.Buf.Version += 1
+						ed.render()
+					} else if what == "type" {
+						ed.Buf.Insert("x")
+						ed.render()
+					} else if what == "scroll" {
+						ed.Scroll = (ed.Scroll + 37) % len(ed.Buf.Lines)
+						ed.render()
+					}
+					r += 1
+				}
+				let avgMs = f64(tide.Since(t0)) / 1000000.0 / f64(reps)
+				if avgMs <= nums[1] {
+					say.Line("budget", what, "ok")
+				} else {
+					say.Line("budget", what, "EXCEEDED:", avgMs, "ms per frame, limit", nums[1])
+				}
+			}
 		} else if step == "output" {
 			say.Line("output:", ed.OutputOpen)
 			say.Line(twine.Join(ed.Output, "\n"))

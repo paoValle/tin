@@ -182,4 +182,7 @@ fn main() {
 
 in twine.tin
 at editor_nav.tin 12 22
-message: switched to toolchain/tests/darwin/editor_nav.tin
+budget render ok
+budget type ok
+budget scroll ok
+message: opened toolchain/compiler/lower.tin
