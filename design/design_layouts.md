@@ -115,6 +115,18 @@ and elements loaded and stored as one or two words. Wider values:
 - Frame size grows with value locals; #570's large-frame support and page probes already cover
   frames past 4 KiB, and #570 part 3's slot sharing extends to value areas by live range.
 
+**As built in phase A1 (#631, 2026-10-07).** One representation for every size, simpler than
+the register paths above and the same on both back ends: an expression of value struct type is
+the address of its bytes. A local is a frame area (`Sym.addr`, `words`), a field or element is
+its inline bytes (`EX_MEM`/`EX_ELEM` of value struct type generate an address, no load), a
+parameter's word is its caller's address (read-only unless `mut`), and a global's word is the
+address of a long-lived block made at startup. Every store (`let`, assignment, field, element,
+`append`, a multi-result binding) copies the bytes (`gen_value_store`, `rt_append_mem`), and a
+literal is built in a zeroed frame area. A result is returned as a pool copy (`rt_vdup`) that the
+caller copies again; the hidden destination of 1.3 and the two-register path for values up to 16
+bytes are the next step (A2), with inline arrays (1.6). The region checker sees no reference in
+a value struct (`has_ptr` is 0, `rc_counted` is 0), since none flows: its bytes are copied.
+
 ### 1.4 Reference fields
 
 A value struct may hold references (`str`, slices, maps, reference structs, `?T`). Inline storage
@@ -157,7 +169,9 @@ part of this design.
 ### 1.7 Phases
 
 - **A.** Value structs whose fields are numbers, `bool`, other value structs and inline arrays of
-  those (no references). Inline in fields, slices, frames; copy semantics; zero values and
+  those (no references). A1 (built): everything below but inline arrays, with the
+  representation described after 1.3. A2: inline arrays, results through a hidden destination,
+  values up to 16 bytes in registers. Inline in fields, slices, frames; copy semantics; zero values and
   `make`; `==`; map keys; printing; `argo`; `keep` as a copy; generics; both back ends and the
   ABI of section 1.3. This is what `Point`, `complex`, `RGB`, matrix cells and `UUID` need, and
   it meets #631's acceptance (one million `Point` in 16 MB plus the header).

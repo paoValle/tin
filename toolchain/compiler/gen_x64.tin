@@ -875,6 +875,9 @@ fn x_gen_to(e i64, dst i64, d i64) {
 	} else if k == EX_MEM {
 		if is_dyn_value(cast(Ty, cast(Node, e).type_)) != 0 {
 			x_gen_dyn_pair(e, dst, XSCR2, d)
+		} else if is_value_struct(cast(Ty, cast(Node, e).type_)) != 0 {
+			x_gen_dyn_addr(cast(Node, e), d)
+			x_mov(dst, XSCR)
 		} else {
 			x_gen_mem_addr(cast(MemExpr, e), d)
 			x_emit_load(dst, cast(Node, e).type_)
@@ -882,6 +885,9 @@ fn x_gen_to(e i64, dst i64, d i64) {
 	} else if k == EX_ELEM {
 		if is_dyn_value(cast(Ty, cast(Node, e).type_)) != 0 {
 			x_gen_dyn_pair(e, dst, XSCR2, d)
+		} else if is_value_struct(cast(Ty, cast(Node, e).type_)) != 0 {
+			x_gen_dyn_addr(cast(Node, e), d)
+			x_mov(dst, XSCR)
 		} else {
 			x_gen_elem_addr(cast(ElemExpr, e), d)
 			x_emit_load(dst, cast(Node, e).type_)
@@ -930,6 +936,35 @@ fn x_gen_dyn_addr(e Node, d i64) {
 		}
 	} else {
 		emit2(X_LEA, XSCR, x_mem1(base, off))
+	}
+}
+
+// x_value_store copies size bytes of the value struct v (its address, or the constant 0 for
+// zeroed bytes) to the address in XSCR (#631), through XSCR2: words, then a 4-, 2- and 1-byte
+// tail.
+fn x_value_store(v i64, size i64) {
+	mut src = -1
+	if cast(Node, v).kind == EX_INT && is_const(v) != 0 && const_val(v) == 0 {
+		x_load_imm(XSCR2, 0)
+	} else {
+		x_push(XSCR)
+		src = treg(0)
+		x_gen_to(v, src, 0)
+		x_pop(XSCR)
+	}
+	mut o = 0
+	mut w = 8
+	mut lg = 3
+	for w >= 1 {
+		for o + w <= size {
+			if src >= 0 {
+				x_ld(XSCR2, x_mem1(src, o), lg)
+			}
+			x_st(XSCR2, x_mem1(XSCR, o), lg)
+			o = o + w
+		}
+		w = w / 2
+		lg = lg - 1
 	}
 }
 
@@ -1033,6 +1068,11 @@ fn x_gen_dyn_pair(e i64, obj i64, tab i64, d i64) {
 fn x_gen_ident(e IdentExpr, dst i64) {
 	let s = cast(Sym, e.ref)
 	let k = s.kind
+	if is_value_area(s) != 0 {
+		// A value struct's value is the address of its bytes (#631).
+		emit2(X_LEA, dst, x_mem1(RBP, s.off))
+		return
+	}
 	if k == SYM_LOCAL {
 		if s.reg >= 0 {
 			x_mov(dst, s.reg)
@@ -2244,6 +2284,18 @@ fn x_gen_effect(e i64) {
 }
 
 fn x_assign_local(s Sym, v i64) {
+	if is_value_struct(cast(Ty, s.type_)) != 0 {
+		// Copy the bytes into the frame area, or through a mut parameter's address (#631).
+		if is_value_area(s) != 0 {
+			emit2(X_LEA, XSCR, x_mem1(RBP, s.off))
+		} else if s.reg >= 0 {
+			x_mov(XSCR, s.reg)
+		} else {
+			x_slot_load(XSCR, s.off)
+		}
+		x_value_store(v, cast(Ty, s.type_).size)
+		return
+	}
 	if is_dyn_value(cast(Ty, s.type_)) != 0 {
 		let r0 = treg(0)
 		let r1 = treg(1)
@@ -2268,6 +2320,11 @@ fn x_assign_local(s Sym, v i64) {
 // x_gen_store_mem stores v through an EX_MEM or EX_ELEM target. The address parts are
 // computed into stable temps first; a[i] = a[i] op x loads the element only once.
 fn x_gen_store_mem(t i64, v i64) {
+	if is_value_struct(cast(Ty, cast(Node, t).type_)) != 0 {
+		x_gen_dyn_addr(cast(Node, t), 0)
+		x_value_store(v, cast(Ty, cast(Node, t).type_).size)
+		return
+	}
 	if is_dyn_value(cast(Ty, cast(Node, t).type_)) != 0 {
 		x_gen_dyn_addr(cast(Node, t), 0)
 		x_push(XSCR)
@@ -2431,6 +2488,12 @@ fn x_gen_assign(s AssignStmt) {
 	let sym = cast(Sym, cast(IdentExpr, t).ref)
 	if sym.kind == SYM_LOCAL {
 		x_assign_local(sym, v)
+		return
+	}
+	if is_value_struct(cast(Ty, cast(Node, t).type_)) != 0 {
+		// A global's word holds the address of its bytes (#631).
+		x_gen_ident(cast(IdentExpr, t), XSCR)
+		x_value_store(v, cast(Ty, sym.type_).size)
 		return
 	}
 	if is_dyn_value(cast(Ty, sym.type_)) != 0 {
@@ -2671,7 +2734,25 @@ fn x_gen_stmt(s i64) {
 		mut i = 0
 		for i < len(syms) {
 			let sym = syms[i]
-			if is_dyn_value(cast(Ty, sym.type_)) != 0 {
+			if is_value_area(sym) != 0 {
+				// A value struct result is the address of its bytes: copy them in through XSCR,
+				// which no result lane uses (#631).
+				let src = x_res_reg(lane)
+				let size = cast(Ty, sym.type_).size
+				mut o = 0
+				mut w = 8
+				mut lg = 3
+				for w >= 1 {
+					for o + w <= size {
+						x_ld(XSCR, x_mem1(src, o), lg)
+						x_st(XSCR, x_mem1(RBP, sym.off + o), lg)
+						o = o + w
+					}
+					w = w / 2
+					lg = lg - 1
+				}
+				lane = lane + 1
+			} else if is_dyn_value(cast(Ty, sym.type_)) != 0 {
 				if sym.reg == REG_SLOT {
 					x_slot_store(x_res_reg(lane), sym.off)
 					x_slot_store(x_res_reg(lane + 1), sym.off + 8)
@@ -2989,6 +3070,11 @@ fn x_assign_homes(f Fn) i64 {
 		if is_dyn_value(cast(Ty, s.type_)) != 0 {
 			s.addr = 1
 			cast(Sym, s).words = 2
+		}
+		if is_value_struct(cast(Ty, s.type_)) != 0 && i >= len(f.ptypes) {
+			// A value struct local is a frame area holding its bytes (#631).
+			s.addr = 1
+			cast(Sym, s).words = (cast(Ty, s.type_).size + 7) / 8
 		}
 		if s.addr != 0 {
 			cast(Sym, s).reg = REG_SLOT

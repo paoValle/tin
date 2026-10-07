@@ -2195,8 +2195,10 @@ Fix: end each block arm with its value, or leave from it.
 
 ### E295 NOT_YET
 
-A form the parser reads but the checker does not build yet: a generic tuple alias. Until it is,
-write the result list out.
+A form the parser reads but the checker does not build yet: a generic tuple alias, or a value
+struct (#631) where phase A does not put one yet (a field of a reference type inside it, a map
+value, an optional, a channel element, a `dyn` object). Until it is, write the result list out,
+or store the value struct's fields.
 
 ```tin edition=1
 package main

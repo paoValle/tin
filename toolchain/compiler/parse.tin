@@ -857,6 +857,14 @@ fn parse_type_base() i64 {
 		p_next()
 		return parse_struct_body(pos)
 	}
+	// value struct { ... }: a struct stored inline and copied (#631). `value` is contextual.
+	if p_word("value") != 0 && tok_is(p_peek2(), "struct") != 0 {
+		p_next()
+		p_next()
+		let vs = cast(TypeExpr, parse_struct_body(pos))
+		vs.args = 1
+		return cast(i64, vs)
+	}
 	if p_word("enum") != 0 && tok_is(p_peek2(), "{{") != 0 {
 		p_next()
 		return parse_enum_body(pos)

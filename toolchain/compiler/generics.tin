@@ -226,6 +226,7 @@ fn instantiate_type(d Decl, targs []i64, pos i64) i64 {
 	mut t = cast(Ty, 0)
 	if cast(Node, d.type_).kind == TX_STRUCT {
 		t = cast(Ty, ty_new(K_STRUCT, name))
+		t.value = i64(cast(TypeExpr, d.type_).args == 1)
 		t.targs = cast([]i64, cast(i64, targs))
 		t.gdecl = cast(i64, d)
 		name_type(name, cast(i64, t))

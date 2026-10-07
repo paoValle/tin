@@ -186,6 +186,7 @@ panic, 1 when startup fails, or with the code passed to `quarry.Exit`.
 | `[N]T` | ref | a `[]T` that starts with N zero elements (`[N][M]T` too) |
 | `map[K]V` | ref | hash map, insertion-ordered; K is `str`, an integer type, `bool`, `f64`, or a struct or enum of those; never nil |
 | `struct { ... }` | ref | a reference to an object; never nil |
+| `value struct { ... }` | its fields | the fields' bytes, inline in fields, elements and frames, copied by every store (#631) |
 | `enum { ... }` | ref | one of several variants, each with its own data |
 | `?T` | ref, or 16 | optional T: a T or `nil` (T a number, `bool` or reference type); over a number or `bool` it is a 16-byte value, a tag and the number, never allocated (#632) |
 | `!T` | | a result that is a T or a fault (function results only, section 8) |
@@ -308,6 +309,26 @@ fn main() {
   be nil); make them `?T` to allow nil.
 - `p.x` reads a field, `p.x = 3` writes it (see `mut` parameters in section 5).
 - `new(T)` is `T{}`.
+
+**Value structs** (#631). `type Point value struct { x f64; y f64 }` declares a struct whose
+value is its fields' bytes, as in Go: they are stored inline in the struct field, slice element,
+local or global that holds them, so `make([]Point, 1000000)` is one block of 16 MB with no
+object per element, and every store copies them (`let q = p`, `xs[i] = p`, `append`, an
+argument, a result), so two names never share a value. (`value` is a contextual word before
+`struct`.)
+
+- A value struct has a zero value (every field zero): `mut p Point`, `make([]Point, n)` and
+  `[N]Point` need no initializer.
+- Its fields can be changed only where the value can: `mut p = ...; p.x = 1`, `ps[i].x = 1`,
+  `r.at.x = 1`. A `let` value struct and a parameter that is not `mut` cannot be changed
+  (E711, E701): a parameter's bytes are its caller's. A `mut` parameter or a `mut` receiver
+  (`fn (p mut Point) scale(k f64)`) changes the caller's value in place: `ps[i].scale(2)`.
+- `==` compares field by field, it can be a map key (by its bytes, `f64` fields as #643 says),
+  and it prints and encodes to JSON as a struct does. `same` does not apply: it has no
+  identity.
+- Phase A holds numbers, `bool` and other value structs; a field of a reference type, a map
+  value, an optional, a channel element and a `dyn` object of a value struct are E295 until
+  phase B (design/design_layouts.md).
 
 ### Enums
 

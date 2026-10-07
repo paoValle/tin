@@ -1,0 +1,50 @@
+package main
+
+// #631 phase A: what a value struct refuses. Its bytes are its own, so a let value struct and a
+// parameter that is not mut cannot be changed (the parameter's bytes are its caller's); it has no
+// identity for same; and references inside it, map values, optionals, channels and dyn objects
+// come with phase B (E295).
+
+type P value struct {
+	x i64
+	y i64
+}
+
+type Named value struct {
+	name str
+}
+
+shape Summer {
+	sum() i64
+}
+
+fn (p P) sum() i64 {
+	return p.x + p.y
+}
+
+fn (p mut P) scale(k i64) {
+	p.x *= k
+}
+
+fn bump(p mut P) {
+	p.y += 1
+}
+
+fn grow(p P) {
+	p.x = 1
+}
+
+fn relay(p P) {
+	bump(mut p)
+	p.scale(2)
+}
+
+fn main() {
+	let a = P{x: 1, y: 2}
+	a.x = 3
+	a.scale(2)
+	let m = map[str]P{}
+	let o ?P = a
+	let s dyn Summer = a
+	_ = same(a, a)
+}

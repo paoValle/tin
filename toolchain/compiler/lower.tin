@@ -2184,7 +2184,13 @@ fn chk_composite(e i64, want i64) i64 {
 	}
 	if k == K_STRUCT {
 		let nf = len(t.fields)
-		let obj = temp(pos, rt_call(pos, "rt_alloc", args1(mk_int(pos, t.size, ty_int)), cast(i64, t)), cast(i64, t))
+		mut obj = cast(LetStmt, 0)
+		if t.value != 0 {
+			// A value struct literal is built in a zeroed frame area (#631).
+			obj = temp(pos, mk_int(pos, 0, cast(i64, t)), cast(i64, t))
+		} else {
+			obj = temp(pos, rt_call(pos, "rt_alloc", args1(mk_int(pos, t.size, ty_int)), cast(i64, t)), cast(i64, t))
+		}
 		stmts = append(stmts, cast(i64, obj))
 		let set = slice_filled(nf, 0)
 		mut i = 0
@@ -2337,6 +2343,8 @@ fn init_zero_field(pos i64, stmts []i64, obj i64, t Ty, fi i64) {
 	}
 	if k == K_STRING || k == K_SLICE {
 		stmts = append(stmts, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, obj)), cast(i64, t), fi), zero_value(pos, ft)))
+	} else if is_value_struct(cast(Ty, ft)) != 0 {
+		// A value struct field starts as zeroed bytes, as the object does (#631).
 	} else if k == K_STRUCT || k == K_MAP || k == K_FUNC || k == K_DYN {
 		let m = err_code(pos, "E203 NO_ZERO_VALUE")
 		buf_str(m, "field ")
@@ -3566,6 +3574,10 @@ fn chk_args(e i64, ptypes []i64, variadic i64, mask i64) {
 		}
 		let adesc = secret_desc(a)
 		let at = chk(cast(Node, a), want)
+		if is_value_struct(cast(Ty, at)) != 0 && i < n && i < 63 && (mask & (1 << i)) != 0 {
+			// A mut value struct argument (or mut receiver) is written through (#631).
+			value_write_check(cast(Node, a).pos, a, 1)
+		}
 		if cast(Node, a).kind == EX_UNARY && cast(Unary, a).op == "..." {
 			// E211 said it already: a spread slice is no argument of the parameter's type.
 			i = i + 1
@@ -4203,6 +4215,9 @@ fn chk_builtin(e i64, name str, want i64) i64 {
 				}
 				if is_dyn_value(cast(Ty, et)) != 0 {
 					acc = lower_append_dyn(pos, acc, a, st)
+				} else if is_value_struct(cast(Ty, et)) != 0 {
+					// A value struct's bytes, copied in (#631).
+					acc = rt_call(pos, "rt_append_mem", args3(acc, a, mk_int(pos, elem_size(st), ty_int)), cast(i64, st))
 				} else if rc_counted(cast(Ty, et)) != 0 {
 					// The element's slot owns it (#176): a long-lived slice counts it.
 					acc = rt_call(pos, "rt_append_rc", args3(acc, elem_bits(cast(Node, a), st.elem), mk_int(pos, elem_size(st), ty_int)), cast(i64, st))
@@ -4241,7 +4256,7 @@ fn chk_builtin(e i64, name str, want i64) i64 {
 			let ek = kind_of(cast(Ty, t.elem))
 			let len0 = args[1]
 			let zero_len = i64(cast(Node, len0).kind == EX_INT && cast(IntLit, len0).val == 0)
-			if zero_len == 0 && (ek == K_STRUCT || ek == K_MAP || ek == K_FUNC || ek == K_DYN) {
+			if zero_len == 0 && (ek == K_STRUCT || ek == K_MAP || ek == K_FUNC || ek == K_DYN) && is_value_struct(cast(Ty, t.elem)) == 0 {
 				err_code_type(pos, "E203 NO_ZERO_VALUE", "make with a length would fill the slice with nil ", t.elem, " values: use make([]T, 0, n) and append (or []?T)")
 				return cast(i64, t)
 			}
@@ -4419,6 +4434,10 @@ fn chk_builtin(e i64, name str, want i64) i64 {
 		let sa = chk(cast(Node, arg0(cast(Call, e))), 0)
 		let sb = chk(cast(Node, args[1]), sa)
 		let sk = kind_of(cast(Ty, sa))
+		if is_value_struct(cast(Ty, sa)) != 0 {
+			err_code_at(pos, "E217 BUILTIN_ARGS", "same compares identity, and a value struct has none (every store copies it): compare with ==")
+			return ty_bool
+		}
 		if (sk != K_STRUCT && sk != K_SLICE && sk != K_MAP) || cast(i64, sa) != sb {
 			err_code_at(pos, "E217 BUILTIN_ARGS", "same compares two structs, slices or maps of one type for identity (the same object)")
 			return ty_bool
@@ -5446,6 +5465,9 @@ fn argo_dfn(pos i64, t Ty) i64 {
 		if ev != 0 && is_dyn_value(cast(Ty, et)) != 0 {
 			// A two-word element (#632).
 			wb2 = append(wb2, expr_stmt(cast(Node, lower_append_dyn(pos, sym_ref_node(pos, x), ev, t))))
+		} else if ev != 0 && is_value_struct(cast(Ty, et)) != 0 {
+			// A value struct element's bytes (#631).
+			wb2 = append(wb2, expr_stmt(cast(Node, rt_call(pos, "rt_append_mem", args3(sym_ref_node(pos, x), ev, mk_int(pos, elem_size(t), ty_int)), cast(i64, t)))))
 		} else if ev != 0 {
 			wb2 = append(wb2, expr_stmt(cast(Node, rt_call(pos, "rt_append", args3(sym_ref_node(pos, x), elem_bits(cast(Node, ev), t.elem), mk_int(pos, elem_size(t), ty_int)), cast(i64, t)))))
 		}

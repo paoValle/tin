@@ -1458,6 +1458,11 @@ fn mem_rewrite(e i64) {
 	if ix == 0 || cast(MemExpr, e).len != 0 || cast(Node, ix).kind != EX_BINARY || cast(Binary, ix).op != "+" || cast(Binary, ix).ovf == OVF_CHECK || invariant(cast(MemExpr, e).base) == 0 {
 		return
 	}
+	let sc = cast(MemExpr, e).scale
+	if sc != 1 && sc != 2 && sc != 4 && sc != 8 && sc != 16 {
+		// A value struct's elements may be any size (#631): no shift reaches them.
+		return
+	}
 	mut a = cast(Binary, ix).l
 	mut b = cast(Binary, ix).r
 	if invariant(b) != 0 && invariant(a) == 0 {

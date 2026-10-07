@@ -1,0 +1,160 @@
+package main
+
+import "argo"
+import "constraints"
+import "say"
+import "sift"
+
+// #631 phase A: a value struct is stored inline (in fields, slice elements and frames) and
+// copied by every store, so a []P is one block of bytes and two names never share a value.
+
+type P value struct {
+	x i64
+	y i64
+}
+
+type RGB value struct {
+	r u8
+	g u8
+	b u8
+}
+
+type Box value struct {
+	lo   P
+	hi   P
+	tag  i32
+	on   bool
+	heat f32
+}
+
+type Wide value struct {
+	a i64
+	b i64
+	c i64
+	d i64
+	e i64
+}
+
+type Scene struct {
+	name  str
+	at    P
+	trail []P
+}
+
+type Pair[T constraints.Any] struct {
+	a T
+	b T
+}
+
+fn (p mut P) scale(k i64) {
+	p.x *= k
+	p.y *= k
+}
+
+fn (p P) sum() i64 {
+	return p.x + p.y
+}
+
+fn add(a P, b P) P {
+	return P{x: a.x + b.x, y: a.y + b.y}
+}
+
+fn split(p P) (P, P) {
+	let lo = P{x: p.x, y: 0}
+	return lo, P{x: 0, y: p.y}
+}
+
+fn first[T constraints.Any](xs []T) T {
+	return xs[0]
+}
+
+fn widen(w mut Wide, k i64) {
+	w.e += k
+}
+
+fn main() {
+	// Copies: assignment, arguments, results, elements.
+	let p = P{x: 1, y: 2}
+	mut q = p
+	q.x = 10
+	say.Line(p, q, add(p, q), p.sum())
+	let (lo, hi) = split(q)
+	say.Line(lo, hi)
+	mut ps = make([]P, 2)
+	ps[1] = q
+	q.y = 99
+	ps = append(ps, p, add(p, p))
+	ps[0].x = 7
+	ps[2].scale(3)
+	mut total = 0
+	for i, e in ps {
+		total += e.x * (i + 1)
+	}
+	say.Line(ps, total, len(ps))
+	mut held = ps[1]
+	ps[1].x = -1
+	say.Line(held.x, ps[1].x)
+	held = ps[3]
+	say.Line(held)
+
+	// Elements of any size: 3 bytes, 40 bytes; copy and sort.
+	mut cs = make([]RGB, 3)
+	for i in 0..len(cs) {
+		cs[i] = RGB{r: u8(i), g: u8(i * 2), b: 255}
+	}
+	mut cs2 = make([]RGB, 3)
+	copy(cs2, cs)
+	cs[0].b = 0
+	say.Line(cs, cs2)
+	mut ws = []Wide{Wide{a: 1, b: 2, c: 3, d: 4, e: 5}, Wide{a: 6, e: 10}}
+	widen(mut ws[1], 5)
+	say.Line(ws)
+	mut list = []P{P{x: 3, y: 0}, P{x: 1, y: 0}, P{x: 2, y: 0}}
+	sift.SortFunc(mut list, fn(l P, r P) i64 {
+		return l.x - r.x
+	})
+	say.Line(list, first(list))
+
+	// Nested value structs, mixed field widths, a value struct in a reference struct.
+	mut b = Box{lo: P{x: 1, y: 1}, hi: P{x: 4, y: 5}, tag: -3, on: true, heat: 1.5}
+	b.hi.x = 8
+	let b2 = b
+	b.lo = b.hi
+	say.Line(b, b2, b == b2, b2.hi == P{x: 8, y: 5})
+	mut sc = Scene{name: "s", at: P{x: 2, y: 3}, trail: []P{p}}
+	sc.at.scale(2)
+	sc.trail = append(sc.trail, sc.at)
+	sc.at.x = 0
+	say.Line(sc)
+
+	// Keys, generics, closures.
+	mut seen = map[P]str{}
+	seen[p] = "p"
+	seen[P{x: 1, y: 2}] = "again"
+	say.Line(len(seen), seen[p])
+	let pr = Pair[P]{a: p, b: q}
+	say.Line(pr.a.sum() + pr.b.sum())
+	mut c = P{x: 1, y: 1}
+	let bump = fn() {
+		c.x += 1
+	}
+	bump()
+	bump()
+	say.Line(c)
+
+	// JSON.
+	mut out = []u8{}
+	argo.Put(mut out, sc)
+	say.Line(str(out))
+	mut back = Scene{name: "", trail: []P{}}
+	argo.Get(str(out), mut back) catch err {
+		say.Line(err)
+	}
+	say.Line(back)
+
+	// Zero values: a local, make with a length, an array.
+	mut z P
+	let zs = make([]P, 2)
+	let arr = [3]RGB{}
+	say.Line(z, zs, arr, z == zs[1])
+}

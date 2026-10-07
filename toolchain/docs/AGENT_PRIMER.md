@@ -32,7 +32,7 @@ the compiler: write a minimal repro as a test, open an issue and work around it.
 - Types: i8 i16 i32 i64 u8 u16 u32 u64, f64, f32 (exact float32 semantics, 4 bytes in slices), bool,
   str (immutable bytes), [N]T arrays, []T (reference header; append mutates it in place and returns
   it, so `mut ys = xs` is one slice under two names: copy for a snapshot, sift.Clone; reading ys after append grew xs is E641, also through fields, constant indices and map keys, mut calls that append and local closures), map[K]V (K = str, ints, bool, f64, or structs/enums of those, by value; insertion-ordered),
-  struct (reference, never nil; == compares fields by value, same(a, b) is identity; a struct with a slice/map/func field cannot be compared, E237), ?T optional (may be nil; T a number, bool or reference: ?i64 is a two-word value with no allocation, narrow it with != nil, a global holds it with no keep), fault (error;
+  struct (reference, never nil; == compares fields by value, same(a, b) is identity; a struct with a slice/map/func field cannot be compared, E237), value struct (`type P value struct {...}`, #631: numbers/bool/value-struct fields stored inline and copied by every store, so []P is one block; let or non-mut param ones cannot be changed), ?T optional (may be nil; T a number, bool or reference: ?i64 is a two-word value with no allocation, narrow it with != nil, a global holds it with no keep), fault (error;
   nil = ok), fn(A) R function values (top-level functions or literals, which may capture).
 - No implicit conversions: i64(x), u8(x) (truncates: the low byte), f64(x), str(c) for a rune/byte,
   str(bytes []u8). Untyped constants adapt and must fit; constant arithmetic is exact (E223).

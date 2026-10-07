@@ -342,6 +342,10 @@ fn type_width(t Ty) i64 {
 	if is_dyn_value(t) != 0 {
 		return 16
 	}
+	if k == K_STRUCT && t.value != 0 {
+		// A value struct's bytes, inline (#631).
+		return t.size
+	}
 	return 8
 }
 
@@ -385,7 +389,7 @@ fn nilable(t i64) i64 {
 fn is_ref(t i64) i64 {
 	let k = kind_of(cast(Ty, t))
 	// An optional number holds no reference (#632).
-	return i64(k == K_STRING || k == K_STRUCT || k == K_SLICE || k == K_MAP || k == K_FUNC || k == K_ERROR || k == K_CHAN || (k == K_OPT && opt_scalar(cast(Ty, t)) == 0))
+	return i64(k == K_STRING || (k == K_STRUCT && cast(Ty, t).value == 0) || k == K_SLICE || k == K_MAP || k == K_FUNC || k == K_ERROR || k == K_CHAN || (k == K_OPT && opt_scalar(cast(Ty, t)) == 0))
 }
 
 // default_type is the type an untyped constant gets when nothing else decides it.
@@ -562,7 +566,9 @@ fn field_offset(t Ty, i i64) i64 {
 }
 
 // layout_struct assigns field offsets: widest fields first, each naturally aligned, so
-// structs pack without padding holes; the object size rounds up to 8.
+// structs pack without padding holes; the object size rounds up to 8. A value struct field
+// (#631) goes with the fields of its alignment, and its size is a multiple of it, so the
+// fields after it stay aligned; a value struct's own size rounds up to its alignment.
 fn layout_struct(t Ty) {
 	let fs = t.fields
 	mut off = 0
@@ -571,15 +577,55 @@ fn layout_struct(t Ty) {
 		mut i = 0
 		for i < len(fs) {
 			let f = cast(Field, fs[i])
-			if type_width(cast(Ty, f.ty)) == w {
+			if layout_class(cast(Ty, f.ty)) == w {
 				f.off = off
-				off = off + w
+				off = off + type_width(cast(Ty, f.ty))
 			}
 			i = i + 1
 		}
 		w = w / 2
 	}
+	if t.value != 0 {
+		t.size = align_up(off + i64((off == 0)), type_align(t))
+		return
+	}
 	t.size = align_up(off + i64((off == 0)), 8)
+}
+
+// layout_class is the width a field is placed with: its own, or a value struct's alignment.
+fn layout_class(t Ty) i64 {
+	if is_value_struct(t) != 0 {
+		return type_align(t)
+	}
+	return type_width(t)
+}
+
+// is_value_struct reports a value struct (#631): its bytes are stored inline in fields,
+// elements and frames, and every store copies them.
+fn is_value_struct(t Ty) i64 {
+	return i64(cast(i64, t) != 0 && t.kind == K_STRUCT && t.value != 0)
+}
+
+// type_align is the alignment of a value in memory: a number's width, a value struct's
+// widest field's (at most 8), 8 for anything else.
+fn type_align(t Ty) i64 {
+	if is_value_struct(t) != 0 {
+		mut a = 1
+		mut i = 0
+		for i < len(t.fields) {
+			let fa = type_align(cast(Ty, cast(Field, t.fields[i]).ty))
+			if fa > a {
+				a = fa
+			}
+			i = i + 1
+		}
+		return a
+	}
+	let w = type_width(t)
+	if w > 8 {
+		return 8
+	}
+	return w
 }
 
 // elem_size is the size in bytes of one slice element.
@@ -686,7 +732,7 @@ fn bounded_assignable(from Ty, to Ty) i64 {
 	return 0
 }
 
-const TY_WORDS = 17 // the words of a Ty record, bounded types and secret twins included
+const TY_WORDS = 18 // the words of a Ty record, bounded types and secret twins included
 
 // ty_copy copies the words that describe a type (everything before secret_, bound and max) from src into dst.
 fn ty_copy(dst Ty, src Ty) {
@@ -704,6 +750,7 @@ fn ty_copy(dst Ty, src Ty) {
 	dst.gdecl = src.gdecl
 	dst.enum_ = src.enum_
 	dst.under = src.under
+	dst.value = src.value
 }
 
 // named_of is the distinct type `type name u` declares for a non-struct u (#564): a copy of u

@@ -1771,6 +1771,26 @@ fn rt_append(s i64, v i64, esz i64) i64 {
 	return s
 }
 
+// rt_append_mem appends the esz bytes at p, a value struct's (#631).
+fn rt_append_mem(s i64, p i64, esz i64) i64 {
+	s = rt_own(s, esz)
+	let n = s[0]
+	if n >= s[1] {
+		rt_slice_grow(s, n+1, esz)
+	}
+	memmove(s[2]+n*esz, p, esz)
+	s[0] = n + 1
+	return s
+}
+
+// rt_vdup copies the n bytes of a value struct at p into the pool (#631): what a function returns
+// must outlive its frame.
+fn rt_vdup(p i64, n i64) i64 {
+	let q = rt_alloc(n)
+	memmove(q, p, n)
+	return q
+}
+
 // rt_append_rc is rt_append for a slice whose element type is counted (#176): the new
 // element gains the count of the slot it lands in. The slice's own region word decides,
 // so a request-local slice pays nothing.

@@ -340,6 +340,9 @@ fn resolve_type(tx i64) i64 {
 			err_code_type(cast(Node, tx).pos, "E201 MAP_KEY", "a map key must compare by value (str, numbers, bool, or structs and enums of those), not ", mkt, "")
 		}
 		let mvt = resolve_type(cast(TypeExpr, tx).b)
+		if is_value_struct(cast(Ty, mvt)) != 0 {
+			value_not_yet(cast(Node, tx).pos, mvt, " as a map value is not built yet (#631 phase B): store its fields, or use a struct")
+		}
 		return map_of(mkt, mvt)
 	}
 	if k == TX_PTR {
@@ -348,6 +351,10 @@ fn resolve_type(tx i64) i64 {
 	if k == TX_OPT {
 		let inner = resolve_type(cast(TypeExpr, tx).a)
 		let ik = kind_of(cast(Ty, inner))
+		if is_value_struct(cast(Ty, inner)) != 0 {
+			value_not_yet(cast(Node, tx).pos, inner, " cannot be optional yet (#631 phase B): add a bool field that says whether it is set")
+			return inner
+		}
 		if ik != K_STRUCT && ik != K_DYN && ik != K_STRING && ik != K_SLICE && ik != K_MAP && scalar_optionable(cast(Ty, inner)) == 0 {
 			err_code_type(cast(Node, tx).pos, "E420 OPTIONAL_TYPE", "only numbers, bool and references (str, slices, maps, structs, dyn) can be optional, not ", inner, "")
 			return inner
@@ -358,7 +365,11 @@ fn resolve_type(tx i64) i64 {
 		return bounded_type(tx)
 	}
 	if k == TX_CHAN {
-		return chan_of(resolve_type(cast(TypeExpr, tx).a))
+		let ct = resolve_type(cast(TypeExpr, tx).a)
+		if is_value_struct(cast(Ty, ct)) != 0 {
+			value_not_yet(cast(Node, tx).pos, ct, " cannot travel on a channel yet (#631 phase B)")
+		}
+		return chan_of(ct)
 	}
 	if k == TX_FUNC {
 		// Bit 62 of the mut mask marks a variadic last parameter, fn(...T) (#562).
@@ -371,6 +382,7 @@ fn resolve_type(tx i64) i64 {
 	}
 	if k == TX_STRUCT {
 		let st = ty_new(K_STRUCT, "struct")
+		cast(Ty, st).value = i64(cast(TypeExpr, tx).args == 1)
 		resolve_fields(cast(Ty, st), cast(TypeExpr, tx))
 		layout_struct(cast(Ty, st))
 		return st
@@ -635,7 +647,7 @@ fn array_make(pos i64, t Ty, n i64) i64 {
 		args = append(args, mk_int(pos, i64(ik == K_STRING), ty_int))
 		return rt_call(pos, "rt_slice_make_grid", cast(i64, args), cast(i64, t))
 	}
-	if ek == K_STRUCT || ek == K_MAP || ek == K_FUNC {
+	if (ek == K_STRUCT || ek == K_MAP || ek == K_FUNC) && is_value_struct(cast(Ty, t.elem)) == 0 {
 		err_code_type(pos, "E203 NO_ZERO_VALUE", "an array of ", t.elem, " would start with nil elements: use a slice and append")
 	}
 	if ek == K_STRING {
@@ -670,6 +682,71 @@ fn resolve_fields(st Ty, tx TypeExpr) {
 	}
 	st.fields = cast([]i64, cast(i64, fs))
 	st.enum_ = cast([]EnumVariant, tx.b)
+	if st.value != 0 {
+		// A value struct holds numbers, bool and other value structs; references come with
+		// phase B (#631), when the memory model counts what its bytes point at.
+		i = 0
+		for i < len(fs) {
+			let ft = cast(Ty, cast(Field, fs[i]).ty)
+			let fk = kind_of(ft)
+			if fk != K_INT && fk != K_FLOAT && fk != K_BOOL && is_value_struct(ft) == 0 {
+				let m = err_code(cast(Node, cast(ParsedField, src[i]).ty).pos, "E295 NOT_YET")
+				buf_str(m, "a value struct field of type ")
+				type_name(cast([]u8, m), ft)
+				buf_str(m, " is not built yet (#631 phase B): a value struct holds numbers, bool and other value structs")
+				err_end(cast([]u8, m))
+			}
+			i = i + 1
+		}
+	}
+}
+
+// value_not_yet reports a use of value struct t that phase A does not build (#631): E295.
+fn value_not_yet(pos i64, t i64, what str) {
+	let m = err_code(pos, "E295 NOT_YET")
+	buf_str(m, "value struct ")
+	type_name(cast([]u8, m), cast(Ty, t))
+	buf_str(m, what)
+	err_end(cast([]u8, m))
+}
+
+// value_write_check reports a store into the bytes of a value struct its writer may not change
+// (#631): a field of a let value struct (E711), or of a value struct parameter that is not mut
+// (E701), whose bytes are its caller's. target is checked: a field is an EX_MEM whose base is
+// the value struct (an ident, or another field). whole says the value itself is written through
+// (a mut argument or receiver), which a let value struct does not allow either.
+fn value_write_check(pos i64, target i64, whole i64) {
+	mut x = target
+	mut field = 0
+	for cast(Node, x).kind == EX_MEM && is_value_struct(cast(Ty, cast(Node, cast(MemExpr, x).base).type_)) != 0 {
+		x = cast(MemExpr, x).base
+		field = 1
+	}
+	if cast(Node, x).kind != EX_IDENT || cast(IdentExpr, x).ref == 0 {
+		return
+	}
+	let s = cast(Sym, cast(IdentExpr, x).ref)
+	if s.kind != SYM_LOCAL || is_value_struct(cast(Ty, s.type_)) == 0 {
+		return
+	}
+	let f = cast(Fn, ck_fn)
+	mut pi = 0
+	for cast(i64, f) != 0 && pi < len(f.muts) && pi < len(cast([]i64, f.locals)) {
+		if cast([]i64, f.locals)[pi] == cast(i64, s) {
+			if f.muts[pi] == 0 {
+				err_code_quoted(pos, "E701 NOT_MUT", "cannot modify parameter ", s.name, ": declare it mut (a value struct parameter's bytes are its caller's)")
+			}
+			return
+		}
+		pi = pi + 1
+	}
+	if (field != 0 || whole != 0) && s.fixed != 0 {
+		let m = err_code(pos, "E711 LET_ASSIGN")
+		buf_str(m, "cannot change ")
+		buf_str(m, s.name)
+		buf_str(m, ": it is a value struct declared with let (declare it with mut to change it)")
+		err_end(cast([]u8, m))
+	}
 }
 
 // ---- declarations ----
@@ -719,7 +796,10 @@ fn check() {
 			err_code_quoted(d.pos, "E102 BUILTIN_NAME", "", d.name, " is a builtin and cannot be redeclared")
 		} else if cast(i64, d.tparams) != 0 {
 		} else if cast(Node, d.type_).kind == TX_STRUCT {
-			name_type(q, ty_new(K_STRUCT, q))
+			let nt = cast(Ty, ty_new(K_STRUCT, q))
+			// type P value struct { ... } (#631)
+			nt.value = i64(cast(TypeExpr, d.type_).args == 1)
+			name_type(q, cast(i64, nt))
 		}
 		i = i + 1
 	}
@@ -1899,6 +1979,10 @@ fn check_var(v Decl) {
 	if init == 0 && s.tls != 0 && s.type_ != 0 && is_ref(s.type_) != 0 && kind_of(cast(Ty, s.type_)) != K_OPT && kind_of(cast(Ty, s.type_)) != K_ERROR && kind_of(cast(Ty, s.type_)) != K_FUNC {
 		init = zero_value(v.pos, s.type_)
 	}
+	if init == 0 && is_value_struct(cast(Ty, s.type_)) != 0 {
+		// A value struct global gets zeroed bytes at startup (#631).
+		init = mk_int(v.pos, 0, s.type_)
+	}
 	if init == 0 {
 		if s.type_ == 0 {
 			s.type_ = ty_int
@@ -1910,7 +1994,7 @@ fn check_var(v Decl) {
 	}
 	// A constant fills the global's one data word; an optional number (two words, #632) is set
 	// at startup like any other value.
-	if (is_int_const_expr(init) != 0) && s.tls == 0 && (s.type_ == 0 || is_dyn_value(cast(Ty, s.type_)) == 0) {
+	if (is_int_const_expr(init) != 0) && s.tls == 0 && (s.type_ == 0 || (is_dyn_value(cast(Ty, s.type_)) == 0 && is_value_struct(cast(Ty, s.type_)) == 0)) {
 		v.val = const_value(init, 0)
 		if s.type_ == 0 {
 			s.type_ = ty_int
@@ -1956,6 +2040,17 @@ fn check_var(v Decl) {
 	let a = cast(AssignStmt, node_new(ST_ASSIGN, v.pos))
 	a.target = target
 	a.value = init
+	if is_value_struct(cast(Ty, s.type_)) != 0 {
+		// The global's word takes the address of bytes of its own, long-lived as an
+		// initializer's allocations are; later stores copy into them (#631).
+		let vt = cast(Ty, s.type_)
+		cast(Node, target).type_ = ty_int
+		if cast(Node, init).kind == EX_INT && cast(IntLit, init).val == 0 {
+			a.value = rt_call(v.pos, "rt_alloc", args1(mk_int(v.pos, vt.size, ty_int)), ty_int)
+		} else {
+			a.value = mk_conv(v.pos, rt_call(v.pos, "rt_vdup", args2(init, mk_int(v.pos, vt.size, ty_int)), cast(i64, vt)), CV_SAME, ty_int)
+		}
+	}
 	s.uninit = 1
 	if s.tls != 0 {
 		core_stmts = append(core_stmts, cast(i64, a))
@@ -2886,6 +2981,9 @@ fn check_fn(f Fn) {
 		ck_defers = cast([]i64, 0)
 		ck_defer_mark = 0
 	}
+	if returns_value_struct(f) != 0 {
+		value_returns(cast(Block, f.body).stmts)
+	}
 	// Code after a return already reported (E264) is why the end is not a return.
 	if len(f.rtypes) > 0 && ends_in_return(cast(Block, f.body).stmts) == 0 && unreachable_count == unreachable0 {
 		err_code_quoted(f.pos, "E260 MISSING_RETURN", "function ", f.name, " is missing a return at the end")
@@ -3482,9 +3580,10 @@ fn zero_value(pos i64, t i64) i64 {
 		// A real header, made in the current region, so append never has to pick one.
 		return rt_call(pos, "rt_slice_make", args3(mk_int(pos, 0, ty_int), mk_int(pos, 0, ty_int), mk_int(pos, elem_size(cast(Ty, t)), ty_int)), t)
 	}
-	if (k == K_STRUCT || k == K_MAP || k == K_FUNC || k == K_DYN) {
+	if (k == K_STRUCT || k == K_MAP || k == K_FUNC || k == K_DYN) && is_value_struct(cast(Ty, t)) == 0 {
 		err_code_type(pos, "E203 NO_ZERO_VALUE", "a variable of type ", t, " needs an initializer (it cannot be nil; use ?T for an optional)")
 	}
+	// A value struct's zero: its bytes zeroed where they are stored (#631).
 	return mk_int(pos, 0, t)
 }
 
@@ -5936,6 +6035,68 @@ fn finish_defers(f Fn) {
 	body.stmts = cast([]i64, init)
 }
 
+// returns_value_struct reports whether f returns a value struct (#631).
+fn returns_value_struct(f Fn) i64 {
+	let t = cast(Ty, f.type_)
+	if cast(i64, t) == 0 || kind_of(t) != K_FUNC {
+		return 0
+	}
+	mut i = 0
+	for i < len(t.results) {
+		if is_value_struct(cast(Ty, t.results[i])) != 0 {
+			return 1
+		}
+		i = i + 1
+	}
+	return 0
+}
+
+// value_returns makes every value struct a return gives a copy in the pool (rt_vdup), unless it
+// is a call's result already: a local's bytes are in the frame that the return ends (#631).
+fn value_returns(v []i64) {
+	mut i = 0
+	for i < len(v) {
+		value_return_stmt(v[i])
+		i = i + 1
+	}
+}
+
+fn value_return_stmt(s i64) {
+	let k = cast(Node, s).kind
+	if k == ST_BLOCK {
+		value_returns(cast(Block, s).stmts)
+	} else if k == ST_IF {
+		value_returns(cast(Block, cast(IfStmt, s).then).stmts)
+		if cast(IfStmt, s).else_ != 0 {
+			value_return_stmt(cast(IfStmt, s).else_)
+		}
+	} else if k == ST_WHILE {
+		value_returns(cast(Block, cast(WhileStmt, s).body).stmts)
+	} else if k == ST_RETURN {
+		if cast(ReturnStmt, s).value != 0 {
+			value_out(cast(ReturnStmt, s).value)
+		}
+		if cast(i64, cast(ReturnStmt, s).values) != 0 {
+			mut j = 0
+			for j < len(cast(ReturnStmt, s).values) {
+				value_out(cast(ReturnStmt, s).values[j])
+				j = j + 1
+			}
+		}
+	}
+}
+
+// value_out turns the value struct expression v into a pool copy of it, unless it is a call.
+fn value_out(v i64) {
+	let t = cast(Ty, cast(Node, v).type_)
+	if is_value_struct(t) == 0 || cast(Node, v).kind == EX_CALL {
+		return
+	}
+	let pos = cast(Node, v).pos
+	let inner = expr_clone(v)
+	replace_node(v, rt_call(pos, "rt_vdup", args2(inner, mk_int(pos, t.size, ty_int)), cast(i64, t)))
+}
+
 fn defer_returns(v []i64) {
 	mut i = 0
 	for i < len(v) {
@@ -6789,6 +6950,9 @@ fn check_assign(s i64) {
 	al_writing = al_writing + 1
 	let tt = check_target(target)
 	al_writing = al_writing - 1
+	if is_value_struct(cast(Ty, tt)) != 0 || (cast(Node, target).kind == EX_MEM && is_value_struct(cast(Ty, cast(Node, cast(MemExpr, target).base).type_)) != 0) {
+		value_write_check(cast(Node, s).pos, target, 0)
+	}
 	let vt = chk(v, tt)
 	check_assignable(v, vt, cast(Ty, tt))
 	if is_untyped(vt) != 0 {
@@ -6814,6 +6978,10 @@ fn check_assignable(e Node, from i64, to Ty) {
 		if dyn_type(cast(Ty, from)) != dyn_type(to) {
 			err_code_at(e.pos, "E514 DYN_WIDENING", "dyn values do not widen (no downcast, no dyn-to-dyn): convert from the concrete value")
 		}
+		return
+	}
+	if (kind_of(to) == K_DYN || (kind_of(to) == K_OPT && kind_of(cast(Ty, to.elem)) == K_DYN)) && is_value_struct(cast(Ty, from)) != 0 {
+		value_not_yet(e.pos, from, " cannot be a dyn object yet (#631 phase B)")
 		return
 	}
 	if kind_of(to) == K_DYN && kind_of(cast(Ty, from)) != K_DYN {
@@ -6887,6 +7055,10 @@ fn opt_payload(pos i64, x i64, t i64) i64 {
 fn cell_bytes(t i64) i64 {
 	if is_dyn_value(cast(Ty, t)) != 0 {
 		return 16
+	}
+	if is_value_struct(cast(Ty, t)) != 0 {
+		// A captured value struct keeps its bytes in its cell (#631).
+		return align_up(cast(Ty, t).size, 8)
 	}
 	return 8
 }
@@ -10242,6 +10414,10 @@ fn keep_call(pos i64, f Fn, arg i64, t i64) i64 {
 // corrupt).
 fn rc_counted(t Ty) i64 {
 	let k = kind_of(t)
+	if is_value_struct(t) != 0 {
+		// Its bytes are copied into each slot; nothing to count (#631).
+		return 0
+	}
 	if k == K_STRING || k == K_SLICE || k == K_MAP || k == K_STRUCT {
 		return 1
 	}

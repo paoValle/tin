@@ -43,7 +43,8 @@ fn has_ptr(t Ty) i64 {
 		// A dyn value's bits are its object's; the table is static.
 		return 1
 	}
-	return i64(k == K_STRING || k == K_STRUCT || k == K_SLICE || k == K_MAP || k == K_ERROR || k == K_FUNC)
+	// A value struct's bytes are copied wherever it is stored (#631): no reference flows.
+	return i64(k == K_STRING || (k == K_STRUCT && t.value == 0) || k == K_SLICE || k == K_MAP || k == K_ERROR || k == K_FUNC)
 }
 
 fn rg_analyzable(f Fn) i64 {

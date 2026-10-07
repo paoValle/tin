@@ -1,0 +1,35 @@
+package main
+
+import "say"
+
+// Array of structs (#631): a million particles stored inline as value structs, moved 50 times.
+type Vec value struct {
+	x f64
+	y f64
+}
+
+type Particle value struct {
+	pos Vec
+	vel Vec
+}
+
+fn main() {
+	let n = 1000000
+	mut ps = make([]Particle, n)
+	for i in 0..n {
+		ps[i] = Particle{pos: Vec{x: f64(i), y: 0.0}, vel: Vec{x: 1.0, y: f64(i % 7)}}
+	}
+	for step in 0..50 {
+		for i in 0..n {
+			ps[i].pos.x += ps[i].vel.x
+			ps[i].pos.y += ps[i].vel.y
+		}
+	}
+	mut sx = 0.0
+	mut sy = 0.0
+	for p in ps {
+		sx += p.pos.x
+		sy += p.pos.y
+	}
+	say.Line(sx, sy)
+}
