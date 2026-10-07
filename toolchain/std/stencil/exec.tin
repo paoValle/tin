@@ -19,8 +19,16 @@ const maxOutput = 64 * 1024 * 1024
 
 // execCell is the mutable part of one execution: the current dot and the variables.
 type execCell struct {
-	dot  Value
-	vars map[str]Value
+	dot    Value
+	vars   map[str]Value
+	frames [][]savedVar
+}
+
+// savedVar is what a $x := inside a block shadowed: the variable's value before it, if it had one.
+type savedVar struct {
+	name  str
+	value Value
+	had   bool
 }
 
 // State is one execution of a template.
@@ -40,6 +48,68 @@ fn (st State) cell() execCell {
 	return cast(execCell, n[2])
 }
 
+// push opens a variable scope: $x := inside it is dropped when pop restores what it shadowed.
+fn (st State) push() {
+	let c = st.cell()
+	c.frames = append(c.frames, []savedVar{})
+}
+
+// pop closes the scope push opened, restoring every variable it shadowed and dropping the rest.
+fn (st State) pop() {
+	let c = st.cell()
+	let frame = c.frames[len(c.frames)-1]
+	c.frames = c.frames[:len(c.frames)-1]
+	mut i = len(frame) - 1
+	for i >= 0 {
+		let sv = frame[i]
+		if sv.had {
+			c.vars[sv.name] = sv.value
+		} else {
+			delete(c.vars, sv.name)
+		}
+		i -= 1
+	}
+}
+
+// block renders nodes in a new variable scope: a $x := inside is dropped when the block ends (its
+// previous value restored if it shadowed one), while $x = reaches the variable it was declared
+// in, as Go's template does.
+fn (st State) block(nodes []Node) ! {
+	st.push()
+	try st.walk(nodes)
+	st.pop()
+}
+
+// declare sets a variable declared with :=, remembering in the current scope what it shadowed.
+fn (st State) declare(name str, v Value) {
+	let c = st.cell()
+	if len(c.frames) > 0 {
+		let frame = c.frames[len(c.frames)-1]
+		mut seen = false
+		for _, sv in frame {
+			if sv.name == name {
+				seen = true
+			}
+		}
+		if !seen {
+			let (old, had) = c.vars[name]
+			c.frames[len(c.frames)-1] = append(frame, savedVar{name: name, value: old, had: had})
+		}
+	}
+	c.vars[name] = v
+}
+
+// set assigns a variable: a declaration ($x :=) shadows, an assignment ($x =) reaches the
+// variable that was declared.
+fn (st State) set(name str, v Value, isSet bool) {
+	if isSet {
+		let c = st.cell()
+		c.vars[name] = v
+	} else {
+		st.declare(name, v)
+	}
+}
+
 // walk renders a node list.
 fn (st State) walk(nodes []Node) ! {
 	for _, n in nodes {
@@ -50,38 +120,42 @@ fn (st State) walk(nodes []Node) ! {
 			Action(p, mode) => {
 				let v = try st.evalPipe(p)
 				if p.hasAssign {
-					let c = st.cell()
-					c.vars[p.assign] = v
+					st.set(p.assign, v, p.isSet)
 				} else {
 					try st.emit(escapeFor(mode, printValue(v)))
 				}
 			}
 			If(b) => {
+				// The if's own scope: a variable its pipe declares lives to its end.
+				st.push()
 				let v = try st.evalPipe(b.pipe)
 				if b.pipe.hasAssign {
-					let c = st.cell()
-					c.vars[b.pipe.assign] = v
+					st.set(b.pipe.assign, v, b.pipe.isSet)
 				}
 				if truthy(v) {
-					try st.walk(b.then)
+					try st.block(b.then)
 				} else {
-					try st.walk(b.otherwise)
+					try st.block(b.otherwise)
 				}
+				st.pop()
 			}
 			With(b) => {
+				// The with's own scope, like the if's.
+				st.push()
 				let v = try st.evalPipe(b.pipe)
 				let c = st.cell()
 				if b.pipe.hasAssign {
-					c.vars[b.pipe.assign] = v
+					st.set(b.pipe.assign, v, b.pipe.isSet)
 				}
 				if truthy(v) {
 					let save = c.dot
 					c.dot = v
-					try st.walk(b.then)
+					try st.block(b.then)
 					c.dot = save
 				} else {
-					try st.walk(b.otherwise)
+					try st.block(b.otherwise)
 				}
+				st.pop()
 			}
 			Range(r) => {
 				try st.doRange(r)
@@ -104,30 +178,31 @@ fn (st State) emit(s str) ! {
 
 // doRange renders a range node.
 fn (st State) doRange(r RangeNode) ! {
+	st.push()
 	let v = try st.evalPipe(r.pipe)
 	let c = st.cell()
 	if r.pipe.hasAssign {
-		c.vars[r.pipe.assign] = v
+		st.set(r.pipe.assign, v, r.pipe.isSet)
 	}
 	let save = c.dot
 	mut count = i64(0)
 	if v.kind == KindList {
 		for i, item in v.xs {
 			st.setLoop(r, i, item)
-			try st.walk(r.body)
+			try st.block(r.body)
 			count += 1
 		}
 	} else if v.kind == KindMap {
 		for _, k in sortedKeys(v.m) {
 			st.setLoop(r, 0, None())
 			if len(r.keyVar) > 0 {
-				c.vars[r.keyVar] = Str(k)
+				st.declare(r.keyVar, Str(k))
 			}
 			c.dot = v.m[k]
 			if len(r.valVar) > 0 {
-				c.vars[r.valVar] = c.dot
+				st.declare(r.valVar, c.dot)
 			}
-			try st.walk(r.body)
+			try st.block(r.body)
 			count += 1
 		}
 	} else if v.kind == KindInt {
@@ -135,14 +210,15 @@ fn (st State) doRange(r RangeNode) ! {
 		mut i = i64(0)
 		for i < v.n {
 			st.setLoop(r, i, Int(i))
-			try st.walk(r.body)
+			try st.block(r.body)
 			count += 1
 			i += 1
 		}
 	}
 	if count == 0 {
-		try st.walk(r.otherwise)
+		try st.block(r.otherwise)
 	}
+	st.pop()
 	c.dot = save
 }
 
@@ -150,10 +226,10 @@ fn (st State) doRange(r RangeNode) ! {
 fn (st State) setLoop(r RangeNode, i i64, item Value) {
 	let c = st.cell()
 	if len(r.keyVar) > 0 {
-		c.vars[r.keyVar] = Int(i)
+		st.declare(r.keyVar, Int(i))
 	}
 	if len(r.valVar) > 0 {
-		c.vars[r.valVar] = item
+		st.declare(r.valVar, item)
 	}
 	c.dot = item
 }

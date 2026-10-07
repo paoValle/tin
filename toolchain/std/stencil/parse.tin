@@ -46,6 +46,8 @@ type Pipe struct {
 	assign str
 	// hasAssign marks the assignment form.
 	hasAssign bool
+	// isSet marks $x = (assignment) rather than $x := (declaration).
+	isSet bool
 }
 
 // Cmd is one command: its operands.
@@ -334,11 +336,26 @@ fn (p mut Parser) parseWith() !Node {
 	try p.consumeWord("with")
 	let pipe = try p.parsePipe(true)
 	try p.expectClose()
+	return try p.parseWithBody(pipe)
+}
+
+// parseWithBody parses a with's body and its else branches, the pipe already parsed.
+fn (p mut Parser) parseWithBody(pipe Pipe) !Node {
 	let body = try p.parseList("else end")
 	let branch = Branch{pipe: pipe, then: body}
 	let word = try p.openAction()
 	if word == "else" {
 		try p.consumeWord("else")
+		p.skipSpace()
+		if p.peekWord() == "with" {
+			// else with, like else if.
+			try p.consumeWord("with")
+			let inner = try p.parsePipe(true)
+			try p.expectClose()
+			let node = try p.parseWithBody(inner)
+			branch.otherwise = []Node{node}
+			return Node.With(branch)
+		}
 		try p.expectClose()
 		branch.otherwise = try p.parseList("end")
 		let w2 = try p.openAction()
@@ -459,10 +476,11 @@ fn (p mut Parser) parseBlock() !Node {
 	return Node.Call(TemplateCall{name: name, pipe: pipe, hasPipe: true})
 }
 
-// parseKeywordPipe parses "keyword pipe".
+// parseKeywordPipe parses "keyword pipe". An if may declare variables in its pipe
+// ({{if $x := .a}}), as Go's template allows.
 fn (p mut Parser) parseKeywordPipe(word str) !Pipe {
 	try p.consumeWord(word)
-	return try p.parsePipe(false)
+	return try p.parsePipe(true)
 }
 
 // parsePipe parses commands joined by |, and an optional $x := assignment.
@@ -483,6 +501,13 @@ fn (p mut Parser) parsePipe(allowAssign bool) !Pipe {
 			pipe.assign = p.text[p.pos:j]
 			pipe.hasAssign = true
 			p.advanceTo(k + 2)
+			p.skipSpace()
+		} else if k < len(p.text) && p.text[k] == '=' && (k+1 >= len(p.text) || p.text[k+1] != '=') {
+			// $x = expr assigns the variable it was declared with, as Go's template does.
+			pipe.assign = p.text[p.pos:j]
+			pipe.hasAssign = true
+			pipe.isSet = true
+			p.advanceTo(k + 1)
 			p.skipSpace()
 		}
 	}
@@ -653,16 +678,76 @@ fn (p mut Parser) parseStringLiteral() !str {
 	fail p.failAt("unterminated string")
 }
 
-// parseNumber parses an integer or a float.
+// parseNumber parses an integer or a float, with Go's bases (0x, 0o, 0b, a leading 0 for octal)
+// and _ digit separators.
 fn (p mut Parser) parseNumber() !Arg {
 	let start = p.pos
 	if p.text[p.pos] == '-' {
 		p.advance()
 	}
+	// A base prefix makes the rest of the digits base 2, 8 or 16.
+	mut base = i64(10)
+	mut digits = p.pos
+	if p.pos+1 < len(p.text) && p.text[p.pos] == '0' {
+		let d = p.text[p.pos+1]
+		if d == 'x' || d == 'X' {
+			base = 16
+			digits = p.pos + 2
+			p.advanceTo(digits)
+		} else if d == 'o' || d == 'O' {
+			base = 8
+			digits = p.pos + 2
+			p.advanceTo(digits)
+		} else if d == 'b' || d == 'B' {
+			base = 2
+			digits = p.pos + 2
+			p.advanceTo(digits)
+		}
+	}
+	if base != 10 {
+		let dstart = p.pos
+		for p.pos < len(p.text) {
+			let c = p.text[p.pos]
+			if isDigitOf(c, base) || c == '_' {
+				p.advance()
+			} else {
+				break
+			}
+		}
+		if p.pos == dstart {
+			fail p.failAt(say.Fmt("bad number %s", p.text[start:p.pos]))
+		}
+		let body = stripUnderscores(p.text[dstart:p.pos])
+		let (v, err) = mint.ParseInt(body, base)
+		if err != nil {
+			fail p.failAt(say.Fmt("bad number %s", p.text[start:p.pos]))
+		}
+		return Arg.Int(v)
+	}
+	// A leading 0 alone is octal, as Go's literals are.
+	if p.pos < len(p.text) && p.text[p.pos] == '0' && p.pos+1 < len(p.text) && p.text[p.pos+1] >= '0' && p.text[p.pos+1] <= '7' {
+		mut j = p.pos + 1
+		mut octal = true
+		for j < len(p.text) && (p.text[j] >= '0' && p.text[j] <= '9' || p.text[j] == '_') {
+			if p.text[j] > '7' {
+				octal = false
+			}
+			j += 1
+		}
+		if octal && (j >= len(p.text) || p.text[j] != '.') {
+			let body = stripUnderscores(p.text[p.pos:j])
+			let (v, err) = mint.ParseInt(body, 8)
+			if err != nil {
+				fail p.failAt(say.Fmt("bad number %s", p.text[start:j]))
+			}
+			p.advanceTo(j)
+			return Arg.Int(v)
+		}
+	}
 	mut isFloat = false
 	for p.pos < len(p.text) {
 		let c = p.text[p.pos]
-		if c >= '0' && c <= '9' {
+		if c >= '0' && c <= '9' || c == '_' {
 			p.advance()
 		} else if c == '.' && !isFloat {
 			isFloat = true
@@ -677,7 +762,7 @@ fn (p mut Parser) parseNumber() !Arg {
 			break
 		}
 	}
-	let s = p.text[start:p.pos]
+	let s = stripUnderscores(p.text[start:p.pos])
 	if isFloat {
 		let (f, err) = mint.ParseFloat(s)
 		if err != nil {
@@ -690,6 +775,28 @@ fn (p mut Parser) parseNumber() !Arg {
 		fail p.failAt(say.Fmt("bad number %s", s))
 	}
 	return Arg.Int(v)
+}
+
+// isDigitOf reports whether c is a digit of base (2, 8, 10 or 16).
+fn isDigitOf(c u8, base i64) bool {
+	if c >= '0' && c <= '9' {
+		return i64(c)-'0' < base
+	}
+	if base == 16 && (c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+		return true
+	}
+	return false
+}
+
+// stripUnderscores removes the _ digit separators Go's number literals allow.
+fn stripUnderscores(s str) str {
+	mut out = ""
+	for i in 0..len(s) {
+		if s[i] != '_' {
+			out += s[i:i+1]
+		}
+	}
+	return out
 }
 
 // consumeWord consumes the current word, which must be word.

@@ -42,5 +42,95 @@ parse error {{.a |}} stencil: bad:1:7: empty command
 parse error {{(}} stencil: bad:1:4: empty command
 parse error {{.a}}x{{else}} stencil: bad:1:8: unexpected else
 parse error line stencil: bad2:2:5: expected }
+case empty ok
+case text ok
+case .X ok
+case .U.V ok
+case map .one ok
+case map .two ok
+case map .NO ok
+case declare in action ok
+case simple assignment ok
+case nested assignment ok
+case nested assignment changes the last declaration ok
+case *[]int[1] ok
+case empty with int ok
+case empty with string ok
+case empty with slice ok
+case if true ok
+case if false ok
+case if 1 ok
+case if 0 ok
+case if 1.5 ok
+case if emptystring ok
+case if string ok
+case if emptyslice ok
+case if slice ok
+case if emptymap ok
+case if map ok
+case if $x with $y int ok
+case if $x with $x int ok
+case if else if ok
+case if else chain ok
+case print ok
+case print 123 ok
+case printf int ok
+case printf float ok
+case printf string ok
+case printf field ok
+case printf dot ok
+case printf var ok
+case html ok
+case html pipeline ok
+case not ok
+case and ok
+case or ok
+case slice[0] ok
+case slice[1] ok
+case map[one] ok
+case double index ok
+case index of an interface field ok
+case len slice ok
+case len map ok
+case with true ok
+case with false ok
+case with 1 ok
+case with 0 ok
+case with emptystring ok
+case with string ok
+case with emptyslice ok
+case with slice ok
+case with emptymap ok
+case with $x int ok
+case with $x struct.U.V ok
+case with variable and action ok
+case with else with ok
+case with else with chain ok
+case range []int ok
+case range empty no else ok
+case range []int else ok
+case range empty else ok
+case range []bool ok
+case range map ok
+case range empty map else ok
+case range empty interface ok
+case range $x SI ok
+case range $x $y SI ok
+case range $x MSIone ok
+case range $x $y MSIone ok
+case declare in range ok
+case or as if true ok
+case or as if false ok
+case decimal ok
+case hex ok
+case float ok
+case dot int ok
+case dot string ok
+case dot bool ok
+case $ int ok
+case js ok
+case js unicode ok
+case urlquery ok
+case bug9 ok
 many ok 70
 deep limit true

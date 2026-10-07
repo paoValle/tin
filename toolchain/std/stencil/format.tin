@@ -3,6 +3,7 @@ package stencil
 // printf formatting for templates and the escapers the html, urlquery and js builtins use.
 
 import "fault"
+import "glyph"
 import "say"
 
 // format is Go's fmt.Sprintf over template values, for the verbs templates use: v, s, q, d, t,
@@ -187,16 +188,119 @@ fn isURLSafe(c u8) bool {
 	return c == '-' || c == '_' || c == '.' || c == '~'
 }
 
-// escapeJS escapes text for a JavaScript string, as Go's js escaper does: control characters and
-// the HTML-significant characters become \uXXXX, so </script> cannot end the element.
+// escapeJS escapes text for a JavaScript string, as Go's text/template js escaper
+// (JSEscapeString) does: backslash, both quotes and <, >, & and = get short escapes, control
+// characters and non-printable runes become \uXXXX, and printable runes stay, so </script>
+// cannot end the element.
 fn escapeJS(s str) str {
 	mut out = ""
-	for i in 0..len(s) {
+	mut i = 0
+	for i < len(s) {
 		let c = s[i]
-		if c < 0x20 || c == '<' || c == '>' || c == '&' || c == '=' || c == '\'' || c == '"' || c == '\\' || c == '`' || c == '$' || c >= 0x7f {
-			out += say.Fmt("\\u%04X", u64(c))
-		} else {
+		if c == '\\' {
+			out += "\\\\"
+			i += 1
+		} else if c == '\'' {
+			out += "\\'"
+			i += 1
+		} else if c == '"' {
+			out += "\\\""
+			i += 1
+		} else if c == '<' {
+			out += "\\u003C"
+			i += 1
+		} else if c == '>' {
+			out += "\\u003E"
+			i += 1
+		} else if c == '&' {
+			out += "\\u0026"
+			i += 1
+		} else if c == '=' {
+			out += "\\u003D"
+			i += 1
+		} else if c < 0x20 {
+			out += say.Fmt("\\u%04X", i64(c))
+			i += 1
+		} else if c < 0x7f {
 			out += s[i:i+1]
+			i += 1
+		} else {
+			let (r, n) = glyph.DecodeRune(s, i)
+			if glyph.IsPrint(r) {
+				out += s[i:i+n]
+			} else {
+				out += say.Fmt("\\u%04X", u64(r))
+			}
+			i += n
+		}
+	}
+	return out
+}
+
+// escapeJSStr escapes text for a JavaScript string inside an HTML <script> element, as Go's
+// html/template jsStrEscaper does: control characters as \u00xx (with the short \t, \n, \f and
+// \r), the HTML specials as lowercase hex so the result also embeds in an attribute, "/" as \/
+// and "\" as \\.
+fn escapeJSStr(s str) str {
+	mut out = ""
+	mut i = 0
+	for i < len(s) {
+		let c = s[i]
+		if c == '\t' {
+			out += "\\t"
+			i += 1
+		} else if c == '\n' {
+			out += "\\n"
+			i += 1
+		} else if c == '\f' {
+			out += "\\f"
+			i += 1
+		} else if c == '\r' {
+			out += "\\r"
+			i += 1
+		} else if c < 0x20 {
+			out += say.Fmt("\\u%04x", i64(c))
+			i += 1
+		} else if c == '"' {
+			out += "\\u0022"
+			i += 1
+		} else if c == '`' {
+			out += "\\u0060"
+			i += 1
+		} else if c == '&' {
+			out += "\\u0026"
+			i += 1
+		} else if c == '\'' {
+			out += "\\u0027"
+			i += 1
+		} else if c == '+' {
+			out += "\\u002b"
+			i += 1
+		} else if c == '/' {
+			out += "\\/"
+			i += 1
+		} else if c == '<' {
+			out += "\\u003c"
+			i += 1
+		} else if c == '>' {
+			out += "\\u003e"
+			i += 1
+		} else if c == '\\' {
+			out += "\\\\"
+			i += 1
+		} else if c < 0x7f {
+			out += s[i:i+1]
+			i += 1
+		} else {
+			let (r, n) = glyph.DecodeRune(s, i)
+			if r == 0x2028 {
+				out += "\\u2028"
+			} else if r == 0x2029 {
+				out += "\\u2029"
+			} else {
+				out += s[i:i+n]
+			}
+			i += n
 		}
 	}
 	return out

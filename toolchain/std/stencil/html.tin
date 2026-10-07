@@ -350,7 +350,7 @@ fn escapeFor(mode i64, s str) str {
 		return escapeUnquoted(escapeURLAttr(s))
 	}
 	if mode == escJS {
-		return escapeJS(s)
+		return escapeJSStr(s)
 	}
 	return escapeHTML(s)
 }

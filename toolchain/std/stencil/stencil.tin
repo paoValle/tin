@@ -404,12 +404,17 @@ fn builtin(name str, args []Value) !Value {
 		return Str(text)
 	}
 	if name == "print" || name == "println" {
+		// Go's fmt.Sprint adds a space between operands when neither is a string; Sprintln always
+		// does and appends a newline.
 		mut out = ""
+		mut prevStr = false
 		for i, a in args {
-			if name == "println" && i > 0 {
+			let curStr = a.kind == KindStr
+			if i > 0 && (name == "println" || (!prevStr && !curStr)) {
 				out += " "
 			}
 			out += printValue(a)
+			prevStr = curStr
 		}
 		if name == "println" {
 			out += "\n"
