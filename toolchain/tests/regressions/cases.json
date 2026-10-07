@@ -934,5 +934,15 @@
       "exit": 2,
       "stderr_contains": "panic: stack overflow"
     }
+  },
+  {
+    "source": "many-globals.tin",
+    "issue": 602,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "13230 1.5\n",
+      "stderr": ""
+    }
   }
 ]
