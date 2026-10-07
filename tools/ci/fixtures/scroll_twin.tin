@@ -1,0 +1,71 @@
+package main
+
+import "say"
+import "scroll"
+import "quarry"
+
+// The scroll twin, Tin side: read an XML document on stdin and print its token stream, one token
+// per line, in the same format as bench/ref/scroll (Go's encoding/xml). Adjacent character data is
+// merged, as the Go side merges it.
+
+fn main() {
+	let body = quarry.ReadStdin() catch err {
+		say.Line("fault", err)
+		return
+	}
+	mut d = scroll.NewDecoder(body)
+	mut pending = ""
+	for i in 0..100000 {
+		let t = d.Next() catch err {
+			flush(pending)
+			say.Line("fault", err)
+			return
+		}
+		match t {
+			StartElement(n, attrs) => {
+				flush(pending)
+				pending = ""
+				mut line = say.Fmt("start %s %s", n.Space, n.Local)
+				for _, a in attrs {
+					line += " " + a.Name.Space + ":" + a.Name.Local + "=" + a.Value
+				}
+				say.Line(line)
+			}
+			EndElement(n) => {
+				flush(pending)
+				pending = ""
+				say.Line("end", n.Space, n.Local)
+			}
+			CharData(text) => {
+				pending += text
+			}
+			Comment(text) => {
+				flush(pending)
+				pending = ""
+				say.Line("comment", text)
+			}
+			ProcInst(target, inst) => {
+				flush(pending)
+				pending = ""
+				say.Line("pi", target, inst)
+			}
+			Directive(text) => {
+				flush(pending)
+				pending = ""
+				say.Line("directive", text)
+			}
+			Done => {
+				flush(pending)
+				say.Line("done")
+				return
+			}
+		}
+	}
+}
+
+// flush prints the merged character data, if any.
+fn flush(pending str) {
+	if len(pending) > 0 {
+		say.Line("text", pending)
+	}
+}

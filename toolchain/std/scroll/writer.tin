@@ -1,0 +1,232 @@
+package scroll
+
+// The writer: tokens or direct calls, with text and attribute escaping, so the output is always
+// well-formed. With an indent unit it lays elements out on their own lines.
+
+import "fault"
+import "say"
+import "twine"
+
+// Writer writes XML.
+type Writer struct {
+	w      twine.Builder
+	indent str
+	depth  i64
+	stack  []str
+	pretty bool
+}
+
+// NewWriter returns a writer with no indentation.
+fn NewWriter() Writer {
+	return Writer{w: twine.NewBuilder(256), indent: "", depth: 0, stack: []str{}, pretty: false}
+}
+
+// NewWriterIndent returns a writer that indents each element by unit (for example "  ").
+fn NewWriterIndent(unit str) Writer {
+	return Writer{w: twine.NewBuilder(256), indent: unit, depth: 0, stack: []str{}, pretty: true}
+}
+
+// String returns what has been written.
+fn (w Writer) String() str {
+	return w.w.String()
+}
+
+// Reset empties the writer.
+fn (w mut Writer) Reset() {
+	w.w.Reset()
+	w.depth = 0
+	w.stack = []str{}
+}
+
+// newline writes the indentation for the current depth when the writer is pretty.
+fn (w mut Writer) newline() {
+	if !w.pretty || w.depth == 0 {
+		return
+	}
+	w.w.Byte(10)
+	for i in 0..w.depth {
+		w.w.Str(w.indent)
+	}
+}
+
+// EscapeText writes s as element text: &, <, > and \r are escaped.
+fn (w mut Writer) EscapeText(s str) {
+	for i in 0..len(s) {
+		let c = s[i]
+		if c == '&' {
+			w.w.Str("&amp;")
+		} else if c == '<' {
+			w.w.Str("&lt;")
+		} else if c == '>' {
+			w.w.Str("&gt;")
+		} else if c == '\r' {
+			w.w.Str("&#xD;")
+		} else {
+			w.w.Byte(c)
+		}
+	}
+}
+
+// EscapeAttr writes s as an attribute value: &, <, >, ", ' and the whitespace characters are
+// escaped.
+fn (w mut Writer) EscapeAttr(s str) {
+	for i in 0..len(s) {
+		let c = s[i]
+		if c == '&' {
+			w.w.Str("&amp;")
+		} else if c == '<' {
+			w.w.Str("&lt;")
+		} else if c == '>' {
+			w.w.Str("&gt;")
+		} else if c == '"' {
+			w.w.Str("&#34;")
+		} else if c == '\'' {
+			w.w.Str("&#39;")
+		} else if c == '\t' {
+			w.w.Str("&#x9;")
+		} else if c == '\n' {
+			w.w.Str("&#xA;")
+		} else if c == '\r' {
+			w.w.Str("&#xD;")
+		} else {
+			w.w.Byte(c)
+		}
+	}
+}
+
+// Start writes a start tag with its attributes.
+fn (w mut Writer) Start(name str, attrs []Attr) ! {
+	try checkName(name)
+	w.newline()
+	w.w.Byte('<')
+	w.w.Str(name)
+	for _, a in attrs {
+		try checkName(a.Name.Local)
+		w.w.Byte(' ')
+		w.w.Str(a.Name.Local)
+		w.w.Str("=\"")
+		w.EscapeAttr(a.Value)
+		w.w.Byte('"')
+	}
+	w.w.Byte('>')
+	w.stack = append(w.stack, name)
+	w.depth += 1
+}
+
+// End writes an end tag, which must match the innermost open element.
+fn (w mut Writer) End(name str) ! {
+	if len(w.stack) == 0 {
+		fail say.Fault("scroll: no open element for </%s>", name)
+	}
+	let open = w.stack[len(w.stack)-1]
+	if open != name {
+		fail say.Fault("scroll: </%s> does not match <%s>", name, open)
+	}
+	w.stack = w.stack[0:len(w.stack)-1]
+	w.depth -= 1
+	if w.pretty {
+		w.w.Byte(10)
+		for i in 0..w.depth {
+			w.w.Str(w.indent)
+		}
+	}
+	w.w.Str("</")
+	w.w.Str(name)
+	w.w.Byte('>')
+}
+
+// Element writes a whole element with escaped text content.
+fn (w mut Writer) Element(name str, text str) ! {
+	try w.Start(name, []Attr{})
+	w.EscapeText(text)
+	try w.End(name)
+}
+
+// Text writes escaped character data.
+fn (w mut Writer) Text(s str) {
+	w.EscapeText(s)
+}
+
+// Comment writes a comment; a comment may not contain "--".
+fn (w mut Writer) Comment(s str) ! {
+	if contains(s, "--") {
+		fail say.Fault("scroll: a comment may not contain --")
+	}
+	w.newline()
+	w.w.Str("<!--")
+	w.w.Str(s)
+	w.w.Str("-->")
+}
+
+// ProcInst writes a processing instruction.
+fn (w mut Writer) ProcInst(target str, inst str) ! {
+	try checkName(target)
+	w.newline()
+	w.w.Str("<?")
+	w.w.Str(target)
+	if len(inst) > 0 {
+		w.w.Byte(' ')
+		w.w.Str(inst)
+	}
+	w.w.Str("?>")
+}
+
+// Directive writes a directive such as a doctype, passed through unchanged.
+fn (w mut Writer) Directive(s str) {
+	w.newline()
+	w.w.Str("<!")
+	w.w.Str(s)
+	w.w.Byte('>')
+}
+
+// contains reports whether s holds sub.
+fn contains(s str, sub str) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	mut i = 0
+	for i+len(sub) <= len(s) {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+		i += 1
+	}
+	return false
+}
+
+// checkName refuses a name the tokenizer would reject.
+fn checkName(name str) ! {
+	if len(name) == 0 || !nameStart(name[0]) {
+		fail say.Fault("scroll: invalid name %q", name)
+	}
+	for i in 1..len(name) {
+		if !nameByte(name[i]) {
+			fail say.Fault("scroll: invalid name %q", name)
+		}
+	}
+}
+
+// WriteToken writes one token, which must nest correctly.
+fn (w mut Writer) WriteToken(t Token) ! {
+	match t {
+		StartElement(n, attrs) => {
+			try w.Start(n.Local, attrs)
+		}
+		EndElement(n) => {
+			try w.End(n.Local)
+		}
+		CharData(s) => {
+			w.EscapeText(s)
+		}
+		Comment(s) => {
+			try w.Comment(s)
+		}
+		ProcInst(target, inst) => {
+			try w.ProcInst(target, inst)
+		}
+		Directive(s) => {
+			w.Directive(s)
+		}
+		Done => {}
+	}
+}

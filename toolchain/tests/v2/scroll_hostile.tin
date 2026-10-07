@@ -1,0 +1,78 @@
+package main
+
+import "say"
+import "scroll"
+import "fault"
+
+// repeat concatenates s n times.
+fn repeat(s str, n i64) str {
+	mut out = ""
+	for i in 0..n {
+		out += s
+	}
+	return out
+}
+
+// outcome consumes up to n tokens and reports what happened: "done", "limit" or the fault text.
+fn outcome(xml str, n i64) str {
+	mut d = scroll.NewDecoder(xml)
+	for i in 0..n {
+		let t = d.Next() catch err {
+			if fault.Is(err, fault.LimitExceeded) {
+				return "limit"
+			}
+			return say.Fmt("%s", err)
+		}
+		match t {
+			Done => {
+				return "done"
+			}
+			_ => {}
+		}
+	}
+	return "more"
+}
+
+fn main() {
+	// Billion laughs: the internal entities are never defined, so the first reference fails and
+	// nothing is expanded.
+	let laughs = `<!DOCTYPE lolz [
+ <!ENTITY lol "lol">
+ <!ENTITY lol1 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
+ <!ENTITY lol2 "&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;">
+ <!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">
+ <!ENTITY lol4 "&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;">
+]>
+<lolz>&lol4;</lolz>`
+	say.Line("laughs", outcome(laughs, 100))
+
+	// An external entity is never fetched: SYSTEM is refused the same way.
+	let external = `<!DOCTYPE r [<!ENTITY x SYSTEM "file:///etc/passwd">]><r>&x;</r>`
+	say.Line("external", outcome(external, 100))
+
+	// A parameter entity in the internal subset is just a directive.
+	let param = `<!DOCTYPE r [<!ENTITY % p "<!ENTITY x 'y'>"> %p;]><r/>`
+	say.Line("param", outcome(param, 100))
+
+	// Deep nesting hits the depth limit rather than the stack.
+	let deep = repeat("<a>", 20000)
+	say.Line("deep open", outcome(deep, 20000))
+	let deepClose = "<r>" + repeat("<a>", 20000) + repeat("</a>", 20000) + "</r>"
+	say.Line("deep close", outcome(deepClose, 50000))
+
+	// A huge text token hits the token limit.
+	let huge = "<r>" + repeat("x", 20 * 1024 * 1024) + "</r>"
+	say.Line("huge text", outcome(huge, 10))
+	// A huge attribute value too.
+	let hugeAttr = "<r a=\"" + repeat("y", 20 * 1024 * 1024) + "\"/>"
+	say.Line("huge attr", outcome(hugeAttr, 10))
+	// A huge comment too.
+	let hugeComment = "<r><!--" + repeat("z", 20 * 1024 * 1024) + "--></r>"
+	say.Line("huge comment", outcome(hugeComment, 10))
+
+	// A document that only opens tags never completes.
+	say.Line("unclosed", outcome("<a><b><c>", 10))
+	// A doctype without a root, and a root after a directive: fine.
+	say.Line("only directive", outcome(`<!DOCTYPE r>`, 10))
+	say.Line("after directive", outcome(`<!DOCTYPE r><r/>`, 10))
+}

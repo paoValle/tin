@@ -1802,13 +1802,30 @@ Value is a struct with constructor functions rather than the issue's enum: a com
 
 ## scroll
 
-Package scroll is a safe, streaming XML tokenizer and writer, like Go's encoding/xml without reflection: no DTD processing and no external entities, by design, so XXE and billion-laughs attacks cannot happen. Entities are the five predefined names and numeric references; anything else is an error. The tokenizer resolves namespaces into Name.Space and bounds nesting, the attribute count and the token size (fault.LimitExceeded). The writer and the Go twin are the next steps of #579.
+Package scroll is a safe, streaming XML tokenizer and writer, like Go's encoding/xml without reflection: no DTD processing and no external entities, by design, so XXE and billion-laughs attacks cannot happen. Entities are the five predefined names and numeric references; anything else is an error. The tokenizer resolves namespaces into Name.Space and bounds nesting, the attribute count and the token size (fault.LimitExceeded). Writer writes tokens or direct calls with text and attribute escaping and optional indentation; the Go twin (bench/ref/scroll and tools/ci/scroll_check.py) compares the token streams with encoding/xml over an RSS, SOAP, S3 and SVG corpus.
 
 - `type Token enum`: Token is one piece of an XML document.
 - `type Name struct`: Name is a name with its namespace: space is the URI the prefix resolved to, empty when there is none; local is the part after the prefix.
 - `type Attr struct`: Attr is one attribute.
 - `type Decoder struct`: Decoder reads a document token by token.
 - `NewDecoder(text str) Decoder`: NewDecoder returns a decoder over text in strict mode: matching end tags, a single root, valid names, unique attributes and valid characters are enforced.
-- `(d mut Decoder) LimitToken(n i64)`: LimitToken lowers the token size limit (it cannot be raised above 16 MiB): a token longer than n bytes fails with fault.LimitExceeded.
 - `NewLenientDecoder(text str) Decoder`: NewLenientDecoder is NewDecoder without the well-formedness checks.
+- `(d mut Decoder) LimitDepth(n i64)`: LimitDepth lowers (or raises) the nesting limit; tests use it to keep documents small.
+- `(d mut Decoder) LimitAttrs(n i64)`: LimitAttrs sets the attribute-count limit.
+- `(d mut Decoder) LimitToken(n i64)`: LimitToken sets the token-size limit.
 - `(d mut Decoder) Next() !Token`: Next returns the next token, or Done at the end of the document.
+- `type Writer struct`: Writer writes XML.
+- `NewWriter() Writer`: NewWriter returns a writer with no indentation.
+- `NewWriterIndent(unit str) Writer`: NewWriterIndent returns a writer that indents each element by unit (for example "  ").
+- `(w Writer) String() str`: String returns what has been written.
+- `(w mut Writer) Reset()`: Reset empties the writer.
+- `(w mut Writer) EscapeText(s str)`: EscapeText writes s as element text: &, <, > and \r are escaped.
+- `(w mut Writer) EscapeAttr(s str)`: EscapeAttr writes s as an attribute value: &, <, >, ", ' and the whitespace characters are escaped.
+- `(w mut Writer) Start(name str, attrs []Attr) !`: Start writes a start tag with its attributes.
+- `(w mut Writer) End(name str) !`: End writes an end tag, which must match the innermost open element.
+- `(w mut Writer) Element(name str, text str) !`: Element writes a whole element with escaped text content.
+- `(w mut Writer) Text(s str)`: Text writes escaped character data.
+- `(w mut Writer) Comment(s str) !`: Comment writes a comment; a comment may not contain "--".
+- `(w mut Writer) ProcInst(target str, inst str) !`: ProcInst writes a processing instruction.
+- `(w mut Writer) Directive(s str)`: Directive writes a directive such as a doctype, passed through unchanged.
+- `(w mut Writer) WriteToken(t Token) !`: WriteToken writes one token, which must nest correctly.

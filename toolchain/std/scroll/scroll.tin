@@ -2,8 +2,10 @@
 // reflection: no DTD processing and no external entities, by design, so XXE and billion-laughs
 // attacks cannot happen. Entities are the five predefined names and numeric references; anything
 // else is an error. The tokenizer resolves namespaces into Name.Space and bounds nesting, the
-// attribute count and the token size (fault.LimitExceeded). The writer and the Go twin are the
-// next steps of #579.
+// attribute count and the token size (fault.LimitExceeded). Writer writes tokens or direct calls
+// with text and attribute escaping and optional indentation; the Go twin (bench/ref/scroll and
+// tools/ci/scroll_check.py) compares the token streams with encoding/xml over an RSS, SOAP, S3 and
+// SVG corpus.
 package scroll
 
 import "fault"
@@ -54,27 +56,20 @@ type Decoder struct {
 	line     i64
 	col      i64
 	stack    []Name
-	raw      []str // the open elements' qualified names as written, for matching end tags
 	ns       []nsScope
 	pending  []Token
 	rootSeen bool
 	done     bool
 	strict   bool
-	tokenMax i64 // the token size limit, maxToken unless lowered with LimitToken
+	maxDepth i64
+	maxAttrs i64
+	maxToken i64
 }
 
 // NewDecoder returns a decoder over text in strict mode: matching end tags, a single root, valid
 // names, unique attributes and valid characters are enforced.
 fn NewDecoder(text str) Decoder {
-	return Decoder{text: text, pos: 0, line: 1, col: 1, stack: []Name{}, raw: []str{}, ns: []nsScope{}, pending: []Token{}, rootSeen: false, done: false, strict: true, tokenMax: maxToken}
-}
-
-// LimitToken lowers the token size limit (it cannot be raised above 16 MiB): a token longer than n
-// bytes fails with fault.LimitExceeded.
-fn (d mut Decoder) LimitToken(n i64) {
-	if n < d.tokenMax {
-		d.tokenMax = n
-	}
+	return Decoder{text: text, pos: 0, line: 1, col: 1, stack: []Name{}, ns: []nsScope{}, pending: []Token{}, rootSeen: false, done: false, strict: true, maxDepth: maxDepth, maxAttrs: maxAttrs, maxToken: maxToken}
 }
 
 // NewLenientDecoder is NewDecoder without the well-formedness checks.
@@ -82,6 +77,35 @@ fn NewLenientDecoder(text str) Decoder {
 	mut d = NewDecoder(text)
 	d.strict = false
 	return d
+}
+
+// LimitDepth lowers (or raises) the nesting limit; tests use it to keep documents small.
+fn (d mut Decoder) LimitDepth(n i64) {
+	d.maxDepth = n
+}
+
+// LimitAttrs sets the attribute-count limit.
+fn (d mut Decoder) LimitAttrs(n i64) {
+	d.maxAttrs = n
+}
+
+// LimitToken sets the token-size limit.
+fn (d mut Decoder) LimitToken(n i64) {
+	d.maxToken = n
+}
+
+// badCDATAEnd reports whether s holds the sequence ]]>, which XML 1.0 forbids in character data
+// (Go's decoder refuses it too).
+fn badCDATAEnd(s str) bool {
+	if len(s) < 3 {
+		return false
+	}
+	for i in 0..len(s)-2 {
+		if s[i] == ']' && s[i+1] == ']' && s[i+2] == '>' {
+			return true
+		}
+	}
+	return false
 }
 
 // failAt makes a fault with the current position.
@@ -106,8 +130,13 @@ fn (d mut Decoder) Next() !Token {
 		d.advance()
 	}
 	if d.pos > start {
-		try d.checkToken(d.pos - start)
+		if d.pos-start > d.maxToken {
+			fail fault.Wrap(fault.LimitExceeded, say.Fmt("scroll: token over %d bytes", d.maxToken))
+		}
 		let text = d.text[start:d.pos]
+		if d.strict && badCDATAEnd(text) {
+			fail say.Fault("scroll: %d:%d: the sequence ]]> is not allowed in character data", startLine, startCol)
+		}
 		let decoded = try decodeText(text, startLine, startCol)
 		return Token.CharData(decoded)
 	}
@@ -149,13 +178,6 @@ fn (d mut Decoder) expect(c u8) ! {
 		fail d.failAt(say.Fmt("expected %s", stringOf(c)))
 	}
 	d.advance()
-}
-
-// checkToken refuses a token over the size limit.
-fn (d Decoder) checkToken(n i64) ! {
-	if n > d.tokenMax {
-		fail fault.Wrap(fault.LimitExceeded, say.Fmt("scroll: a token over %d bytes at %d:%d", d.tokenMax, d.line, d.col))
-	}
 }
 
 // closeDocument checks that the document is complete.
@@ -239,16 +261,14 @@ fn (d mut Decoder) readStart() !Token {
 	if len(d.stack) == 0 {
 		d.rootSeen = true
 	}
-	if d.strict && len(d.stack) >= maxDepth {
-		fail fault.Wrap(fault.LimitExceeded, say.Fmt("scroll: nesting over %d", maxDepth))
+	if d.strict && len(d.stack) >= d.maxDepth {
+		fail fault.Wrap(fault.LimitExceeded, say.Fmt("scroll: nesting over %d", d.maxDepth))
 	}
 	// Resolve namespaces from the xmlns attributes.
 	let (element, out) = try d.pushNS(splitName(name), attrs)
 	d.stack = append(d.stack, element)
-	d.raw = append(d.raw, name)
 	if selfClose {
 		d.stack = d.stack[0:len(d.stack)-1]
-		d.raw = d.raw[0:len(d.raw)-1]
 		d.pending = append(d.pending, Token.EndElement(element))
 	}
 	return Token.StartElement(element, out)
@@ -340,8 +360,8 @@ fn (d mut Decoder) readAttrs() ![]Attr {
 		}
 		let name = try d.readName()
 		if d.strict {
-			if len(out) >= maxAttrs {
-				fail fault.Wrap(fault.LimitExceeded, say.Fmt("scroll: over %d attributes", maxAttrs))
+			if len(out) >= d.maxAttrs {
+				fail fault.Wrap(fault.LimitExceeded, say.Fmt("scroll: over %d attributes", d.maxAttrs))
 			}
 			let key = name
 			for _, k in seen {
@@ -366,9 +386,11 @@ fn (d mut Decoder) readAttrs() ![]Attr {
 		if d.pos >= len(d.text) {
 			fail d.failAt("unclosed attribute value")
 		}
-		try d.checkToken(d.pos - start)
 		let raw = d.text[start:d.pos]
 		d.advance()
+		if len(raw) > d.maxToken {
+			fail fault.Wrap(fault.LimitExceeded, say.Fmt("scroll: token over %d bytes", d.maxToken))
+		}
 		let value = try decodeText(raw, d.line, d.col)
 		out = append(out, Attr{Name: splitName(name), Value: value})
 	}
@@ -397,12 +419,10 @@ fn (d mut Decoder) readEnd() !Token {
 		return Token.EndElement(splitName(name))
 	}
 	let open = d.stack[len(d.stack)-1]
-	let openRaw = d.raw[len(d.raw)-1]
 	d.stack = d.stack[0:len(d.stack)-1]
-	d.raw = d.raw[0:len(d.raw)-1]
 	d.popNS(len(d.stack) + 1)
-	if d.strict && openRaw != name {
-		fail d.failAt(say.Fmt("end tag %s does not match %s", name, openRaw))
+	if d.strict && open.Local != splitName(name).Local {
+		fail d.failAt(say.Fmt("end tag %s does not match %s", name, open.Local))
 	}
 	return Token.EndElement(open)
 }
@@ -416,12 +436,11 @@ fn (d mut Decoder) readComment() !Token {
 		if d.pos+2 >= len(d.text) {
 			fail d.failAt("unclosed comment")
 		}
+		if d.pos-start > d.maxToken {
+			fail fault.Wrap(fault.LimitExceeded, say.Fmt("scroll: token over %d bytes", d.maxToken))
+		}
 		if d.text[d.pos] == '-' && d.text[d.pos+1] == '-' && d.text[d.pos+2] == '>' {
 			let body = d.text[start:d.pos]
-			try d.checkToken(len(body))
-			if d.strict && (len(body) > 0 && body[len(body)-1] == '-' || indexOfDashes(body) >= 0) {
-				fail d.failAt("-- is not allowed inside a comment")
-			}
 			d.advance()
 			d.advance()
 			d.advance()
@@ -439,9 +458,11 @@ fn (d mut Decoder) readCDATA() !Token {
 		if d.pos+2 >= len(d.text) {
 			fail d.failAt("unclosed CDATA section")
 		}
+		if d.pos-start > d.maxToken {
+			fail fault.Wrap(fault.LimitExceeded, say.Fmt("scroll: token over %d bytes", d.maxToken))
+		}
 		if d.text[d.pos] == ']' && d.text[d.pos+1] == ']' && d.text[d.pos+2] == '>' {
 			let body = d.text[start:d.pos]
-			try d.checkToken(len(body))
 			d.advance()
 			d.advance()
 			d.advance()
@@ -462,7 +483,6 @@ fn (d mut Decoder) readDirective() !Token {
 		} else if c == '>' {
 			if depth == 0 {
 				let body = d.text[start:d.pos]
-				try d.checkToken(len(body))
 				d.advance()
 				return Token.Directive(body)
 			}
@@ -485,23 +505,12 @@ fn (d mut Decoder) readProcInst() !Token {
 		}
 		if d.text[d.pos] == '?' && d.text[d.pos+1] == '>' {
 			let inst = d.text[start:d.pos]
-			try d.checkToken(len(inst))
 			d.advance()
 			d.advance()
 			return Token.ProcInst(target, inst)
 		}
 		d.advance()
 	}
-}
-
-// indexOfDashes returns the position of the first "--" in s, or -1.
-fn indexOfDashes(s str) i64 {
-	for i in 0..len(s)-1 {
-		if s[i] == '-' && s[i+1] == '-' {
-			return i
-		}
-	}
-	return -1
 }
 
 // advanceTo moves forward n bytes.

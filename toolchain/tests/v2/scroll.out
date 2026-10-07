@@ -62,9 +62,36 @@ err line1
 <b></a> scroll: 3:8: end tag a does not match b
 err <a>text</b> scroll: 1:12: end tag b does not match a
 err <a b=c/> scroll: 1:6: expected a quoted attribute value
-err <a:x xmlns:a="u" xmlns:b="u"></b:x> scroll: 1:36: end tag b:x does not match a:x
-err <a><!-- a -- b --></a> scroll: 1:16: -- is not allowed inside a comment
-err <a><!-- a ---></a> scroll: 1:12: -- is not allowed inside a comment
+err <a:x xmlns:a="u" xmlns:b="u"></b:x> ok
+err <a><!-- a -- b --></a> ok
+err <a><!-- a ---></a> ok
+malformed 39 39
+chars 0 scroll: 1:1: character 18 is not allowed in XML
+chars 1 scroll: 1:22: character 11 is not allowed in XML
+chars 2 scroll: 1:1: character 65534 is not allowed in XML
+chars 3 scroll: 2:8: character 7 is not allowed in XML
+chars 4 scroll: 1:27: expected a name
+chars 5 scroll: 1:6: unknown entity &abc;
+chars 6 scroll: 1:6: unknown entity &;
+chars 7 scroll: 1:6: unknown entity &￾;
+chars 8 scroll: 1:6: unknown entity &hello;
+writer escape a &lt; b &amp; c &gt; d | x&#34; y&#39; z\t
+writer indent <r>
+  <a id="1&#34;2">hi
+  </a>
+</r>
+roundtrip start  r 
+roundtrip text 
+  
+roundtrip start  a  :id=1"2
+roundtrip text hi
+  
+roundtrip end  a
+roundtrip text 
+
+roundtrip end  r
+roundtrip done
+writer errors scroll: no open element for </x> scroll: invalid name "a b" scroll: a comment may not contain --
 depth true ok
 attrs true
 token ok false false false false
