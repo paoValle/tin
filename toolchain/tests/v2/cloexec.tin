@@ -1,0 +1,59 @@
+package main
+
+import "say"
+import "quarry"
+import "flume"
+import "relay"
+import "mint"
+import "twine"
+
+// Every descriptor a program holds beyond 0, 1 and 2 must be close-on-exec, so that a child
+// process inherits none of the runtime's descriptors (#576). Linux only: macOS has no /proc, and
+// there the check reports the same zero without examining anything.
+fn main() {
+	// A file the standard library opens, and the relay's wake-up pipes.
+	let w = flume.Create("/tmp/tin-cloexec.tmp") catch _ {
+		say.Line("cloexec descriptors without close-on-exec:", 0)
+		return
+	}
+	w.Line("cloexec")
+	let wake = relay.WakeFD()
+	mut names = quarry.ReadDir("/proc/self/fd") catch _ {
+		[]str{}
+	}
+	let hasProc = len(names) > 0 && wake >= 3
+	mut checked = i64(0)
+	mut bad = i64(0)
+	for _, name in names {
+		let n = mint.Atoi(name) catch _ {
+			i64(-1)
+		}
+		if n < 3 {
+			continue
+		}
+		let info = quarry.ReadFile("/proc/self/fdinfo/" + name) catch _ {
+			""
+		}
+		if len(info) == 0 {
+			continue
+		}
+		checked += 1
+		for line in twine.Split(info, "\n") {
+			if twine.HasPrefix(line, "flags:") {
+				let text = twine.TrimSpace(line[6:len(line)])
+				let flags = mint.ParseUint(text, 8) catch _ {
+					u64(0)
+				}
+				// O_CLOEXEC is 0x80000 in the flags field (printed in octal).
+				if flags&0x80000 == 0 {
+					bad += 1
+				}
+			}
+		}
+	}
+	mut result = i64(0)
+	if hasProc && (bad > 0 || checked < 2) {
+		result = 1
+	}
+	say.Line("cloexec descriptors without close-on-exec:", result)
+}

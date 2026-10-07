@@ -18,7 +18,7 @@ fn rt_sys_munmap(addr i64, n i64) i64 { return munmap(addr, n) }
 extern fn nanosleep(req i64, rem i64) i64
 fn rt_sys_nanosleep(req i64, rem i64) i64 { return nanosleep(req, rem) }
 extern fn open(path i64, flags i64, ...) i64
-fn rt_sys_open(path i64, flags i64, mode i64) i64 { return open(path, flags, mode) }
+fn rt_sys_open(path i64, flags i64, mode i64) i64 { return open(path, flags | 0x1000000, mode) } // O_CLOEXEC
 extern fn pipe(fds i64) i64
 fn rt_sys_pipe(fds i64) i64 { return pipe(fds) }
 extern fn poll(fds i64, n i64, timeout i64) i64

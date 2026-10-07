@@ -68,7 +68,8 @@ fn rt_sys_fcntl(fd i64, cmd i64, arg i64) i64 {
 }
 
 fn rt_sys_socket(domain i64, typ i64, proto i64) i64 {
-	return linux_result(linux_raw(linux_nr_socket(), domain, typ, proto, 0, 0, 0))
+	// SOCK_CLOEXEC (0x80000): a child on exec must inherit no runtime descriptor (#576).
+	return linux_result(linux_raw(linux_nr_socket(), domain, typ | 0x80000, proto, 0, 0, 0))
 }
 
 fn rt_sys_connect(fd i64, addr i64, n i64) i64 {
@@ -84,7 +85,8 @@ fn rt_sys_listen(fd i64, backlog i64) i64 {
 }
 
 fn rt_sys_accept(fd i64, addr i64, n i64) i64 {
-	return linux_result(linux_raw(linux_nr_accept(), fd, addr, n, 0, 0, 0))
+	// accept4 with SOCK_CLOEXEC (0x80000), like the sockets it returns (#576).
+	return linux_result(linux_raw(linux_nr_accept4(), fd, addr, n, 0x80000, 0, 0))
 }
 
 fn rt_sys_getsockopt(fd i64, level i64, name i64, val i64, n i64) i64 {
@@ -140,11 +142,13 @@ fn rt_sys_sigaltstack(ss i64, old i64) i64 {
 }
 
 fn rt_sys_open(path i64, flags i64, mode i64) i64 {
-	return linux_result(linux_raw(linux_nr_openat(), -100, path, flags, mode, 0, 0))
+	// O_CLOEXEC (0x80000): a child on exec must inherit no runtime descriptor (#576).
+	return linux_result(linux_raw(linux_nr_openat(), -100, path, flags | 0x80000, mode, 0, 0))
 }
 
 fn rt_sys_creat(path i64, mode i64) i64 {
-	return linux_result(linux_raw(linux_nr_openat(), -100, path, 577, mode, 0, 0))
+	// 577 is O_WRONLY|O_CREAT|O_TRUNC; O_CLOEXEC (0x80000) as in rt_sys_open (#576).
+	return linux_result(linux_raw(linux_nr_openat(), -100, path, 577 | 0x80000, mode, 0, 0))
 }
 
 fn rt_sys_unlink(path i64) i64 {
@@ -176,7 +180,8 @@ fn rt_sys_lstat(path i64, st i64) i64 {
 }
 
 fn rt_sys_pipe(fds i64) i64 {
-	return linux_result(linux_raw(linux_nr_pipe2(), fds, 0, 0, 0, 0, 0))
+	// O_CLOEXEC (0x80000): a child on exec must inherit no runtime descriptor (#576).
+	return linux_result(linux_raw(linux_nr_pipe2(), fds, 0x80000, 0, 0, 0, 0))
 }
 
 fn rt_sys_recv(fd i64, buf i64, n i64, flags i64) i64 {

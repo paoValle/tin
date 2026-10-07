@@ -103,6 +103,10 @@ fn linux_nr_accept() i64 {
 	return 43
 }
 
+fn linux_nr_accept4() i64 {
+	return 288
+}
+
 fn linux_nr_connect() i64 {
 	return 42
 }
