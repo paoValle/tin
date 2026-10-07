@@ -1,8 +1,12 @@
 # Giving the compiler real types (#228, milestone "Typed compiler")
 
-Status: design, 2026-10-05. Owner: #228. This note is the plan for step 1 (the typed data model)
-and the rules every later step follows. It decides nothing about the language: it is how the
-compiler's own source moves from the untyped internal dialect to typed edition 1.
+Status: **done**, 2026-10-06; the "Typed compiler" milestone is closed. The untyped dialect was
+removed in #381 with the seeds refreshed in #383; records became structs in #420 (#384); vectors and
+buffers became slices and `[]u8` in #452 (#385); strings became `str` in #504 (#386). `ck_legacy` and
+`F_LEGACY` no longer exist. Sections 1 to 5 are the plan as written on 2026-10-05 and are kept as
+history; section 6 records what each step did. toolchain/docs/COMPILER.md describes the compiler as it
+is now. Owner: #228. The note decides nothing about the language: it is how the compiler's own source
+moved from the untyped internal dialect to typed edition 1.
 
 ## 1. What the dialect is, and what "done" means
 
@@ -62,7 +66,7 @@ using word indices on the same object.
 7. **No behavior changes.** Each step must leave `tinc -S` output of a fixed corpus identical, in
    addition to the bootstrap fixed point. That is the proof a conversion did not change the compiler.
 
-## 4. The steps, in order
+## 4. The steps, in order (historical: all done, see section 6)
 
 Every step is a small PR (`Part of #228`) with `make bootstrap`, the strict suite, the regression
 cases and a byte-identical `-S` comparison. The seed is not touched until step 6.

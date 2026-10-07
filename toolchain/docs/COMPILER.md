@@ -1,8 +1,8 @@
 # The Tin compiler (tinc): how it works
 
-`tinc` is about 35,000 lines of Tin in `toolchain/compiler/`, written in edition 1 as trusted code: its records
-are still arrays of 64-bit words (`t[T_KIND]`) and its strings C strings, moving to typed structs and
-`str` one record at a time (design/design_typed_compiler.md, #228). It compiles itself:
+`tinc` is about 46,000 lines of Tin in `toolchain/compiler/`, written in typed edition 1 and read as
+trusted code: its records are structs (`records.tin`), its vectors slices and its strings `str`. The
+untyped dialect it was first written in is gone (design/design_typed_compiler.md, #228). It compiles itself:
 `make bootstrap` builds it three times and the last two binaries must be byte-identical.
 It produces finished executables with its own assembler and linker (Mach-O for macOS,
 ELF for Linux); no external toolchain is involved.
@@ -11,7 +11,8 @@ ELF for Linux); no external toolchain is involved.
 
 | file | role |
 |---|---|
-| `util.tin` | vectors (`vec_*`), byte buffers (`buf_*`), errors (`err_code(pos, "E502 TYPE_ARG_COUNT")`, every code documented in ERRORS.md; then `err_end`/`fatal`), byte-order helpers, target flags `tgt_linux`/`tgt_x64` |
+| `records.tin` | the compiler's records as structs: `Token`, `Node` and one struct per node kind, `Fn`, `Sym`, `Ty`, `Decl`, and the smaller tuples (`Pair`, `NameBind`, `DynTable`, ...) |
+| `util.tin` | the slice helpers the language lacks (`slice_truncate`, `slice_data`, `slice_filled`, `slice_clone`), byte buffers (`[]u8` grown by `buf_*`), errors (`err_code(pos, "E502 TYPE_ARG_COUNT")`, every code documented in ERRORS.md; then `err_end`/`fatal`), byte-order helpers, target flags `tgt_linux`/`tgt_x64` |
 | `lex.tin` | tokens; semicolon insertion; number, string and character literals |
 | `types.tin` | type records, interning (slices, maps, funcs), struct layout |
 | `secret.tin` | `secret T` (Tin 1, #239): secret twins of type records, propagation, the compile-time sinks, `reveal`, the secret audit |
@@ -33,15 +34,23 @@ ELF for Linux); no external toolchain is involved.
 | `host_darwin.tin`, `host_linux.tin` | the compiler's own OS calls (the build picks the host's) |
 
 The compiler is itself a strict program: `toolchain/compiler/entry.tin` is its `main`, the real runtime
-(`toolchain/runtime`) starts it, and its untyped driver (`compiler_main` in `main.tin`) runs on the
+(`toolchain/runtime`) starts it, and its driver (`compiler_main` in `main.tin`) runs on the
 runtime's allocator and system calls, so it needs the Tin tree to find `toolchain/runtime` when it compiles
 itself: `make bootstrap` sets `TIN_ROOT` for the stage 2 and stage 3 compilers.
 
 Files under `toolchain/compiler/` are read as trusted code, like the runtime and the standard library: they may
-use `cast` and raw words (E802 otherwise). That is what lets a typed edition 1 file in `toolchain/compiler/` take
-the records the untyped files allocate (design/design_typed_compiler.md, #228).
+use `cast` and raw words (E802 otherwise). About 12,000 `cast(` calls remain, for two purposes, and a new one
+is for one of them only:
+- viewing a node as the struct of its kind, after checking its `kind` (`cast(Binary, n).op`): every node kind
+  shares one overlay (below), so this is how a pass reads kind-specific fields;
+- the boundary where a word meets a record: a `[]i64` of node or type pointers, a field typed `i64` that holds
+  a record, a record stored in a generic word slot.
+Anything else (reinterpreting a `str` slot as an `i64` one, or a struct as another unrelated struct) corrupts
+silently and is not allowed.
 
-The helpers the compiler's own sources share (`streq`, `cstr` for string literals) are in `util.tin`.
+Strings are `str`. Raw byte addresses for kernel and C calls go through the runtime's `rt_cstr`, and C strings
+the operating system hands back (argv, environment values, directory entries) enter through `host_str` in
+`host_darwin.tin` and `host_linux.tin`.
 
 ## 2. Pipeline
 
@@ -73,13 +82,19 @@ Everything is in memory; the output is written once at the end.
 
 ## 3. Data structures
 
-All structures are word arrays allocated with `calloc`; their field indexes are
-constants. The authoritative lists are in the files named below.
+The records are structs in `records.tin`, the authoritative list. Most are allocated zeroed with
+`calloc` at a fixed size (`N_SIZE`, `F_SIZE`, `D_SIZE`, `TY_WORDS`) rather than built with `new(T)`:
+the checker tests a nil slice field (`cast(i64, f.tparams) != 0`), which `new(T)` would make an empty
+slice, and every node kind shares one overlay of `N_SIZE` words, which `replace_node` and `expr_clone`
+copy whole. A zeroed record's `str` fields are not valid until set, so `node_init_strs` (`parse.tin`)
+sets each node kind's strings and the other constructors set theirs.
 
-**Tokens** (`lex.tin`): `[kind, text, value, pos]`. `pos` packs file, line and column.
+**Tokens** (`Token`, `lex.tin`): kind, text, value, pos, and the raw, double-quote and unit flags of
+literals. `pos` packs file, line and column.
 
-**AST nodes** (`parse.tin`): `N_SIZE` = 10 words: `N_KIND`, `N_POS`, kind-specific fields
-from index 2, `N_TYPE` (6) the checked type, `N_REGION` (9). Expression kinds (`EX_*`):
+**AST nodes** (`Node` and one struct per kind, `parse.tin`): `N_SIZE` = 12 words. `Node` names the
+words every kind shares: `kind`, `pos`, `type_` (word 6, the checked type) and `region` (word 9); a
+kind's struct (`LetStmt`, `Call`, `Binary`, ...) names its own fields from word 2. Expression kinds (`EX_*`):
 INT, STR, IDENT, UNARY, BINARY, CALL, INDEX, CONV, FLOAT, NIL, SELECT, SLICE, COMPOSITE,
 TYPE, SEQ (statements then a value, made by lowering), FUNCREF, FUNCLIT, MEM (a sized
 load/store at base + index*scale + off), ELEM (a bounds-checked element), TRY. Statement
@@ -93,17 +108,18 @@ the lowered forms: field accesses are MEM, indexing is ELEM, map operations are 
 `rt_map_*`, composite literals are SEQ nodes that allocate and store, `range` and
 `switch` are WHILE loops, `try` is a CALLMULTI plus an IF.
 
-**Function declarations** (`F_*`, 36 words): name, qualified name (`pkg.Name`,
+**Function declarations** (`Fn`, `F_SIZE` = 44 words): name, qualified name (`pkg.Name`,
 `Type.Method`, `Name[T1,T2]` for instances), params, param types (expressions until
 declared, then types), result types, body, locals, slots, flags (extern, generated,
 variadic, reachable, leaf, lifted), mut flags per parameter, type parameters and
 bindings, tokens to re-parse (generics), region summary.
 
-**Symbols** (`S_*`, 24 words, `check.tin`): kind (local, global, const, func), name,
+**Symbols** (`Sym`, 40 words, `sym_new` in `check.tin`): kind (local, global, const, func), name,
 type, slot/register home, use counts, address-taken, constant value and "big" flag,
-per-core global slot (`S_TLS`), region bits, mut.
+per-core global slot (`tls`), region bits, mut, cell and capture links, slice-alias links (#352), and the
+live range `analyze_fn` computes for sharing frame slots (#570).
 
-**Types** (`types.tin`, 12 words): kind (`K_INT`, `K_BOOL`, `K_FLOAT`, `K_STRING`,
+**Types** (`Ty`, `TY_WORDS` = 17, `types.tin`): kind (`K_INT`, `K_BOOL`, `K_FLOAT`, `K_STRING`,
 `K_STRUCT`, `K_SLICE`, `K_MAP`, `K_FUNC`, `K_VOID`, `K_TUPLE`, `K_NIL`, untyped kinds,
 `K_ERROR` for fault, `K_OPT`), element/key, fields (`[name, type, offset, array len,
 row len]`), results, name, width and signedness for integers, struct size, generic
