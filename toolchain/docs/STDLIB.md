@@ -49,6 +49,7 @@ Generated from the comments in `toolchain/std/*/` and `packages/*/` by `tools/ge
 | [atomic](#atomic) | counters and flags every core may change (sync/atomic) |
 | [lane](#lane) | a bounded queue between the tasks of one core (buffered channels) |
 | [replay](#replay) | recording and reading request capsules for tin replay |
+| [stencil](#stencil) | text templates loaded at run time (text/template) |
 
 ## say
 
@@ -1739,3 +1740,46 @@ Package replay records a request's effects into a sealed capsule and reads capsu
 - `Encode(tp i64, core i64, flags i64) str`: Encode is the capsule body of tape tp (section 6): the request with its secret headers as handles and its dropped headers empty, the panic, the peer, and the effect records.
 - `Seal(body str) str`: Seal is the envelope of a capsule body (section 6): the magic, a random nonce, the body under the HMAC-SHA256 keystream, and the tag over all of it.
 - `Scrub(req str) str`: Scrub is a request as a capsule stores it: the values of secret headers (section 1) become their handles and the values of dropped headers become empty; everything else is kept.
+
+## stencil
+
+Package stencil renders templates loaded at run time, like Go's text/template over a dynamic value tree: {{.user.name}}, {{if}}, {{range}}, {{with}}, pipelines with the builtins (len, index, eq, ne, lt, le, gt, ge, and, or, not, printf, print, println, html, urlquery, js), {{define}}, {{template}} and {{block}}, and user functions registered with Func. Parse errors carry line and column; execution is bounded by a template recursion limit and a maximum output size. Contextual HTML escaping is the next part of #578.
+
+Value is a struct with constructor functions rather than the issue's enum: a compiler-generated enum constructor has no region summary, so an enum value passed to a function that stores it (as Execute does) is E312 ARG_ESCAPE even when it is request memory. The constructors below are ordinary functions, and Execute keeps the data and the variables in a cell bound to a runtime slot (the pattern policy.Bind uses), so the store happens inside the runtime.
+
+- `type State struct`: State is one execution of a template.
+- `type Node enum`: Node is one piece of a parsed template.
+- `type Branch struct`: Branch is if/with: the condition, the body and the else branch.
+- `type RangeNode struct`: RangeNode is range: the optional variables, the pipeline, the body and the else branch.
+- `type TemplateCall struct`: TemplateCall is {{template "name" pipe}}; the pipe may be absent.
+- `type Pipe struct`: Pipe is a pipeline: commands joined by |.
+- `type Cmd struct`: Cmd is one command: its operands.
+- `type Arg enum`: Arg is one operand of a command.
+- `Parse(name str, text str) !Template`: Parse parses text into a Template; errors carry name, line and column.
+- `type Parser struct`: Parser walks text.
+- `type Value struct`: Value is the data a template renders: a tree of strings, numbers, booleans, lists and maps.
+- `const KindNone = 0`: The kinds of a Value.
+- `const KindStr = 1`
+- `const KindInt = 2`
+- `const KindFloat = 3`
+- `const KindBool = 4`
+- `const KindList = 5`
+- `const KindMap = 6`
+- `None() Value`: None returns the absent value (a missing map key), printed as Go prints it.
+- `Str(s str) Value`: Str returns a string value.
+- `Int(n i64) Value`: Int returns an integer value.
+- `Float(f f64) Value`: Float returns a floating-point value.
+- `Bool(b bool) Value`: Bool returns a boolean value.
+- `List(xs []Value) Value`: List returns a list value.
+- `Map(m map[str]Value) Value`: Map returns a map value; the keys are strings, as {{.name}} looks them up.
+- `(v Value) Kind() i64`: Kind returns the value's kind (one of the Kind constants), for code that inspects data.
+- `(v Value) String() str`: String returns the string of a string value.
+- `(v Value) Integer() i64`: Integer returns the integer of an integer value.
+- `(v Value) Real() f64`: Real returns the float of a floating-point value.
+- `(v Value) Boolean() bool`: Boolean returns the boolean of a boolean value.
+- `(v Value) Items() []Value`: Items returns the elements of a list value.
+- `(v Value) Entries() map[str]Value`: Entries returns the map of a map value.
+- `type Template struct`: Template is a parsed template.
+- `(t mut Template) Func(name str, f fn([]Value) !Value)`: Func registers f for {{name ...}} calls in this template.
+- `(t Template) Execute(data Value) !str`: Execute renders the template with data and returns the output.
+- `(t Template) ExecuteTo(w mut twine.Builder, data Value) !`: ExecuteTo renders the template with data into w. The data and the variables live in a cell bound to a runtime slot for the call (the pattern policy.Bind uses).

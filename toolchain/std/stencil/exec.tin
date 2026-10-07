@@ -1,0 +1,330 @@
+package stencil
+
+// Execution: the node walk, the pipelines, the builtins and the bounds (a template recursion
+// limit and a maximum output size).
+//
+// The dot and the variables live in a per-execution cell bound to a runtime slot (the pattern
+// policy.Bind uses), because storing request memory into a struct that a method receives would be
+// E312 ARG_ESCAPE: the runtime's slot call is the store.
+
+import "fault"
+import "say"
+import "twine"
+
+// maxDepth bounds {{template}} recursion. Go's limit is 100000; Tin's main thread has a fixed
+// stack (ulimit -s), so a lower bound is what fits: 1000 levels of walk and doCall.
+const maxDepth = 1000
+
+const maxOutput = 64 * 1024 * 1024
+
+// execCell is the mutable part of one execution: the current dot and the variables.
+type execCell struct {
+	dot  Value
+	vars map[str]Value
+}
+
+// State is one execution of a template.
+type State struct {
+	tpl   Template
+	key   i64
+	w     twine.Builder
+	depth i64
+}
+
+// cell returns the execution's cell: the slot node is [next, key, value].
+fn (st State) cell() execCell {
+	let n = rt_slot_find(st.key)
+	if n == 0 {
+		panic("stencil: no execution cell")
+	}
+	return cast(execCell, n[2])
+}
+
+// walk renders a node list.
+fn (st State) walk(nodes []Node) ! {
+	for _, n in nodes {
+		match n {
+			Text(s) => {
+				try st.emit(s)
+			}
+			Action(p) => {
+				let v = try st.evalPipe(p)
+				if p.hasAssign {
+					let c = st.cell()
+					c.vars[p.assign] = v
+				} else {
+					try st.emit(printValue(v))
+				}
+			}
+			If(b) => {
+				let v = try st.evalPipe(b.pipe)
+				if b.pipe.hasAssign {
+					let c = st.cell()
+					c.vars[b.pipe.assign] = v
+				}
+				if truthy(v) {
+					try st.walk(b.then)
+				} else {
+					try st.walk(b.otherwise)
+				}
+			}
+			With(b) => {
+				let v = try st.evalPipe(b.pipe)
+				let c = st.cell()
+				if b.pipe.hasAssign {
+					c.vars[b.pipe.assign] = v
+				}
+				if truthy(v) {
+					let save = c.dot
+					c.dot = v
+					try st.walk(b.then)
+					c.dot = save
+				} else {
+					try st.walk(b.otherwise)
+				}
+			}
+			Range(r) => {
+				try st.doRange(r)
+			}
+			Call(c) => {
+				try st.doCall(c)
+			}
+		}
+	}
+}
+
+// emit appends to the output, enforcing the size bound.
+fn (st State) emit(s str) ! {
+	let c = st.cell()
+	if st.w.Len() + len(s) > maxOutput {
+		fail fault.Wrap(fault.LimitExceeded, say.Fmt("stencil: output over %d bytes", maxOutput))
+	}
+	st.w.Str(s)
+}
+
+// doRange renders a range node.
+fn (st State) doRange(r RangeNode) ! {
+	let v = try st.evalPipe(r.pipe)
+	let c = st.cell()
+	if r.pipe.hasAssign {
+		c.vars[r.pipe.assign] = v
+	}
+	let save = c.dot
+	mut count = i64(0)
+	if v.kind == KindList {
+		for i, item in v.xs {
+			st.setLoop(r, i, item)
+			try st.walk(r.body)
+			count += 1
+		}
+	} else if v.kind == KindMap {
+		for _, k in sortedKeys(v.m) {
+			st.setLoop(r, 0, None())
+			if len(r.keyVar) > 0 {
+				c.vars[r.keyVar] = Str(k)
+			}
+			c.dot = v.m[k]
+			if len(r.valVar) > 0 {
+				c.vars[r.valVar] = c.dot
+			}
+			try st.walk(r.body)
+			count += 1
+		}
+	} else if v.kind == KindInt {
+		// Go 1.22 ranges over integers: 0 to n-1.
+		mut i = i64(0)
+		for i < v.n {
+			st.setLoop(r, i, Int(i))
+			try st.walk(r.body)
+			count += 1
+			i += 1
+		}
+	}
+	if count == 0 {
+		try st.walk(r.otherwise)
+	}
+	c.dot = save
+}
+
+// setLoop sets the range variables and the dot for one iteration.
+fn (st State) setLoop(r RangeNode, i i64, item Value) {
+	let c = st.cell()
+	if len(r.keyVar) > 0 {
+		c.vars[r.keyVar] = Int(i)
+	}
+	if len(r.valVar) > 0 {
+		c.vars[r.valVar] = item
+	}
+	c.dot = item
+}
+
+// doCall renders {{template "name" pipe}}.
+fn (st State) doCall(c TemplateCall) ! {
+	if st.depth >= maxDepth {
+		fail fault.Wrap(fault.LimitExceeded, say.Fmt("stencil: template depth over %d", maxDepth))
+	}
+	mut nodes = []Node{}
+	if c.name == st.tpl.name {
+		nodes = st.tpl.root
+	} else {
+		let (n, ok) = st.tpl.defs[c.name]
+		if !ok {
+			fail say.Fault("stencil: no template %q", c.name)
+		}
+		nodes = n
+	}
+	mut data = None()
+	if c.hasPipe {
+		data = try st.evalPipe(c.pipe)
+	}
+	let outer = st.cell()
+	let saveDot = outer.dot
+	let saveVars = outer.vars
+	mut inner = execCell{dot: data, vars: make(map[str]Value)}
+	inner.vars["$"] = data
+	let innerKey = cast(i64, inner)
+	rt_slot_bind(innerKey, cast(i64, inner))
+	mut sub = State{tpl: st.tpl, key: innerKey, w: st.w, depth: st.depth + 1}
+	try sub.walk(nodes)
+	outer.dot = saveDot
+	outer.vars = saveVars
+}
+
+// evalPipe evaluates a pipeline.
+fn (st State) evalPipe(p Pipe) !Value {
+	mut v = None()
+	mut first = true
+	for _, c in p.cmds {
+		v = try st.evalCmd(c, v, first)
+		first = false
+	}
+	return v
+}
+
+// evalCmd evaluates one command, with the piped value appended as the last argument.
+fn (st State) evalCmd(c Cmd, piped Value, first bool) !Value {
+	if len(c.args) == 1 {
+		match c.args[0] {
+			Fn(name) => {
+				if !first {
+					// A piped value is the function's only argument: {{.a | len}}.
+					return try st.callFunc(name, []Value{piped})
+				}
+				return try st.callFunc(name, []Value{})
+			}
+			Pipe(inner) => {
+				return try st.evalPipe(inner)
+			}
+			_ => {
+				if !first {
+					fail say.Fault("stencil: cannot pipe into a value")
+				}
+				return try st.evalArg(c.args[0])
+			}
+		}
+	}
+	mut vals = []Value{}
+	for i in 1..len(c.args) {
+		let v = try st.evalArg(c.args[i])
+		vals = append(vals, v)
+	}
+	if !first {
+		vals = append(vals, piped)
+	}
+	match c.args[0] {
+		Fn(name) => {
+			return try st.callFunc(name, vals)
+		}
+		_ => {
+			fail say.Fault("stencil: a command with arguments must start with a function")
+		}
+	}
+	fail say.Fault("stencil: unreachable")
+}
+
+// evalArg evaluates one operand.
+fn (st State) evalArg(a Arg) !Value {
+	match a {
+		Dot => {
+			return st.cell().dot
+		}
+		Field(path) => {
+			return try walkPath(st.cell().dot, path)
+		}
+		Var(name, path) => {
+			let (v, ok) = st.cell().vars[name]
+			if !ok {
+				fail say.Fault("stencil: undefined variable %s", name)
+			}
+			return try walkPath(v, path)
+		}
+		Str(s) => {
+			return Str(s)
+		}
+		Int(v) => {
+			return Int(v)
+		}
+		Float(f) => {
+			return Float(f)
+		}
+		Bool(b) => {
+			return Bool(b)
+		}
+		Fn(name) => {
+			return try st.callFunc(name, []Value{})
+		}
+		Pipe(inner) => {
+			return try st.evalPipe(inner)
+		}
+	}
+	fail say.Fault("stencil: unreachable")
+}
+
+// walkPath walks .a.b from v: map lookups, a missing key is None.
+fn walkPath(v Value, path []str) !Value {
+	mut cur = v
+	for _, name in path {
+		if cur.kind != KindMap {
+			return None()
+		}
+		let (next, ok) = cur.m[name]
+		if !ok {
+			return None()
+		}
+		cur = next
+	}
+	return cur
+}
+
+// callFunc calls a builtin or a registered function.
+fn (st State) callFunc(name str, args []Value) !Value {
+	if isBuiltin(name) {
+		return try builtin(name, args)
+	}
+	let (f, ok) = st.tpl.funcs[name]
+	if !ok {
+		fail say.Fault("stencil: no function %q", name)
+	}
+	return try f(args)
+}
+
+// sortedKeys sorts a map's keys (Go's range over a map does too).
+fn sortedKeys(m map[str]Value) []str {
+	mut keys = []str{}
+	for k, _ in m {
+		keys = append(keys, k)
+	}
+	// Insertion sort: template maps are small.
+	mut i = 1
+	for i < len(keys) {
+		let k = keys[i]
+		mut j = i
+		for j > 0 && keys[j-1] > k {
+			keys[j] = keys[j-1]
+			j -= 1
+		}
+		keys[j] = k
+		i += 1
+	}
+	return keys
+}

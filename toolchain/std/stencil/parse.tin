@@ -1,0 +1,748 @@
+package stencil
+
+import "mint"
+import "say"
+
+// The template parser: the text between {{ and }} actions, with the trim markers {{- and -}}, and
+// a recursive descent parser over the actions. Parse errors carry the line and column.
+
+// Node is one piece of a parsed template.
+type Node enum {
+	Text(str)
+	Action(Pipe) // {{pipeline}}; a variable assignment sets Assign
+	If(Branch)
+	Range(RangeNode)
+	With(Branch)
+	Call(TemplateCall)
+}
+
+// Branch is if/with: the condition, the body and the else branch.
+type Branch struct {
+	pipe Pipe
+	then []Node
+	otherwise []Node
+}
+
+// RangeNode is range: the optional variables, the pipeline, the body and the else branch.
+type RangeNode struct {
+	keyVar str
+	valVar str
+	pipe   Pipe
+	body   []Node
+	otherwise []Node
+}
+
+// TemplateCall is {{template "name" pipe}}; the pipe may be absent.
+type TemplateCall struct {
+	name str
+	pipe Pipe
+	hasPipe bool
+}
+
+// Pipe is a pipeline: commands joined by |.
+type Pipe struct {
+	cmds []Cmd
+	// assign is a variable assignment ($x := pipe), empty otherwise.
+	assign str
+	// hasAssign marks the assignment form.
+	hasAssign bool
+}
+
+// Cmd is one command: its operands.
+type Cmd struct {
+	args []Arg
+}
+
+// Arg is one operand of a command.
+type Arg enum {
+	Dot
+	Field([]str) // .a.b: the path after the dot
+	Var(str, []str) // $x.a.b
+	Str(str)
+	Int(i64)
+	Float(f64)
+	Bool(bool)
+	Fn(str) // a function name (or a builtin)
+	Pipe(Pipe) // a parenthesized pipeline
+}
+
+// Parse parses text into a Template; errors carry name, line and column.
+fn Parse(name str, text str) !Template {
+	mut p = Parser{name: name, text: text, pos: 0, line: 1, col: 1, tpl: Template{name: name, root: []Node{}, defs: make(map[str][]Node), funcs: make(map[str]fn([]Value) !Value)}}
+	try p.parseTop()
+	if len(p.tpl.root) == 0 && len(p.tpl.defs) == 0 {
+		// An empty template is fine.
+	}
+	return p.tpl
+}
+
+// Parser walks text.
+type Parser struct {
+	name str
+	text str
+	pos  i64
+	line i64
+	col  i64
+	tpl  Template
+}
+
+// failAt is a parse error with the position.
+fn (p Parser) failAt(msg str) ! {
+	fail say.Fault("stencil: %s:%d:%d: %s", p.name, p.line, p.col, msg)
+}
+
+// parseTop parses the whole text, collecting define blocks.
+fn (p mut Parser) parseTop() ! {
+	let nodes = try p.parseList("")
+	p.tpl.root = nodes
+}
+
+// parseList parses nodes until end or one of the stop keywords (else, end).
+fn (p mut Parser) parseList(stops str) ![]Node {
+	mut out = []Node{}
+	for {
+		let text = try p.readText()
+		if len(text) > 0 {
+			out = append(out, Node.Text(text))
+		}
+		if p.pos >= len(p.text) {
+			return out
+		}
+		// An action starts here.
+		let word = try p.peekAction()
+		if len(word) > 0 && isStop(word, stops) {
+			return out
+		}
+		if word == "end" || word == "else" {
+			fail p.failAt(say.Fmt("unexpected %s", word))
+		}
+		let node = try p.parseAction()
+		if node != nil {
+			out = append(out, node)
+		}
+	}
+}
+
+// isStop reports whether word is one of the space-separated stops.
+fn isStop(word str, stops str) bool {
+	for _, s in splitWords(stops) {
+		if s == word {
+			return true
+		}
+	}
+	return false
+}
+
+// splitWords splits on spaces.
+fn splitWords(s str) []str {
+	mut out = []str{}
+	mut start = 0
+	for i in 0..len(s) {
+		if s[i] == ' ' {
+			if i > start {
+				out = append(out, s[start:i])
+			}
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		out = append(out, s[start:len(s)])
+	}
+	return out
+}
+
+// readText reads literal text up to the next action, applying the trim markers.
+fn (p mut Parser) readText() !str {
+	let start = p.pos
+	mut end = len(p.text)
+	mut i = p.pos
+	for i + 1 < len(p.text) {
+		if p.text[i] == '{' && p.text[i+1] == '{' {
+			end = i
+			break
+		}
+		i += 1
+	}
+	mut text = p.text[start:end]
+	if end + 2 < len(p.text) && p.text[end+2] == '-' {
+		text = trimRightSpace(text)
+	}
+	p.advanceTo(end)
+	return text
+}
+
+// peekAction looks at the keyword after the next {{, without consuming anything.
+fn (p Parser) peekAction() !str {
+	// p.pos is at the {{.
+	let start = p.pos + 2
+	mut i = start
+	if i < len(p.text) && p.text[i] == '-' {
+		i += 1
+	}
+	for i < len(p.text) && (p.text[i] == ' ' || p.text[i] == '\t' || p.text[i] == '\n' || p.text[i] == '\r') {
+		i += 1
+	}
+	mut j = i
+	for j < len(p.text) && isWordByte(p.text[j]) {
+		j += 1
+	}
+	return p.text[i:j]
+}
+
+// isWordByte is a letter, digit or underscore.
+fn isWordByte(c u8) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_'
+}
+
+// parseAction parses one {{...}} action into a node (nil for a comment or an assignment).
+fn (p mut Parser) parseAction() !?Node {
+	let startLine = p.line
+	let startCol = p.col
+	p.advanceTo(p.pos + 2)
+	if p.pos < len(p.text) && p.text[p.pos] == '-' {
+		p.advance()
+	}
+	p.skipSpace()
+	if p.pos + 1 < len(p.text) && p.text[p.pos] == '/' && p.text[p.pos+1] == '*' {
+		// A comment: skip to */.
+		let end = p.indexOf("*/")
+		if end < 0 {
+			fail p.failAt("unclosed comment")
+		}
+		p.advanceTo(end + 2)
+		p.skipSpace()
+		try p.expectClose()
+		return nil
+	}
+	let word = p.peekWord()
+	if word == "if" {
+		return try p.parseIf()
+	}
+	if word == "range" {
+		return try p.parseRange()
+	}
+	if word == "with" {
+		return try p.parseWith()
+	}
+	if word == "template" {
+		return try p.parseTemplateCall()
+	}
+	if word == "define" {
+		try p.parseDefine()
+		return nil
+	}
+	if word == "block" {
+		return try p.parseBlock()
+	}
+	// A pipeline action.
+	let pipe = try p.parsePipe(true)
+	try p.expectClose()
+	return Node.Action(pipe)
+}
+
+// peekWord reads the current word without consuming.
+fn (p Parser) peekWord() str {
+	mut j = p.pos
+	for j < len(p.text) && isWordByte(p.text[j]) {
+		j += 1
+	}
+	return p.text[p.pos:j]
+}
+
+// openAction consumes the {{ and the optional trim marker of the next action and returns its
+// first word.
+fn (p mut Parser) openAction() !str {
+	if p.pos + 1 >= len(p.text) || p.text[p.pos] != '{' || p.text[p.pos+1] != '{' {
+		fail p.failAt("expected an action")
+	}
+	p.advanceTo(p.pos + 2)
+	if p.pos < len(p.text) && p.text[p.pos] == '-' {
+		p.advance()
+	}
+	p.skipSpace()
+	return p.peekWord()
+}
+
+// parseIf parses if/else if/else/end.
+fn (p mut Parser) parseIf() !Node {
+	let pipe = try p.parseKeywordPipe("if")
+	try p.expectClose()
+	return try p.parseIfBody(pipe)
+}
+
+// parseIfBody parses an if's body and its else branches, the pipe already parsed.
+fn (p mut Parser) parseIfBody(pipe Pipe) !Node {
+	let body = try p.parseList("else end")
+	let branch = Branch{pipe: pipe, then: body}
+	let word = try p.openAction()
+	if word == "else" {
+		try p.consumeWord("else")
+		p.skipSpace()
+		if p.peekWord() == "if" {
+			try p.consumeWord("if")
+			let inner = try p.parseKeywordPipe2()
+			try p.expectClose()
+			let node = try p.parseIfBody(inner)
+			branch.otherwise = []Node{node}
+			return Node.If(branch)
+		}
+		try p.expectClose()
+		branch.otherwise = try p.parseList("end")
+		let w2 = try p.openAction()
+		if w2 != "end" {
+			fail p.failAt(say.Fmt("expected end, found %s", w2))
+		}
+		try p.consumeWord("end")
+		try p.expectClose()
+		return Node.If(branch)
+	}
+	if word != "end" {
+		fail p.failAt(say.Fmt("expected end, found %s", word))
+	}
+	try p.consumeWord("end")
+	try p.expectClose()
+	return Node.If(branch)
+}
+
+// parseKeywordPipe2 parses a pipe after "if" in an else if.
+fn (p mut Parser) parseKeywordPipe2() !Pipe {
+	return try p.parsePipe(false)
+}
+
+// parseWith parses with/else/end.
+fn (p mut Parser) parseWith() !Node {
+	try p.consumeWord("with")
+	let pipe = try p.parsePipe(true)
+	try p.expectClose()
+	let body = try p.parseList("else end")
+	let branch = Branch{pipe: pipe, then: body}
+	let word = try p.openAction()
+	if word == "else" {
+		try p.consumeWord("else")
+		try p.expectClose()
+		branch.otherwise = try p.parseList("end")
+		let w2 = try p.openAction()
+		if w2 != "end" {
+			fail p.failAt(say.Fmt("expected end, found %s", w2))
+		}
+		try p.consumeWord("end")
+		try p.expectClose()
+		return Node.With(branch)
+	}
+	if word != "end" {
+		fail p.failAt(say.Fmt("expected end, found %s", word))
+	}
+	try p.consumeWord("end")
+	try p.expectClose()
+	return Node.With(branch)
+}
+
+// parseRange parses range/else/end, with the optional variable declarations.
+fn (p mut Parser) parseRange() !Node {
+	try p.consumeWord("range")
+	p.skipSpace()
+	mut keyVar = ""
+	mut valVar = ""
+	if p.pos < len(p.text) && p.text[p.pos] == '$' {
+		let first = try p.parseVarName()
+		p.skipSpace()
+		if p.pos < len(p.text) && p.text[p.pos] == ',' {
+			keyVar = first
+			p.advance()
+			p.skipSpace()
+			valVar = try p.parseVarName()
+		} else {
+			valVar = first
+		}
+		p.skipSpace()
+		if p.pos + 1 < len(p.text) && p.text[p.pos] == ':' && p.text[p.pos+1] == '=' {
+			p.advance()
+			p.advance()
+			p.skipSpace()
+		} else {
+			fail p.failAt("range: expected :=")
+		}
+	}
+	let pipe = try p.parsePipe(false)
+	try p.expectClose()
+	let body = try p.parseList("else end")
+	mut node = RangeNode{keyVar: keyVar, valVar: valVar, pipe: pipe, body: body, otherwise: []Node{}}
+	let word = try p.openAction()
+	if word == "else" {
+		try p.consumeWord("else")
+		try p.expectClose()
+		node.otherwise = try p.parseList("end")
+		let w2 = try p.openAction()
+		if w2 != "end" {
+			fail p.failAt(say.Fmt("expected end, found %s", w2))
+		}
+		try p.consumeWord("end")
+		try p.expectClose()
+		return Node.Range(node)
+	}
+	if word != "end" {
+		fail p.failAt(say.Fmt("expected end, found %s", word))
+	}
+	try p.consumeWord("end")
+	try p.expectClose()
+	return Node.Range(node)
+}
+
+// parseTemplateCall parses {{template "name" pipe}}.
+fn (p mut Parser) parseTemplateCall() !Node {
+	try p.consumeWord("template")
+	p.skipSpace()
+	let name = try p.parseStringLiteral()
+	p.skipSpace()
+	mut hasPipe = false
+	mut pipe = Pipe{}
+	if !(p.pos < len(p.text) && p.text[p.pos] == '}' || p.pos + 1 < len(p.text) && p.text[p.pos] == '-' && p.text[p.pos+1] == '}') {
+		pipe = try p.parsePipe(false)
+		hasPipe = true
+	}
+	try p.expectClose()
+	return Node.Call(TemplateCall{name: name, pipe: pipe, hasPipe: hasPipe})
+}
+
+// parseDefine parses {{define "name"}}...{{end}} and stores the template.
+fn (p mut Parser) parseDefine() ! {
+	try p.consumeWord("define")
+	p.skipSpace()
+	let name = try p.parseStringLiteral()
+	try p.expectClose()
+	let body = try p.parseList("end")
+	let word = try p.openAction()
+	if word != "end" {
+		fail p.failAt(say.Fmt("expected end, found %s", word))
+	}
+	try p.consumeWord("end")
+	try p.expectClose()
+	p.tpl.defs[name] = body
+}
+
+// parseBlock parses {{block "name" pipe}}body{{end}}: a define plus a call.
+fn (p mut Parser) parseBlock() !Node {
+	try p.consumeWord("block")
+	p.skipSpace()
+	let name = try p.parseStringLiteral()
+	p.skipSpace()
+	let pipe = try p.parsePipe(false)
+	try p.expectClose()
+	let body = try p.parseList("end")
+	let word = try p.openAction()
+	if word != "end" {
+		fail p.failAt(say.Fmt("expected end, found %s", word))
+	}
+	try p.consumeWord("end")
+	try p.expectClose()
+	p.tpl.defs[name] = body
+	return Node.Call(TemplateCall{name: name, pipe: pipe, hasPipe: true})
+}
+
+// parseKeywordPipe parses "keyword pipe".
+fn (p mut Parser) parseKeywordPipe(word str) !Pipe {
+	try p.consumeWord(word)
+	return try p.parsePipe(false)
+}
+
+// parsePipe parses commands joined by |, and an optional $x := assignment.
+fn (p mut Parser) parsePipe(allowAssign bool) !Pipe {
+	p.skipSpace()
+	mut pipe = Pipe{}
+	if allowAssign && p.pos < len(p.text) && p.text[p.pos] == '$' {
+		// Look ahead for := .
+		mut j = p.pos + 1
+		for j < len(p.text) && isWordByte(p.text[j]) {
+			j += 1
+		}
+		mut k = j
+		for k < len(p.text) && (p.text[k] == ' ' || p.text[k] == '\t') {
+			k += 1
+		}
+		if k + 1 < len(p.text) && p.text[k] == ':' && p.text[k+1] == '=' {
+			pipe.assign = p.text[p.pos:j]
+			pipe.hasAssign = true
+			p.advanceTo(k + 2)
+			p.skipSpace()
+		}
+	}
+	mut cmds = []Cmd{}
+	let first = try p.parseCmd()
+	cmds = append(cmds, first)
+	for {
+		p.skipSpace()
+		if p.pos < len(p.text) && p.text[p.pos] == '|' {
+			p.advance()
+			p.skipSpace()
+			let next = try p.parseCmd()
+			cmds = append(cmds, next)
+		} else {
+			break
+		}
+	}
+	pipe.cmds = cmds
+	return pipe
+}
+
+// parseCmd parses one command: operands separated by spaces.
+fn (p mut Parser) parseCmd() !Cmd {
+	mut args = []Arg{}
+	for {
+		p.skipSpace()
+		if p.pos >= len(p.text) || p.text[p.pos] == '}' || p.text[p.pos] == '|' || p.text[p.pos] == ')' {
+			break
+		}
+		if p.text[p.pos] == '-' && p.pos + 1 < len(p.text) && p.text[p.pos+1] == '}' {
+			// The right trim marker, {{ . -}}.
+			break
+		}
+		let a = try p.parseArg()
+		args = append(args, a)
+	}
+	if len(args) == 0 {
+		fail p.failAt("empty command")
+	}
+	return Cmd{args: args}
+}
+
+// parseArg parses one operand.
+fn (p mut Parser) parseArg() !Arg {
+	let c = p.text[p.pos]
+	if c == '.' {
+		p.advance()
+		let path = try p.parseFieldPath()
+		return Arg.Field(path)
+	}
+	if c == '$' {
+		let name = try p.parseVarName()
+		p.skipSpace()
+		if p.pos < len(p.text) && p.text[p.pos] == '.' {
+			p.advance()
+			let path = try p.parseFieldPath()
+			return Arg.Var(name, path)
+		}
+		return Arg.Var(name, []str{})
+	}
+	if c == '"' || c == '`' {
+		let lit = try p.parseStringLiteral()
+		return Arg.Str(lit)
+	}
+	if c == '(' {
+		p.advance()
+		let inner = try p.parsePipe(false)
+		p.skipSpace()
+		if p.pos >= len(p.text) || p.text[p.pos] != ')' {
+			fail p.failAt("unclosed parenthesis")
+		}
+		p.advance()
+		return Arg.Pipe(inner)
+	}
+	if c == '-' || c >= '0' && c <= '9' {
+		return try p.parseNumber()
+	}
+	let word = p.peekWord()
+	if len(word) == 0 {
+		fail p.failAt(say.Fmt("unexpected character %q", stringOf(c)))
+	}
+	p.advanceTo(p.pos + len(word))
+	if word == "true" {
+		return Arg.Bool(true)
+	}
+	if word == "false" {
+		return Arg.Bool(false)
+	}
+	if word == "nil" {
+		return Arg.Str("")
+	}
+	return Arg.Fn(word)
+}
+
+// stringOf is a one-character string.
+fn stringOf(c u8) str {
+	let b = []u8{c}
+	return rt_str_from_raw(cast(i64, b)[2], 1)
+}
+
+// parseFieldPath parses a.b.c (after the dot).
+fn (p mut Parser) parseFieldPath() ![]str {
+	mut out = []str{}
+	for {
+		let word = p.peekWord()
+		if len(word) == 0 {
+			break
+		}
+		out = append(out, word)
+		p.advanceTo(p.pos + len(word))
+		if p.pos < len(p.text) && p.text[p.pos] == '.' {
+			p.advance()
+		} else {
+			break
+		}
+	}
+	return out
+}
+
+// parseVarName parses $name (the $ alone is the root variable).
+fn (p mut Parser) parseVarName() !str {
+	if p.text[p.pos] != '$' {
+		fail p.failAt("expected $")
+	}
+	p.advance()
+	let word = p.peekWord()
+	p.advanceTo(p.pos + len(word))
+	if len(word) == 0 {
+		return "$"
+	}
+	return "$" + word
+}
+
+// parseStringLiteral parses a "..." or `...` literal.
+fn (p mut Parser) parseStringLiteral() !str {
+	let quote = p.text[p.pos]
+	p.advance()
+	mut out = []u8{}
+	for p.pos < len(p.text) {
+		let c = p.text[p.pos]
+		if c == quote {
+			p.advance()
+			return rt_str_from_raw(cast(i64, out)[2], len(out))
+		}
+		if quote == '"' && c == '\\' {
+			p.advance()
+			if p.pos >= len(p.text) {
+				fail p.failAt("unterminated string")
+			}
+			let e = p.text[p.pos]
+			if e == 'n' {
+				out = append(out, u8(10))
+			} else if e == 't' {
+				out = append(out, u8(9))
+			} else if e == 'r' {
+				out = append(out, u8(13))
+			} else if e == '\\' || e == '"' {
+				out = append(out, e)
+			} else {
+				out = append(out, e)
+			}
+			p.advance()
+		} else {
+			out = append(out, c)
+			p.advance()
+		}
+	}
+	fail p.failAt("unterminated string")
+}
+
+// parseNumber parses an integer or a float.
+fn (p mut Parser) parseNumber() !Arg {
+	let start = p.pos
+	if p.text[p.pos] == '-' {
+		p.advance()
+	}
+	mut isFloat = false
+	for p.pos < len(p.text) {
+		let c = p.text[p.pos]
+		if c >= '0' && c <= '9' {
+			p.advance()
+		} else if c == '.' && !isFloat {
+			isFloat = true
+			p.advance()
+		} else if c == 'e' || c == 'E' {
+			isFloat = true
+			p.advance()
+			if p.pos < len(p.text) && (p.text[p.pos] == '+' || p.text[p.pos] == '-') {
+				p.advance()
+			}
+		} else {
+			break
+		}
+	}
+	let s = p.text[start:p.pos]
+	if isFloat {
+		let (f, err) = mint.ParseFloat(s)
+		if err != nil {
+			fail p.failAt(say.Fmt("bad number %s", s))
+		}
+		return Arg.Float(f)
+	}
+	let (v, err) = mint.Atoi(s)
+	if err != nil {
+		fail p.failAt(say.Fmt("bad number %s", s))
+	}
+	return Arg.Int(v)
+}
+
+// consumeWord consumes the current word, which must be word.
+fn (p mut Parser) consumeWord(word str) ! {
+	p.skipSpace()
+	let got = p.peekWord()
+	if got != word {
+		fail p.failAt(say.Fmt("expected %s, found %s", word, got))
+	}
+	p.advanceTo(p.pos + len(word))
+}
+
+// expectClose consumes the closing }} (with the optional trim marker).
+fn (p mut Parser) expectClose() ! {
+	p.skipSpace()
+	if p.pos < len(p.text) && p.text[p.pos] == '-' {
+		p.advance()
+	}
+	if p.pos + 1 >= len(p.text) || p.text[p.pos] != '}' || p.text[p.pos+1] != '}' {
+		fail p.failAt("expected }}")
+	}
+	p.advanceTo(p.pos + 2)
+}
+
+// indexOf returns the position of sub at or after pos, or -1.
+fn (p Parser) indexOf(sub str) i64 {
+	mut i = p.pos
+	for i + len(sub) <= len(p.text) {
+		if p.text[i:i+len(sub)] == sub {
+			return i
+		}
+		i += 1
+	}
+	return -1
+}
+
+// skipSpace skips spaces, tabs and newlines, counting lines.
+fn (p mut Parser) skipSpace() {
+	for p.pos < len(p.text) {
+		let c = p.text[p.pos]
+		if c == ' ' || c == '\t' {
+			p.advance()
+		} else if c == '\n' {
+			p.advance()
+		} else {
+			break
+		}
+	}
+}
+
+// advance moves one byte, tracking the line and column.
+fn (p mut Parser) advance() {
+	if p.pos < len(p.text) && p.text[p.pos] == '\n' {
+		p.line += 1
+		p.col = 1
+	} else {
+		p.col += 1
+	}
+	p.pos += 1
+}
+
+// advanceTo moves to pos, tracking the line and column.
+fn (p mut Parser) advanceTo(to i64) {
+	for p.pos < to {
+		p.advance()
+	}
+}
+
+// trimRightSpace removes trailing spaces and tabs.
+fn trimRightSpace(s str) str {
+	mut n = len(s)
+	for n > 0 && (s[n-1] == ' ' || s[n-1] == '\t' || s[n-1] == '\n' || s[n-1] == '\r') {
+		n -= 1
+	}
+	return s[0:n]
+}

@@ -1,0 +1,179 @@
+package main
+
+import "say"
+import "stencil"
+import "fault"
+
+// m builds a map value for the tests.
+fn m(pairs []str) stencil.Value {
+	mut mm = make(map[str]stencil.Value)
+	mut i = 0
+	for i+1 < len(pairs) {
+		mm[pairs[i]] = stencil.Str(pairs[i+1])
+		i += 2
+	}
+	return stencil.Map(mm)
+}
+
+// run renders text with data and prints the result or the fault.
+fn run(name str, text str, data stencil.Value) {
+	let t = stencil.Parse(name, text) catch err {
+		say.Line("parse", name, err)
+		return
+	}
+	let out = t.Execute(data) catch err {
+		say.Line("exec", name, err)
+		return
+	}
+	say.Line("out", name, out)
+}
+
+fn main() {
+	// The basic forms: {{.}}, fields, nested maps and a missing key.
+	run("dot", `Hello, {{.}}!`, stencil.Str("world"))
+	run("field", `{{.a}} {{.b.c}} {{.missing}}`, m([]str{"a", "1", "b", ""}))
+	mut nested = make(map[str]stencil.Value)
+	nested["c"] = stencil.Str("deep")
+	mut inner = make(map[str]stencil.Value)
+	inner["b"] = stencil.Map(nested)
+	run("nested", `{{.b.c}}`, stencil.Map(inner))
+
+	// if, else if, else and the truthiness of zero values.
+	run("if", `{{if .x}}yes{{else}}no{{end}}`, m([]str{"x", "1"}))
+	run("if empty", `{{if .x}}yes{{else}}no{{end}}`, m([]str{"x", ""}))
+	run("else if", `{{if .a}}a{{else if .b}}b{{else}}c{{end}}`, m([]str{"b", "1"}))
+	run("if zero", `{{if .n}}yes{{else}}no{{end}}`, stencil.Map(mapOfInt("n", 0)))
+	run("if true", `{{if .n}}yes{{else}}no{{end}}`, stencil.Map(mapOfInt("n", 3)))
+
+	// range over a list, with and without variables, and the else branch.
+	let items = stencil.List([]stencil.Value{stencil.Str("a"), stencil.Str("b"), stencil.Str("c")})
+	run("range", `{{range .}}{{.}}{{end}}`, items)
+	run("range vars", `{{range $i, $v := .}}{{$i}}={{$v}};{{end}}`, items)
+	run("range one var", `{{range $v := .}}[{{$v}}]{{end}}`, items)
+	run("range else", `{{range .}}x{{else}}empty{{end}}`, stencil.List([]stencil.Value{}))
+	run("range int", `{{range .}}{{.}}{{end}}`, stencil.Int(4))
+
+	// with, and the dot inside it.
+	run("with", `{{with .a}}[{{.}}]{{end}}`, m([]str{"a", "v"}))
+	run("with else", `{{with .a}}x{{else}}none{{end}}`, m([]str{"a", ""}))
+	run("with var", `{{with $x := .a}}{{$x}}{{end}}`, m([]str{"a", "v"}))
+
+	// Pipelines and the builtins.
+	run("pipe", `{{.a | len}}`, m([]str{"a", "hello"}))
+	run("len", `{{len .}}`, items)
+	run("index", `{{index . 1}}`, items)
+	run("index map", `{{index .a}}`, m([]str{"a", "v"}))
+	run("eq", `{{if eq .a .b}}same{{else}}differ{{end}}`, m([]str{"a", "x", "b", "x"}))
+	run("ne", `{{ne .a .b}}`, m([]str{"a", "x", "b", "y"}))
+	run("lt", `{{lt .a .b}}`, m([]str{"a", "a", "b", "b"}))
+	run("and", `{{and .a .b}}`, m([]str{"a", "x", "b", "y"}))
+	run("or", `{{or .a .b}}`, m([]str{"a", "", "b", "y"}))
+	run("not", `{{not .a}}`, m([]str{"a", ""}))
+	run("printf", `{{printf "%s-%d" .a .n}}`, m2([]str{"a", "x"}, "n", 7))
+	run("printf float", `{{printf "%.2f" .f}}`, stencil.Map(mapOfFloat("f", 3.14159)))
+	run("printf q", `{{printf "%q" .a}}`, m([]str{"a", "hi"}))
+	run("print", `{{print .a .n}}`, m2([]str{"a", "x"}, "n", 7))
+
+	// Comments and trim markers.
+	run("comment", `a{{/* ignored */}}b`, stencil.None())
+	run("trim", `a  {{- . }}  b`, stencil.Str("x"))
+	run("trim right", `a {{ . -}}  b`, stencil.Str("x"))
+
+	// define, template and block.
+	let t = stencil.Parse("defs", `{{define "T"}}[{{.}}]{{end}}{{template "T" .a}}{{template "T" .b}}`) catch err {
+		say.Line("parse defs", err)
+		return
+	}
+	let out = t.Execute(m([]str{"a", "1", "b", "2"})) catch err {
+		say.Line("exec defs", err)
+		return
+	}
+	say.Line("out defs", out)
+	run("block", `{{block "B" .}}[{{.}}]{{end}}`, stencil.Str("x"))
+
+	// User functions.
+	mut t2 = stencil.Parse("funcs", `{{shout .a}} {{twice 3}}`) catch err {
+		say.Line("parse funcs", err)
+		return
+	}
+	t2.Func("shout", fn(args []stencil.Value) !stencil.Value {
+		if len(args) != 1 {
+			fail say.Fault("shout needs one argument")
+		}
+		return stencil.Str(args[0].String() + "!")
+	})
+	t2.Func("twice", fn(args []stencil.Value) !stencil.Value {
+		return stencil.Int(args[0].Integer() * 2)
+	})
+	let out2 = t2.Execute(m([]str{"a", "hey"})) catch err {
+		say.Line("exec funcs", err)
+		return
+	}
+	say.Line("out funcs", out2)
+
+	// Parse errors carry the line and column.
+	for _, bad in []str{`{{.a`, `{{if .a}}x`, `{{end}}`, `{{range}}`, `{{.a |}}`, `{{(}}`, `{{.a}}x{{else}}`} {
+		say.Line("parse error", bad, parseErr("bad", bad))
+	}
+	// An unclosed action on the second line reports line 2.
+	say.Line("parse error line", parseErr("bad2", "line one\n" + `{{.a`))
+
+	// Execution bounds: the output limit and the template recursion limit.
+	let many = stencil.Parse("many", `{{range .}}0123456789{{end}}`) catch err {
+		say.Line("parse many", err)
+		return
+	}
+	let big = stencil.List([]stencil.Value{})
+	mut manyList = []stencil.Value{}
+	for i in 0..7 {
+		manyList = append(manyList, stencil.Int(i))
+	}
+	let bigOut = many.Execute(stencil.List(manyList)) catch err {
+		say.Line("many failed", err)
+		return
+	}
+	say.Line("many ok", len(bigOut))
+	let deep = stencil.Parse("deep", `{{define "L"}}{{template "L" .}}{{end}}{{template "L" .}}`) catch err {
+		say.Line("parse deep", err)
+		return
+	}
+	let deepOut = deep.Execute(stencil.None()) catch err {
+		say.Line("deep limit", fault.Is(err, fault.LimitExceeded))
+		return
+	}
+	say.Line("deep ok", len(deepOut))
+}
+
+// parseErr returns a parse error's text, or "parsed ok".
+fn parseErr(name str, text str) str {
+	let t = stencil.Parse(name, text) catch err {
+		return say.Fmt("%s", err)
+	}
+	return "parsed ok"
+}
+
+// m2 builds a map of strings plus one integer entry.
+fn m2(pairs []str, ik str, iv i64) stencil.Value {
+	mut mm = make(map[str]stencil.Value)
+	mut i = 0
+	for i+1 < len(pairs) {
+		mm[pairs[i]] = stencil.Str(pairs[i+1])
+		i += 2
+	}
+	mm[ik] = stencil.Int(iv)
+	return stencil.Map(mm)
+}
+
+// mapOfInt is a one-entry map with an integer value.
+fn mapOfInt(k str, v i64) map[str]stencil.Value {
+	mut mm = make(map[str]stencil.Value)
+	mm[k] = stencil.Int(v)
+	return mm
+}
+
+// mapOfFloat is a one-entry map with a float value.
+fn mapOfFloat(k str, v f64) map[str]stencil.Value {
+	mut mm = make(map[str]stencil.Value)
+	mm[k] = stencil.Float(v)
+	return mm
+}

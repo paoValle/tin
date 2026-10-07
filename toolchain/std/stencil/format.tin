@@ -1,0 +1,203 @@
+package stencil
+
+// printf formatting for templates and the escapers the html, urlquery and js builtins use.
+
+import "fault"
+import "say"
+
+// format is Go's fmt.Sprintf over template values, for the verbs templates use: v, s, q, d, t,
+// f, F, g, G, e, E, x, X, o, b and c, with flags, width and precision. Missing arguments and
+// extra arguments are marked as Go marks them.
+fn format(f str, args []Value) !str {
+	mut out = ""
+	mut argi = 0
+	mut i = 0
+	for i < len(f) {
+		if f[i] != '%' {
+			out += f[i:i+1]
+			i += 1
+			continue
+		}
+		i += 1
+		if i < len(f) && f[i] == '%' {
+			out += "%"
+			i += 1
+			continue
+		}
+		let specStart = i - 1
+		for i < len(f) && isFlag(f[i]) {
+			i += 1
+		}
+		for i < len(f) && f[i] >= '0' && f[i] <= '9' {
+			i += 1
+		}
+		if i < len(f) && f[i] == '.' {
+			i += 1
+			for i < len(f) && f[i] >= '0' && f[i] <= '9' {
+				i += 1
+			}
+		}
+		if i >= len(f) {
+			out += "%!(NOVERB)"
+			break
+		}
+		let verb = f[i]
+		i += 1
+		let spec = f[specStart:i]
+		if argi >= len(args) {
+			out += say.Fmt("%%!%s(MISSING)", stringOf(verb))
+			continue
+		}
+		let v = args[argi]
+		argi += 1
+		let piece = try formatOne(spec, verb, v)
+		out += piece
+	}
+	if argi < len(args) {
+		out += "%!(EXTRA"
+		for k in argi..len(args) {
+			if k > argi {
+				out += ", "
+			}
+			out += kindOf(args[k]) + "=" + printValue(args[k])
+		}
+		out += ")"
+	}
+	return out
+}
+
+// isFlag reports a printf flag byte.
+fn isFlag(c u8) bool {
+	return c == '-' || c == '+' || c == ' ' || c == '0' || c == '#'
+}
+
+// kindOf names a value's type as Go's %! marks do.
+fn kindOf(v Value) str {
+	if v.kind == KindNone {
+		return "<nil>"
+	}
+	if v.kind == KindStr {
+		return "string"
+	}
+	if v.kind == KindInt {
+		return "int64"
+	}
+	if v.kind == KindFloat {
+		return "float64"
+	}
+	if v.kind == KindBool {
+		return "bool"
+	}
+	if v.kind == KindList {
+		return "[]stencil.Value"
+	}
+	return "map[string]stencil.Value"
+}
+
+// formatOne formats one value with one verb.
+fn formatOne(spec str, verb u8, v Value) !str {
+	if verb == 'v' {
+		return printValue(v)
+	}
+	if verb == 's' {
+		return say.Fmt(spec, printValue(v))
+	}
+	if verb == 'q' {
+		if v.kind == KindStr {
+			return say.Fmt(spec, v.s)
+		}
+		return say.Fmt("%%!q(%s=%s)", kindOf(v), printValue(v))
+	}
+	if verb == 'd' || verb == 'x' || verb == 'X' || verb == 'o' || verb == 'b' || verb == 'c' {
+		if v.kind == KindInt {
+			return say.Fmt(spec, v.n)
+		}
+		return say.Fmt("%%!%s(%s=%s)", stringOf(verb), kindOf(v), printValue(v))
+	}
+	if verb == 't' {
+		if v.kind == KindBool {
+			return say.Fmt(spec, v.b)
+		}
+		return say.Fmt("%%!t(%s=%s)", kindOf(v), printValue(v))
+	}
+	if verb == 'f' || verb == 'F' || verb == 'g' || verb == 'G' || verb == 'e' || verb == 'E' {
+		if v.kind == KindFloat {
+			return say.Fmt(spec, v.f)
+		}
+		if v.kind == KindInt {
+			return say.Fmt(spec, f64(v.n))
+		}
+		return say.Fmt("%%!%s(%s=%s)", stringOf(verb), kindOf(v), printValue(v))
+	}
+	fail say.Fault("stencil: printf: unsupported verb %%%s", stringOf(verb))
+}
+
+// escapeHTML escapes text for HTML element content, as Go's html escaper does.
+fn escapeHTML(s str) str {
+	mut out = ""
+	for i in 0..len(s) {
+		let c = s[i]
+		if c == '&' {
+			out += "&amp;"
+		} else if c == '<' {
+			out += "&lt;"
+		} else if c == '>' {
+			out += "&gt;"
+		} else if c == '"' {
+			out += "&#34;"
+		} else if c == '\'' {
+			out += "&#39;"
+		} else if c == 0 {
+			// U+FFFD, the replacement character, as Go writes it.
+			out += replacementChar()
+		} else {
+			out += s[i:i+1]
+		}
+	}
+	return out
+}
+
+// replacementChar is U+FFFD in UTF-8.
+fn replacementChar() str {
+	let b = []u8{0xEF, 0xBF, 0xBD}
+	return rt_str_from_raw(cast(i64, b)[2], 3)
+}
+
+// escapeURL is Go's urlquery: percent-encoding with + for spaces.
+fn escapeURL(s str) str {
+	mut out = ""
+	for i in 0..len(s) {
+		let c = s[i]
+		if isURLSafe(c) {
+			out += s[i:i+1]
+		} else if c == ' ' {
+			out += "+"
+		} else {
+			out += say.Fmt("%%%02X", u64(c))
+		}
+	}
+	return out
+}
+
+// isURLSafe reports the unreserved URL characters.
+fn isURLSafe(c u8) bool {
+	if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+		return true
+	}
+	return c == '-' || c == '_' || c == '.' || c == '~'
+}
+
+// escapeJS escapes text for a JavaScript string, as Go's js escaper does: control characters and
+// the HTML-significant characters become \uXXXX, so </script> cannot end the element.
+fn escapeJS(s str) str {
+	mut out = ""
+	for i in 0..len(s) {
+		let c = s[i]
+		if c < 0x20 || c == '<' || c == '>' || c == '&' || c == '=' || c == '\'' || c == '"' || c >= 0x7f {
+			out += say.Fmt("\\u%04X", u64(c))
+		} else {
+			out += s[i:i+1]
+		}
+	}
+	return out
+}

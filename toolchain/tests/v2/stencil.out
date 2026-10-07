@@ -1,0 +1,46 @@
+deep limit true
+exec index map stencil: index needs a collection and a key
+many ok 70
+out and y
+out block [x]
+out comment ab
+out defs [1][2]
+out dot Hello, world!
+out else if b
+out eq same
+out field 1 <no value> <no value>
+out funcs hey! 6
+out if empty no
+out if true yes
+out if yes
+out if zero no
+out index b
+out len 3
+out lt true
+out ne true
+out nested deep
+out not true
+out or y
+out pipe 5
+out print x7
+out printf float 3.14
+out printf q "hi"
+out printf x-7
+out range abc
+out range else empty
+out range int 0123
+out range one var [a][b][c]
+out range vars 0=a;1=b;2=c;
+out trim ax  b
+out trim right a x  b
+out with [v]
+out with else none
+out with var v
+parse error line stencil: bad2:2:5: expected }
+parse error {{(}} stencil: bad:1:4: empty command
+parse error {{.a stencil: bad:1:5: expected }
+parse error {{.a |}} stencil: bad:1:7: empty command
+parse error {{.a}}x{{else}} stencil: bad:1:8: unexpected else
+parse error {{end}} stencil: bad:1:1: unexpected end
+parse error {{if .a}}x stencil: bad:1:11: expected an action
+parse error {{range}} stencil: bad:1:8: empty command

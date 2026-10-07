@@ -1,0 +1,482 @@
+// Package stencil renders templates loaded at run time, like Go's text/template over a dynamic
+// value tree: {{.user.name}}, {{if}}, {{range}}, {{with}}, pipelines with the builtins (len,
+// index, eq, ne, lt, le, gt, ge, and, or, not, printf, print, println, html, urlquery, js),
+// {{define}}, {{template}} and {{block}}, and user functions registered with Func. Parse errors
+// carry line and column; execution is bounded by a template recursion limit and a maximum output
+// size. Contextual HTML escaping is the next part of #578.
+//
+// Value is a struct with constructor functions rather than the issue's enum: a compiler-generated
+// enum constructor has no region summary, so an enum value passed to a function that stores it
+// (as Execute does) is E312 ARG_ESCAPE even when it is request memory. The constructors below
+// are ordinary functions, and Execute keeps the data and the variables in a cell bound to a
+// runtime slot (the pattern policy.Bind uses), so the store happens inside the runtime.
+package stencil
+
+import "fault"
+import "say"
+import "twine"
+
+// Value is the data a template renders: a tree of strings, numbers, booleans, lists and maps.
+type Value struct {
+	kind i64
+	s    str
+	n    i64
+	f    f64
+	b    bool
+	xs   []Value
+	m    map[str]Value
+}
+
+// The kinds of a Value.
+const KindNone = 0
+
+const KindStr = 1
+
+const KindInt = 2
+
+const KindFloat = 3
+
+const KindBool = 4
+
+const KindList = 5
+
+const KindMap = 6
+
+// None returns the absent value (a missing map key), printed as Go prints it.
+fn None() Value {
+	return Value{kind: KindNone, s: "", n: 0, f: 0, b: false, xs: []Value{}, m: make(map[str]Value)}
+}
+
+// Str returns a string value.
+fn Str(s str) Value {
+	return Value{kind: KindStr, s: s, n: 0, f: 0, b: false, xs: []Value{}, m: make(map[str]Value)}
+}
+
+// Int returns an integer value.
+fn Int(n i64) Value {
+	return Value{kind: KindInt, s: "", n: n, f: 0, b: false, xs: []Value{}, m: make(map[str]Value)}
+}
+
+// Float returns a floating-point value.
+fn Float(f f64) Value {
+	return Value{kind: KindFloat, s: "", n: 0, f: f, b: false, xs: []Value{}, m: make(map[str]Value)}
+}
+
+// Bool returns a boolean value.
+fn Bool(b bool) Value {
+	return Value{kind: KindBool, s: "", n: 0, f: 0, b: b, xs: []Value{}, m: make(map[str]Value)}
+}
+
+// List returns a list value.
+fn List(xs []Value) Value {
+	return Value{kind: KindList, s: "", n: 0, f: 0, b: false, xs: xs, m: make(map[str]Value)}
+}
+
+// Map returns a map value; the keys are strings, as {{.name}} looks them up.
+fn Map(m map[str]Value) Value {
+	return Value{kind: KindMap, s: "", n: 0, f: 0, b: false, xs: []Value{}, m: m}
+}
+
+// Kind returns the value's kind (one of the Kind constants), for code that inspects data.
+fn (v Value) Kind() i64 {
+	return v.kind
+}
+
+// String returns the string of a string value.
+fn (v Value) String() str {
+	return v.s
+}
+
+// Integer returns the integer of an integer value.
+fn (v Value) Integer() i64 {
+	return v.n
+}
+
+// Real returns the float of a floating-point value.
+fn (v Value) Real() f64 {
+	return v.f
+}
+
+// Boolean returns the boolean of a boolean value.
+fn (v Value) Boolean() bool {
+	return v.b
+}
+
+// Items returns the elements of a list value.
+fn (v Value) Items() []Value {
+	return v.xs
+}
+
+// Entries returns the map of a map value.
+fn (v Value) Entries() map[str]Value {
+	return v.m
+}
+
+// Template is a parsed template.
+type Template struct {
+	name  str
+	root  []Node
+	defs  map[str][]Node
+	funcs map[str]fn([]Value) !Value
+}
+
+// Func registers f for {{name ...}} calls in this template.
+fn (t mut Template) Func(name str, f fn([]Value) !Value) {
+	t.funcs[name] = f
+}
+
+// Execute renders the template with data and returns the output.
+fn (t Template) Execute(data Value) !str {
+	mut b = twine.NewBuilder(256)
+	try t.ExecuteTo(mut b, data)
+	return b.String()
+}
+
+// ExecuteTo renders the template with data into w. The data and the variables live in a cell
+// bound to a runtime slot for the call (the pattern policy.Bind uses).
+fn (t Template) ExecuteTo(w mut twine.Builder, data Value) ! {
+	mut cell0 = execCell{dot: data, vars: make(map[str]Value)}
+	cell0.vars["$"] = data
+	let key = cast(i64, cell0)
+	rt_slot_bind(key, cast(i64, cell0))
+	mut st = State{tpl: t, key: key, w: w, depth: 0}
+	try st.walk(t.root)
+}
+
+// truthy is Go's template truth: false, 0, 0.0, "", an empty list or map, and None are false.
+fn truthy(v Value) bool {
+	if v.kind == KindNone {
+		return false
+	}
+	if v.kind == KindBool {
+		return v.b
+	}
+	if v.kind == KindInt {
+		return v.n != 0
+	}
+	if v.kind == KindFloat {
+		return v.f != 0
+	}
+	if v.kind == KindStr {
+		return len(v.s) != 0
+	}
+	if v.kind == KindList {
+		return len(v.xs) != 0
+	}
+	if v.kind == KindMap {
+		return len(v.m) != 0
+	}
+	return false
+}
+
+// printValue is Go's %v of a template value.
+fn printValue(v Value) str {
+	if v.kind == KindNone {
+		return "<no value>"
+	}
+	if v.kind == KindStr {
+		return v.s
+	}
+	if v.kind == KindInt {
+		return say.Fmt("%d", v.n)
+	}
+	if v.kind == KindFloat {
+		return say.Fmt("%g", v.f)
+	}
+	if v.kind == KindBool {
+		if v.b {
+			return "true"
+		}
+		return "false"
+	}
+	if v.kind == KindList {
+		mut out = "["
+		for i, item in v.xs {
+			if i > 0 {
+				out += " "
+			}
+			out += printValue(item)
+		}
+		return out + "]"
+	}
+	if v.kind == KindMap {
+		mut out = "map["
+		mut first = true
+		for _, k in sortedKeys(v.m) {
+			if !first {
+				out += " "
+			}
+			first = false
+			out += k + ":" + printValue(v.m[k])
+		}
+		return out + "]"
+	}
+	return "<no value>"
+}
+
+// compare returns -1, 0 or 1 for the ordered values; ok is false for values Go does not order.
+fn compare(a Value, b Value) (i64, bool) {
+	if a.kind == KindInt {
+		if b.kind == KindInt {
+			return order(a.n, b.n), true
+		}
+		if b.kind == KindFloat {
+			return orderF(f64(a.n), b.f), true
+		}
+		return 0, false
+	}
+	if a.kind == KindFloat {
+		if b.kind == KindInt {
+			return orderF(a.f, f64(b.n)), true
+		}
+		if b.kind == KindFloat {
+			return orderF(a.f, b.f), true
+		}
+		return 0, false
+	}
+	if a.kind == KindStr {
+		if b.kind == KindStr {
+			if a.s < b.s {
+				return -1, true
+			}
+			if a.s > b.s {
+				return 1, true
+			}
+			return 0, true
+		}
+		return 0, false
+	}
+	if a.kind == KindBool {
+		if b.kind == KindBool {
+			if a.b == b.b {
+				return 0, true
+			}
+			return 0, false
+		}
+		return 0, false
+	}
+	if a.kind == KindNone {
+		if b.kind == KindNone {
+			return 0, true
+		}
+		return 0, false
+	}
+	return 0, false
+}
+
+// order compares two i64s.
+fn order(x i64, y i64) i64 {
+	if x < y {
+		return -1
+	}
+	if x > y {
+		return 1
+	}
+	return 0
+}
+
+// orderF compares two f64s.
+fn orderF(x f64, y f64) i64 {
+	if x < y {
+		return -1
+	}
+	if x > y {
+		return 1
+	}
+	return 0
+}
+
+// equal is Go's eq: numbers compare across Int and Float, and everything else by its own kind.
+fn equal(a Value, b Value) bool {
+	let (c, ok) = compare(a, b)
+	if ok {
+		return c == 0
+	}
+	if a.kind == KindList && b.kind == KindList {
+		if len(a.xs) != len(b.xs) {
+			return false
+		}
+		for i in 0..len(a.xs) {
+			if !equal(a.xs[i], b.xs[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// isBuiltin reports whether name is one of the builtins.
+fn isBuiltin(name str) bool {
+	return name == "len" || name == "index" || name == "eq" || name == "ne" || name == "lt" ||
+		name == "le" || name == "gt" || name == "ge" || name == "and" || name == "or" ||
+		name == "not" || name == "printf" || name == "print" || name == "println" ||
+		name == "html" || name == "urlquery" || name == "js"
+}
+
+// builtin calls one of the builtins.
+fn builtin(name str, args []Value) !Value {
+	if name == "len" {
+		if len(args) != 1 {
+			fail say.Fault("stencil: len needs one argument")
+		}
+		let v = args[0]
+		if v.kind == KindStr {
+			return Int(i64(len(v.s)))
+		}
+		if v.kind == KindList {
+			return Int(i64(len(v.xs)))
+		}
+		if v.kind == KindMap {
+			return Int(i64(len(v.m)))
+		}
+		fail say.Fault("stencil: len of a non-collection")
+	}
+	if name == "index" {
+		return try builtinIndex(args)
+	}
+	if name == "eq" {
+		let same = try allEqual(args)
+		return Bool(same)
+	}
+	if name == "ne" {
+		if len(args) != 2 {
+			fail say.Fault("stencil: ne needs two arguments")
+		}
+		return Bool(!equal(args[0], args[1]))
+	}
+	if name == "lt" || name == "le" || name == "gt" || name == "ge" {
+		if len(args) != 2 {
+			fail say.Fault("stencil: %s needs two arguments", name)
+		}
+		let (c, ok) = compare(args[0], args[1])
+		if !ok {
+			fail say.Fault("stencil: %s of incomparable values", name)
+		}
+		if name == "lt" {
+			return Bool(c < 0)
+		}
+		if name == "le" {
+			return Bool(c <= 0)
+		}
+		if name == "gt" {
+			return Bool(c > 0)
+		}
+		return Bool(c >= 0)
+	}
+	if name == "and" {
+		mut last = None()
+		for _, a in args {
+			last = a
+			if !truthy(a) {
+				return a
+			}
+		}
+		return last
+	}
+	if name == "or" {
+		mut last = None()
+		for _, a in args {
+			last = a
+			if truthy(a) {
+				return a
+			}
+		}
+		return last
+	}
+	if name == "not" {
+		if len(args) != 1 {
+			fail say.Fault("stencil: not needs one argument")
+		}
+		return Bool(!truthy(args[0]))
+	}
+	if name == "printf" {
+		if len(args) == 0 {
+			fail say.Fault("stencil: printf needs a format")
+		}
+		let f = args[0]
+		if f.kind != KindStr {
+			fail say.Fault("stencil: printf's first argument must be a string")
+		}
+		let text = try format(f.s, args[1:len(args)])
+		return Str(text)
+	}
+	if name == "print" || name == "println" {
+		mut out = ""
+		for i, a in args {
+			if name == "println" && i > 0 {
+				out += " "
+			}
+			out += printValue(a)
+		}
+		if name == "println" {
+			out += "\n"
+		}
+		return Str(out)
+	}
+	if name == "html" {
+		if len(args) != 1 {
+			fail say.Fault("stencil: html needs one argument")
+		}
+		return Str(escapeHTML(printValue(args[0])))
+	}
+	if name == "urlquery" {
+		if len(args) != 1 {
+			fail say.Fault("stencil: urlquery needs one argument")
+		}
+		return Str(escapeURL(printValue(args[0])))
+	}
+	if name == "js" {
+		if len(args) != 1 {
+			fail say.Fault("stencil: js needs one argument")
+		}
+		return Str(escapeJS(printValue(args[0])))
+	}
+	fail say.Fault("stencil: no function %q", name)
+}
+
+// allEqual is Go's eq: two or more arguments, the first equal to every other.
+fn allEqual(args []Value) !bool {
+	if len(args) < 2 {
+		fail say.Fault("stencil: eq needs two or more arguments")
+	}
+	for i in 1..len(args) {
+		if !equal(args[0], args[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// builtinIndex is Go's index: index x k1 k2... walks lists and maps.
+fn builtinIndex(args []Value) !Value {
+	if len(args) < 2 {
+		fail say.Fault("stencil: index needs a collection and a key")
+	}
+	mut cur = args[0]
+	for i in 1..len(args) {
+		let key = args[i]
+		if cur.kind == KindList {
+			if key.kind != KindInt {
+				fail say.Fault("stencil: a list index must be an integer")
+			}
+			if key.n < 0 || key.n >= i64(len(cur.xs)) {
+				fail say.Fault("stencil: index out of range")
+			}
+			cur = cur.xs[key.n]
+		} else if cur.kind == KindMap {
+			if key.kind != KindStr {
+				fail say.Fault("stencil: a map key must be a string")
+			}
+			let (v, ok) = cur.m[key.s]
+			if !ok {
+				cur = None()
+			} else {
+				cur = v
+			}
+		} else {
+			fail say.Fault("stencil: index of a non-collection")
+		}
+	}
+	return cur
+}
