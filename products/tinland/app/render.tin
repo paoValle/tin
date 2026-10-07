@@ -254,6 +254,7 @@ fn (ed mut Editor) render() {
 			ed.rect(cx, ed.rowTop(cn), ed.Scale * 1.5, ed.LineH, 0.95, 0.95, 1.0)
 		}
 	}
+	ed.scrollbar()
 	ed.panel()
 	ed.tabBar()
 	ed.statusBar()
@@ -357,4 +358,17 @@ fn (ed mut Editor) panel() {
 		i += 1
 		n += 1
 	}
+}
+
+// scrollbar draws a thin thumb at the right edge showing which part of the text is in view.
+fn (ed mut Editor) scrollbar() {
+	let total = len(ed.Buf.Lines)
+	let rows = ed.rows()
+	if total <= rows {
+		return
+	}
+	let area = f64(ed.Bmp.H) - ed.tabH() - ed.LineH * 1.4 - ed.panelH()
+	let thumb = area * f64(rows) / f64(total)
+	let at = ed.tabH() + (area - thumb) * f64(ed.Scroll) / f64(total - 1)
+	ed.rect(f64(ed.Bmp.W) - ed.Scale * 8.0, at, ed.Scale * 6.0, thumb, 0.3, 0.33, 0.4)
 }

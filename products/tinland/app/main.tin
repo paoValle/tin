@@ -11,8 +11,10 @@ import "twine"
 fn main() {
 	mut ed = newEditor(textedit.New())
 	let args = quarry.Args()
-	if len(args) > 1 {
-		ed.load(args[1])
+	mut a = 1
+	for a < len(args) {
+		ed.load(args[a])
+		a += 1
 	}
 	let script = quarry.Getenv("TINLAND_SCRIPT")
 	if len(script) > 0 {

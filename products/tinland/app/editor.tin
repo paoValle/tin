@@ -391,6 +391,9 @@ fn (ed mut Editor) handleKey(k Key) {
 	} else if k.Code == keyReturn || k.Code == keyEnter {
 		b.Newline()
 	} else if k.Code == keyBackspace {
+		if alt && !b.HasSel {
+			b.WordLeft(true)
+		}
 		b.Backspace()
 	} else if k.Code == keyForwardDelete {
 		b.Delete()
@@ -450,11 +453,20 @@ fn (ed mut Editor) controlKey(k Key) {
 // command handles a key pressed with the command key.
 fn (ed mut Editor) command(k Key, shift bool) {
 	let b = ed.Buf
-	if len(k.Chars) == 0 {
-		return
+	mut c = u8(0)
+	if len(k.Chars) > 0 {
+		c = k.Chars[0]
 	}
-	let c = k.Chars[0]
-	if k.Code == keyLeft {
+	if k.Code == keyBackspace {
+		// delete to the start of the line
+		if !b.HasSel {
+			b.Home(true)
+			if !b.HasSel {
+				b.Left(true)
+			}
+		}
+		b.Backspace()
+	} else if k.Code == keyLeft {
 		b.Home(shift)
 	} else if k.Code == keyRight {
 		b.End(shift)

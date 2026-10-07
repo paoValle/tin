@@ -229,7 +229,7 @@ toolchain/     the language: compiler/ (lex, parse, check, lower, generics, regi
                directory per package, see std/README.md), seed/ (the compilers that start a build),
                tests/ (v2: strict tests with expected outputs, *_bad.tin: expected compile errors), docs/
 packages/      the ecosystem: anvil, postgres, mysql, redis, kafka, tls, wire, websocket, ...
-products/      tinland (the IDE: intellij/ on the IntelliJ Platform, vscode/ the extension); tinos follows
+products/      tinland (the editor: app/ is the macOS editor written in Tin, vscode/ the VS Code extension); tinos follows
 bench/         CPU benchmarks vs Go (v2/), HTTP benchmarks (http/), Go reference programs (ref/)
 examples/      programs to read and run
 tools/         ci/ (CI checks), gen/ (generators), dev/ (test runners, debugging helpers)
