@@ -137,6 +137,9 @@ jobs:
       - name: Dyn memory (a dyn value replaced in long-lived memory is released)
         if: runner.os == 'Linux'
         run: python3 tools/ci/dyn_memory_check.py
+      - name: Loop memory (binary-trees within 3x of Go's peak; a plain loop of temporaries under 16 MiB)
+        if: runner.os == 'Linux'
+        run: python3 tools/ci/loop_memory_check.py
       - name: File I/O through io_uring (Linux) and helper threads (concurrent reads, contents, FIFO deadlines, helper thread count)
         env:
           TIN_REQUIRE_IO_URING: ${{ runner.os == 'Linux' && '1' || '' }}

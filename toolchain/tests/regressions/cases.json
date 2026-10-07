@@ -964,7 +964,7 @@
     "expected": {
       "phase": "run",
       "exit": 0,
-      "stdout": "9888890\n",
+      "stdout": "9888890 1000000\n",
       "stderr_contains": "a loop that allocates on every step grows it without bound"
     }
   },
@@ -1048,6 +1048,19 @@
       "phase": "run",
       "exit": 0,
       "stdout": "522843\n",
+      "stderr": ""
+    }
+  },
+  {
+    "source": "loop-pool-plain.tin",
+    "issue": 633,
+    "env": {
+      "TIN_POOL_WARN_MB": "8"
+    },
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "56388890\n",
       "stderr": ""
     }
   }

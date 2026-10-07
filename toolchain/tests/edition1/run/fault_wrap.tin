@@ -37,10 +37,14 @@ fn show(k str) {
 	say.Line(k, "value", v)
 }
 
+// hog holds k blocks of 8 MB at once: a loop's dropped blocks would go back each iteration (#633).
 fn hog(k i64) i64 {
-	mut total i64 = 0
+	mut held = [][]i64{}
 	for i in 0..k {
-		let xs = make([]i64, 1000000)
+		held = append(held, make([]i64, 1000000))
+	}
+	mut total i64 = 0
+	for xs in held {
 		total += len(xs)
 	}
 	return total

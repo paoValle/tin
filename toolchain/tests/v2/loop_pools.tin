@@ -1,0 +1,189 @@
+package main
+
+import "say"
+
+// #633 phase 2: a loop whose iterations keep nothing they allocate gives each iteration's memory
+// back when it ends (and before a break, continue or return leaves it). Every way a value can
+// leave the iteration keeps the loop as it was, and the values stay intact.
+
+type Node struct {
+	name str
+	next ?Node
+}
+
+type Holder struct {
+	row Node
+}
+
+mut kept []str = []str{}
+
+fn label(i i64) str {
+	return "n{i}"
+}
+
+fn pair(i i64) (str, str) {
+	return "a{i}", "b{i}"
+}
+
+fn add(list mut []Node, n Node) {
+	list = append(list, n)
+}
+
+fn remember(s str) {
+	kept = append(kept, keep(s))
+}
+
+// first_long returns from inside the loop: the result is computed before the release.
+fn first_long(n i64) i64 {
+	for i in 0..n {
+		let s = "item {i * 1000}"
+		if len(s) > 8 {
+			return len(s) * 100 + i
+		}
+	}
+	return -1
+}
+
+// find returns memory made in the loop: the loop is left alone.
+fn find(n i64, want i64) ?Node {
+	for i in 0..n {
+		let x = Node{name: label(i)}
+		if i == want {
+			return x
+		}
+	}
+	return nil
+}
+
+// built makes a fresh list in a loop of its own and returns it.
+fn built(n i64) []str {
+	mut out = []str{}
+	for i in 0..n {
+		out = append(out, label(i))
+	}
+	return out
+}
+
+fn main() {
+	// Contained: 10 blocks of 8 MB, one at a time, fit a 16 MB limit.
+	let fits = limit memory 16mb {
+		mut t = 0
+		for i in 0..10 {
+			let xs = make([]i64, 1000000)
+			xs[i] = i
+			t += len(xs) + xs[i]
+		}
+		t
+	} catch err {
+		say.Line("limit:", err)
+		-1
+	}
+	say.Line("fits", fits)
+
+	// Contained, with break, continue and nested loops.
+	mut sum = 0
+	for i in 0..1000 {
+		let s = label(i)
+		if i % 7 == 0 {
+			continue
+		}
+		for j in 0..3 {
+			let t = s + label(j)
+			sum += len(t)
+		}
+		if i == 900 {
+			break
+		}
+	}
+	say.Line("sum", sum)
+
+	// Escapes: an outer variable, slice, map, struct field and a mut parameter.
+	mut last = Node{name: "none"}
+	mut list = []Node{}
+	mut byName = map[str]Node{}
+	mut h = Holder{row: Node{name: "start"}}
+	mut viaParam = []Node{}
+	for i in 0..300 {
+		let n = Node{name: label(i)}
+		last = n
+		if i % 100 == 0 {
+			list = append(list, n)
+			byName[n.name] = n
+			h.row = n
+			add(mut viaParam, n)
+		}
+	}
+	say.Line(last.name, len(list), byName["n200"].name, h.row.name, viaParam[2].name)
+
+	// A store through a pointer the iteration loaded lands outside it.
+	mut outer = Node{name: "outer"}
+	for i in 0..3 {
+		mut w = Holder{row: outer}
+		w.row.name = label(i + 40)
+	}
+	say.Line(outer.name)
+
+	// A fresh object may point at an outside one.
+	mut chain = 0
+	for i in 0..100 {
+		let n = Node{name: label(i), next: outer}
+		if let m = n.next {
+			chain += len(m.name)
+		}
+	}
+	say.Line("chain", chain)
+
+	// Several results, a kept copy, a function literal and a returned value.
+	mut both = 0
+	for i in 0..50 {
+		let (a, b) = pair(i)
+		both += len(a) + len(b)
+		if i % 10 == 0 {
+			remember(a + b)
+		}
+	}
+	mut calls []fn() str = []fn() str{}
+	for i in 0..3 {
+		let s = label(i)
+		calls = append(calls, fn() str {
+			return s
+		})
+	}
+	mut said = ""
+	for c in calls {
+		said = said + c()
+	}
+	say.Line(both, kept, said)
+	mut found = "none"
+	if let f = find(10, 7) {
+		found = f.name
+	}
+	say.Line(first_long(100), found, find(3, 9) == nil, built(4))
+	spread() catch err {
+		say.Line("spread:", err)
+	}
+}
+
+// Children of a scope share their parent's pool.
+fn spread() ! {
+	mut out = make([]str, 4)
+	let o = out
+	scope s {
+		for k in 0..4 {
+			s.spawn(fn() ! {
+				o[k] = label(k * 11)
+			})
+		}
+	}
+	mut rounds = 0
+	scope s {
+		s.spawn(fn() ! {
+			o[0] = keep(label(99))
+		})
+		for i in 0..100 {
+			let t = label(i)
+			rounds += len(t)
+		}
+	}
+	say.Line(out, rounds)
+}

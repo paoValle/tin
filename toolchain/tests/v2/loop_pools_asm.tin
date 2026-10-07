@@ -1,0 +1,44 @@
+package main
+
+import "say"
+
+type Row struct {
+	id i64
+	name str
+}
+
+fn parse(i i64) Row {
+	return Row{id: i, name: "row {i}"}
+}
+
+// contained drops each row: each iteration's memory goes back.
+fn contained(n i64) i64 {
+	mut total = 0
+	for i in 0..n {
+		let r = parse(i)
+		total += len(r.name)
+	}
+	return total
+}
+
+// collected keeps each row: the loop is left alone.
+fn collected(n i64) []Row {
+	mut rows = []Row{}
+	for i in 0..n {
+		rows = append(rows, parse(i))
+	}
+	return rows
+}
+
+// counted calls nothing: no mark is taken.
+fn counted(xs []i64) i64 {
+	mut total = 0
+	for x in xs {
+		total += x * x
+	}
+	return total
+}
+
+fn main() {
+	say.Line(contained(10), len(collected(3)), counted([]i64{1, 2}))
+}

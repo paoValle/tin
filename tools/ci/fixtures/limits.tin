@@ -5,11 +5,14 @@ import "fault"
 import "say"
 import "tide"
 
-// hog allocates k slices of 8 MB.
+// hog holds k slices of 8 MB.
 fn hog(k i64) i64 {
+	// Each block is kept: one dropped in its loop would go back when the iteration ends (#633).
+	mut held = make([][]i64, 0, 0)
 	mut total i64 = 0
 	for i in 0..k {
 		let xs = make([]i64, 1000000)
+		held = append(held, xs)
 		total += len(xs)
 	}
 	return total

@@ -2,9 +2,10 @@ package main
 
 import "say"
 
-// A plain program never resets its pool, so a loop that allocates on every step grows it
-// until the kernel stops the program. Past TIN_POOL_WARN_MB (8 here, through the case's env;
-// 512 by default) the runtime says so once on stderr and names the arena fix (#629).
+// A plain program never resets its pool, so a loop that keeps what it allocates on every step
+// grows it until the kernel stops the program. Past TIN_POOL_WARN_MB (8 here, through the case's
+// env; 512 by default) the runtime says so once on stderr and names the arena fix (#629). A loop
+// that drops what it allocates gives it back each step (#633, loop-pool-plain.tin).
 
 type Row struct {
 	id i64
@@ -16,10 +17,12 @@ fn parse(i i64) Row {
 }
 
 fn main() {
+	mut rows = []Row{}
 	mut total = 0
 	for i in 0..1000000 {
 		let r = parse(i)
 		total += len(r.name)
+		rows = append(rows, r)
 	}
-	say.Line(total)
+	say.Line(total, len(rows))
 }

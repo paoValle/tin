@@ -7,7 +7,8 @@ import "say"
 import "tide"
 
 // Memory bounds by default (#356). /hog allocates without bound and must end at the request
-// budget with 500 (TIN_REQUEST_MEMORY, by default a quarter of the memory limit per core);
+// budget with 500 (TIN_REQUEST_MEMORY, by default a quarter of the memory limit per core), while
+// /churn allocates as much and drops it as it goes, so the budget sees one block at a time (#633);
 // /keep/{mb} keeps mb MiB in a global and /hold/{mb} holds mb MiB of request pool for a second,
 // so the pool and ingot bytes pass TIN_MEMORY_SOFT (by default 90% of the cgroup limit) and new
 // requests get 503 while the server keeps running. /load answers what the admission policy saw.
@@ -34,18 +35,34 @@ fn mib(q anvil.Req) i64 {
 	return mint.Atoi(q.PathParam("mb")) catch _ { 0 }
 }
 
-// hog fills 8 MB slices, every page of them, until the request budget ends it (8 GB if nothing
-// does: the cgroup's OOM killer ends the process first).
+// hog fills and holds 8 MB slices, every page of them, until the request budget ends it (8 GB if
+// nothing does: the cgroup's OOM killer ends the process first).
 fn hog(q anvil.Req, w mut anvil.Out) {
+	mut held = make([][]i64, 0, 0)
 	mut total = 0
 	for i in 0..1000 {
 		let xs = make([]i64, 1000000)
 		for j in (0..len(xs)).step(512) {
 			xs[j] = i
 		}
+		held = append(held, xs)
 		total += len(xs)
 	}
-	w.Text("hogged {total}")
+	w.Text("hogged {total} in {len(held)}")
+}
+
+// churn fills 100 slices of 8 MB the same way and drops each one: every iteration's memory goes
+// back when it ends (#633), so the request budget is charged 8 MB at a time and it answers.
+fn churn(q anvil.Req, w mut anvil.Out) {
+	mut total = 0
+	for i in 0..100 {
+		let xs = make([]i64, 1000000)
+		for j in (0..len(xs)).step(512) {
+			xs[j] = i
+		}
+		total += len(xs) + xs[0]
+	}
+	w.Text("churned {total}")
 }
 
 fn keepMB(q anvil.Req, w mut anvil.Out) {
@@ -81,6 +98,7 @@ fn main() {
 	anvil.Admit(admit)
 	mut r = anvil.NewRouter()
 	r.Get("/hog", hog)
+	r.Get("/churn", churn)
 	r.Get(`/keep/{mb}`, keepMB)
 	r.Get(`/hold/{mb}`, hold)
 	r.Get("/load", load)

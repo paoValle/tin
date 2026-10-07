@@ -1,0 +1,28 @@
+package main
+
+import "say"
+
+// The plain-program loop of #633: every step makes a struct and a string and drops them. Each
+// iteration's memory goes back when it ends, so the pool stays at one step's worth and the #629
+// warning (8 MB here, through the case's env) never fires, without an arena block.
+
+type Row struct {
+	id i64
+	name str
+}
+
+fn parse(i i64) Row {
+	return Row{id: i, name: "row {i}"}
+}
+
+fn main() {
+	mut total = 0
+	for i in 0..5000000 {
+		let r = parse(i)
+		total += len(r.name) + r.id % 2
+		if r.id % 1000000 == 999999 {
+			continue
+		}
+	}
+	say.Line(total)
+}

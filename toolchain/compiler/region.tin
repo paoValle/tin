@@ -94,7 +94,9 @@ fn region_check() {
 }
 
 fn rg_sum_new() i64 {
-	let sum = calloc(13, 8) // [12]: the function resets the request pool (hearth.Reset)
+	let sum = calloc(15, 8) // [12]: the function resets the request pool (hearth.Reset)
+	// [13]: it may keep memory past the call other than through its parameters and results
+	// [14]: it may allocate pool memory, itself or through a call (loop_pools)
 	sum[1] = cast(i64, []i64{})
 	sum[10] = cast(i64, []i64{})
 	sum[11] = cast(i64, []i64{})
@@ -508,6 +510,10 @@ fn rg_store(c i64, co i64, ct i64, v i64, t i64, pos i64, gname str) {
 	if v != RG_EMB {
 		// A call's stores (rg_pass gives them RG_EMB) are checked by rg_arena_call.
 		rg_arena_store(c, v, pos)
+	}
+	if (c & (RG_INGOT | RG_UNK)) != 0 || c == 0 {
+		// Long-lived memory, or a raw word with no origin (malloc'd, the core context).
+		rg_keeps()
 	}
 	if (c & (RG_INGOT | RG_UNK)) != 0 && rg_report != 0 {
 		if len(gname) != 0 {
@@ -933,6 +939,9 @@ fn rg_grows_op(name str) i64 {
 
 // rg_grow notes that the running function may grow the slice or map with bits b.
 fn rg_grow(b i64, pos i64) {
+	if (b & (RG_INGOT | RG_UNK)) != 0 {
+		rg_keeps()
+	}
 	mut i = 0
 	for i < rg_nparams && i < RG_MAXP {
 		if (b & (RG_P0 << i)) != 0 {
@@ -1048,6 +1057,16 @@ fn rg_arena_call(f i64, b []i64, pos i64) {
 			rg_arena_store(b[i], v, pos)
 		}
 		i = i + 1
+	}
+}
+
+// rg_keeps notes that the function being analyzed, or one it calls, may keep memory past the call
+// other than through its parameters and results: in long-lived memory, a task, a deferred call or
+// anything the pass cannot see (#633). Loops that call it get no iteration pool.
+fn rg_keeps() {
+	if rg_sum[13] == 0 {
+		rg_sum[13] = 1
+		rg_changed = 1
 	}
 }
 
@@ -1283,9 +1302,11 @@ fn rg_call(e i64) i64 {
 	}
 	let pos = cast(Node, e).pos
 	if cast(Call, e).dyn_shape != 0 {
+		rg_keeps()
 		return rg_dyn_call(e, cast([]Node, args), cast(i64, b), pos)
 	}
 	if cast(Call, e).callee != 0 {
+		rg_keeps()
 		rg_expr(cast(Call, e).callee)
 		// The callee is unknown: a mut argument may be modified and may receive request
 		// memory, and the call may do what any function used as a value does (rg_fnsum).
@@ -1332,7 +1353,17 @@ fn rg_call(e i64) i64 {
 		return RG_INGOT
 	}
 	if len(name) != 0 && str_prefix(name, "rt_") != 0 {
+		if lp_rt_keeps_nothing(name) == 0 && lp_rt_into_first(name) == 0 {
+			rg_keeps()
+		}
 		return rg_runtime_call(e, name, b, pos)
+	}
+	if cast(i64, f) == 0 || f.regsum == 0 {
+		if lp_pure_fn(name) == 0 {
+			rg_keeps()
+		}
+	} else if f.regsum[13] != 0 {
+		rg_keeps()
 	}
 	mut sum = 0
 	if cast(i64, f) != 0 {
@@ -2302,4 +2333,752 @@ fn cg_expr(e i64) {
 		cg_expr(cast(ElemExpr, e).seq)
 		cg_expr(cast(ElemExpr, e).idx)
 	}
+}
+
+// ---- iteration pools (#633, design/design_escape.md section 3) ----
+//
+// A loop whose iterations keep everything they allocate gives each iteration's memory back: a
+// pool mark (the core's bump pointer and extra-block list) is taken when the body starts, and
+// rt_pool_release runs when it ends and before a break, continue or return leaves it. The scan
+// is conservative and runs after the region fixed point, so callee summaries are final: storing
+// anything that holds a pointer outside the iteration, growing an outside slice or map, a callee
+// that stores into or grows an argument from outside, a function literal, an indirect call, a
+// pool reset, a returned pointer or a fault leaves the loop as it is.
+shared mut lp_fn i64
+shared mut lp_inner []i64 // locals the body declares
+shared mut lp_fresh []i64 // of those, the ones bound only to memory the iteration made
+shared mut lp_ok i64
+shared mut lp_calls i64 // the body may allocate: a loop that cannot gets no mark
+shared mut lp_depth i64 // nested loops inside the body being scanned
+shared mut lp_gen i64 // the local holding the loop's ctxShareGen mark
+
+fn loop_pools() {
+	lp_alloc_summaries()
+	mut i = 0
+	for i < len(prog_fns) {
+		let f = prog_fns[i]
+		if f.reach != 0 && f.body != 0 && f.regsum != 0 && rg_analyzable(f) != 0 && file_trusted[f.file] == 0 {
+			lp_fn = cast(i64, f)
+			set_file(f.file)
+			lp_find(cast(Block, f.body).stmts)
+		}
+		i = i + 1
+	}
+}
+
+// lp_find visits the loops among statements v, inner ones first.
+fn lp_find(v []i64) {
+	mut i = 0
+	for i < len(v) {
+		let s = v[i]
+		let k = cast(Node, s).kind
+		if k == ST_BLOCK {
+			lp_find(cast(Block, s).stmts)
+		} else if k == ST_IF {
+			lp_find_one(cast(IfStmt, s).then)
+			if cast(IfStmt, s).else_ != 0 {
+				lp_find_one(cast(IfStmt, s).else_)
+			}
+		} else if k == ST_WHILE {
+			lp_find_one(cast(WhileStmt, s).body)
+			lp_try(cast(WhileStmt, s))
+		}
+		i = i + 1
+	}
+}
+
+fn lp_find_one(s i64) {
+	if s == 0 {
+		return
+	}
+	if cast(Node, s).kind == ST_BLOCK {
+		lp_find(cast(Block, s).stmts)
+		return
+	}
+	mut one = []i64{}
+	one = append(one, s)
+	lp_find(one)
+}
+
+fn lp_try(w WhileStmt) {
+	if w.body == 0 || cast(Node, w.body).kind != ST_BLOCK {
+		return
+	}
+	lp_inner = []i64{}
+	lp_fresh = []i64{}
+	lp_ok = 1
+	lp_calls = 0
+	lp_depth = 0
+	lp_collect(cast(Block, w.body).stmts)
+	lp_scan(cast(Block, w.body).stmts)
+	if lp_ok == 0 || lp_calls == 0 {
+		return
+	}
+	let f = cast(Fn, lp_fn)
+	let pos = cast(Node, w).pos
+	let mb = cast(Sym, ia_local_in(f, ty_int))
+	let mx = cast(Sym, ia_local_in(f, ty_int))
+	let mg = cast(Sym, ia_local_in(f, ty_int))
+	// The mark lives in the frame: three registers held across a hot loop would cost more.
+	mb.addr = 1
+	mx.addr = 1
+	mg.addr = 1
+	lp_gen = cast(i64, mg)
+	let body = cast(Block, w.body)
+	lp_exits(body.stmts, mb, mx, 0)
+	mut nb = []i64{}
+	nb = append(nb, let_stmt(pos, mb, lp_ctx_word(pos, 0)))
+	nb = append(nb, let_stmt(pos, mx, lp_ctx_word(pos, 9)))
+	nb = append(nb, let_stmt(pos, mg, lp_ctx_word(pos, 15)))
+	mut i = 0
+	for i < len(body.stmts) {
+		nb = append(nb, body.stmts[i])
+		i = i + 1
+	}
+	nb = append(nb, lp_release(pos, mb, mx))
+	body.stmts = cast([]i64, nb)
+}
+
+// lp_ctx_word reads word i of the core context: 0 the bump pointer, 9 the extra-block list, 15
+// the count of pool-sharing scope children started and ended.
+fn lp_ctx_word(pos i64, i i64) i64 {
+	return mk_mem(pos, intrinsic_call(pos, "__ctx", cast(i64, []i64{}), ty_int), 0, 0, 8 * i, ty_int)
+}
+
+// lp_release gives the iteration's memory back when it allocated any: the two words moved.
+fn lp_release(pos i64, mb Sym, mx Sym) i64 {
+	let ifs = cast(IfStmt, node_new(ST_IF, pos))
+	ifs.cond = mk_bin(pos, "||", mk_bin(pos, "!=", lp_ctx_word(pos, 0), sym_ref_node(pos, mb), ty_bool), mk_bin(pos, "!=", lp_ctx_word(pos, 9), sym_ref_node(pos, mx), ty_bool), ty_bool)
+	ifs.then = empty_block(pos)
+	let rf = find_fn("rt_pool_release")
+	mark_reach(rf)
+	mut tb = cast(Block, ifs.then).stmts
+	tb = append(tb, expr_stmt(cast(Node, rt_call(pos, "rt_pool_release", args3(sym_ref_node(pos, mb), sym_ref_node(pos, mx), sym_ref_node(pos, cast(Sym, lp_gen))), ty_void))))
+	return cast(i64, ifs)
+}
+
+// lp_exits puts a release before each break and continue of this loop (depth 0, outside the
+// loops nested in it) and before each return anywhere in it; a returned value is computed first,
+// since the release zeroes what the iteration made.
+fn lp_exits(v []i64, mb Sym, mx Sym, depth i64) {
+	mut i = 0
+	for i < len(v) {
+		let s = v[i]
+		let k = cast(Node, s).kind
+		let pos = cast(Node, s).pos
+		if k == ST_BLOCK {
+			lp_exits(cast(Block, s).stmts, mb, mx, depth)
+		} else if k == ST_IF {
+			lp_exits_one(cast(IfStmt, s).then, mb, mx, depth)
+			if cast(IfStmt, s).else_ != 0 {
+				lp_exits_one(cast(IfStmt, s).else_, mb, mx, depth)
+			}
+		} else if k == ST_WHILE {
+			lp_exits_one(cast(WhileStmt, s).body, mb, mx, depth + 1)
+		} else if (k == ST_BREAK || k == ST_CONTINUE) && depth == 0 {
+			let b = cast(Block, empty_block(pos))
+			b.flat = 1
+			b.stmts = append(b.stmts, lp_release(pos, mb, mx))
+			let jump = node_new(k, pos)
+			replace_node(jump, s)
+			b.stmts = append(b.stmts, jump)
+			replace_node(s, cast(i64, b))
+		} else if k == ST_RETURN {
+			let b = cast(Block, empty_block(pos))
+			b.flat = 1
+			let r = cast(ReturnStmt, node_new(ST_RETURN, pos))
+			if cast(ReturnStmt, s).value != 0 {
+				// The value's local belongs to the function being changed (temp() would put it
+				// in the checker's current one).
+				let v0 = cast(Node, cast(ReturnStmt, s).value)
+				let t0 = cast(Sym, ia_local_in(cast(Fn, lp_fn), v0.type_))
+				b.stmts = append(b.stmts, let_stmt(pos, t0, cast(i64, v0)))
+				r.value = sym_ref_node(pos, t0)
+			}
+			if cast(i64, cast(ReturnStmt, s).values) != 0 {
+				mut vals = []i64{}
+				mut j = 0
+				for j < len(cast(ReturnStmt, s).values) {
+					let vj = cast(Node, cast(ReturnStmt, s).values[j])
+					let tj = cast(Sym, ia_local_in(cast(Fn, lp_fn), vj.type_))
+					b.stmts = append(b.stmts, let_stmt(pos, tj, cast(i64, vj)))
+					vals = append(vals, sym_ref_node(pos, tj))
+					j = j + 1
+				}
+				r.values = cast([]i64, vals)
+			}
+			b.stmts = append(b.stmts, lp_release(pos, mb, mx))
+			b.stmts = append(b.stmts, cast(i64, r))
+			replace_node(s, cast(i64, b))
+		}
+		i = i + 1
+	}
+}
+
+fn lp_exits_one(s i64, mb Sym, mx Sym, depth i64) {
+	if s == 0 {
+		return
+	}
+	mut one = []i64{}
+	one = append(one, s)
+	lp_exits(one, mb, mx, depth)
+}
+
+// lp_collect notes the locals the body declares, and which are bound to fresh memory.
+fn lp_collect(v []i64) {
+	mut i = 0
+	for i < len(v) {
+		lp_collect_stmt(v[i])
+		i = i + 1
+	}
+}
+
+fn lp_collect_stmt(s i64) {
+	if s == 0 {
+		return
+	}
+	let k = cast(Node, s).kind
+	if k == ST_LET {
+		let sym = cast(LetStmt, s).sym
+		lp_inner = append(lp_inner, sym)
+		lp_collect_expr(cast(LetStmt, s).init)
+		if lp_fresh_expr(cast(LetStmt, s).init) != 0 {
+			lp_fresh = append(lp_fresh, sym)
+		}
+	} else if k == ST_BLOCK {
+		lp_collect(cast(Block, s).stmts)
+	} else if k == ST_IF {
+		lp_collect_expr(cast(IfStmt, s).cond)
+		lp_collect_stmt(cast(IfStmt, s).then)
+		lp_collect_stmt(cast(IfStmt, s).else_)
+	} else if k == ST_WHILE {
+		lp_collect_expr(cast(WhileStmt, s).cond)
+		lp_collect_stmt(cast(WhileStmt, s).body)
+		lp_collect_stmt(cast(WhileStmt, s).post)
+	} else if k == ST_ASSIGN {
+		lp_collect_expr(cast(AssignStmt, s).value)
+		let t = cast(AssignStmt, s).target
+		if cast(Node, t).kind == EX_IDENT && slice_has(lp_fresh, cast(IdentExpr, t).ref) != 0 && lp_fresh_expr(cast(AssignStmt, s).value) == 0 {
+			// Bound to something else too: no longer only fresh memory.
+			lp_unfresh(cast(IdentExpr, t).ref)
+		}
+	} else if k == ST_EXPR {
+		lp_collect_expr(cast(ExprStmt, s).x)
+	} else if k == ST_CALLMULTI {
+		let syms = cast(CallMultiStmt, s).syms
+		mut j = 0
+		for j < len(syms) {
+			lp_inner = append(lp_inner, cast(i64, syms[j]))
+			lp_unfresh(cast(i64, syms[j]))
+			j = j + 1
+		}
+	}
+}
+
+fn lp_unfresh(sym i64) {
+	mut out = []i64{}
+	mut i = 0
+	for i < len(lp_fresh) {
+		if lp_fresh[i] != sym {
+			out = append(out, lp_fresh[i])
+		}
+		i = i + 1
+	}
+	lp_fresh = out
+}
+
+// lp_collect_expr finds the temps that checker-made sequences declare (a literal's object).
+fn lp_collect_expr(e i64) {
+	if e == 0 {
+		return
+	}
+	let k = cast(Node, e).kind
+	if k == EX_SEQ {
+		lp_collect(cast(SeqExpr, e).stmts)
+		lp_collect_expr(cast(SeqExpr, e).value)
+	} else if k == EX_CALL {
+		let args = cast(Call, e).args
+		mut i = 0
+		for cast(i64, args) != 0 && i < len(args) {
+			lp_collect_expr(args[i])
+			i = i + 1
+		}
+	} else if k == EX_CONV {
+		lp_collect_expr(cast(Conv, e).x)
+	} else if k == EX_BINARY {
+		lp_collect_expr(cast(Binary, e).l)
+		lp_collect_expr(cast(Binary, e).r)
+	} else if k == EX_UNARY {
+		lp_collect_expr(cast(Unary, e).x)
+	}
+}
+
+// lp_fresh_expr reports whether e is memory the iteration makes: an allocation, a literal's
+// object, or a call whose results come only from fresh memory (its summary).
+fn lp_fresh_expr(e i64) i64 {
+	if e == 0 {
+		return 0
+	}
+	let k = cast(Node, e).kind
+	if k == EX_CONV && cast(Conv, e).kind == CV_SAME {
+		return lp_fresh_expr(cast(Conv, e).x)
+	}
+	if k == EX_SEQ {
+		let v = cast(SeqExpr, e).value
+		return i64(cast(Node, v).kind == EX_IDENT && slice_has(lp_fresh, cast(IdentExpr, v).ref) != 0)
+	}
+	if k == EX_IDENT {
+		return slice_has(lp_fresh, cast(IdentExpr, e).ref)
+	}
+	if k != EX_CALL || cast(Call, e).callee != 0 {
+		return 0
+	}
+	let name = cast(Call, e).name
+	if name == "rt_alloc" || name == "rt_slice_make" || name == "rt_slice_make_str" || name == "rt_map_make" || name == "rt_map_make_rc" || name == "rt_vdup" {
+		return 1
+	}
+	let f = cast(Fn, cast(Call, e).fn_)
+	if cast(i64, f) == 0 || f.regsum == 0 {
+		return 0
+	}
+	let bits = f.regsum[2]
+	return i64((bits & RG_FRESH) != 0 && (bits & ~(RG_FRESH | RG_EMB)) == 0)
+}
+
+// lp_scan clears lp_ok when the body may keep memory it makes past the iteration.
+fn lp_scan(v []i64) {
+	mut i = 0
+	for i < len(v) && lp_ok != 0 {
+		lp_scan_stmt(v[i])
+		i = i + 1
+	}
+}
+
+fn lp_scan_stmt(s i64) {
+	if s == 0 || lp_ok == 0 {
+		return
+	}
+	let k = cast(Node, s).kind
+	if k == ST_LET {
+		lp_scan_expr(cast(LetStmt, s).init)
+	} else if k == ST_ASSIGN {
+		let t = cast(AssignStmt, s).target
+		let tt = cast(Ty, cast(Node, t).type_)
+		if cast(Node, t).kind == EX_IDENT {
+			if has_ptr(tt) != 0 && slice_has(lp_inner, cast(IdentExpr, t).ref) == 0 {
+				lp_ok = 0
+				return
+			}
+		} else {
+			if has_ptr(tt) != 0 && slice_has(lp_fresh, lp_root(t)) == 0 {
+				lp_ok = 0
+				return
+			}
+			lp_scan_expr(t)
+		}
+		lp_scan_expr(cast(AssignStmt, s).value)
+	} else if k == ST_EXPR {
+		lp_scan_expr(cast(ExprStmt, s).x)
+	} else if k == ST_BLOCK {
+		lp_scan(cast(Block, s).stmts)
+	} else if k == ST_IF {
+		lp_scan_expr(cast(IfStmt, s).cond)
+		lp_scan_stmt(cast(IfStmt, s).then)
+		lp_scan_stmt(cast(IfStmt, s).else_)
+	} else if k == ST_WHILE {
+		lp_scan_expr(cast(WhileStmt, s).cond)
+		lp_depth = lp_depth + 1
+		lp_scan_stmt(cast(WhileStmt, s).body)
+		lp_scan_stmt(cast(WhileStmt, s).post)
+		lp_depth = lp_depth - 1
+	} else if k == ST_RETURN {
+		if cast(ReturnStmt, s).value != 0 {
+			if has_ptr(cast(Ty, cast(Node, cast(ReturnStmt, s).value).type_)) != 0 {
+				lp_ok = 0
+				return
+			}
+			lp_scan_expr(cast(ReturnStmt, s).value)
+		}
+		let vals = cast(ReturnStmt, s).values
+		mut j = 0
+		for cast(i64, vals) != 0 && j < len(vals) {
+			if has_ptr(cast(Ty, cast(Node, vals[j]).type_)) != 0 {
+				lp_ok = 0
+				return
+			}
+			lp_scan_expr(vals[j])
+			j = j + 1
+		}
+	} else if k == ST_BREAK || k == ST_CONTINUE {
+		if len(cast(BreakStmt, s).label) != 0 {
+			// A labeled jump may leave several loops at once: not handled yet.
+			lp_ok = 0
+		}
+	} else if k == ST_CALLMULTI {
+		let syms = cast(CallMultiStmt, s).syms
+		mut j = 0
+		for j < len(syms) {
+			if has_ptr(cast(Ty, syms[j].type_)) != 0 && lp_fresh_expr(cast(CallMultiStmt, s).call) == 0 && slice_has(lp_inner, cast(i64, syms[j])) == 0 {
+				lp_ok = 0
+				return
+			}
+			j = j + 1
+		}
+		lp_scan_expr(cast(CallMultiStmt, s).call)
+	} else {
+		// fail, defer, select, detach and anything not lowered to the above.
+		lp_ok = 0
+	}
+}
+
+// lp_root is the local whose own object a field, element or index target lies in, or 0. Only
+// the object the local points at is known to be the iteration's: a pointer loaded from one of
+// its fields may lead anywhere, so p.next.v has no root.
+fn lp_root(e i64) i64 {
+	mut x = e
+	mut steps = 0
+	for x != 0 {
+		let k = cast(Node, x).kind
+		if k == EX_IDENT {
+			return cast(IdentExpr, x).ref
+		}
+		if k == EX_CONV {
+			x = cast(Conv, x).x
+		} else if steps == 1 {
+			return 0
+		} else if k == EX_MEM {
+			x = cast(MemExpr, x).base
+			steps = 1
+		} else if k == EX_ELEM {
+			x = cast(ElemExpr, x).seq
+			steps = 1
+		} else if k == EX_INDEX {
+			x = cast(IndexExpr, x).x
+			steps = 1
+		} else {
+			return 0
+		}
+	}
+	return 0
+}
+
+// lp_alloc_summaries sets regsum[14] for each function that may allocate pool memory: it calls a
+// runtime function that does (lp_rt_allocates), a function value, a dyn method, a generated
+// function, or a function that may. Only loops whose bodies may allocate get a mark, so a wrong
+// answer costs speed or memory, never correctness.
+fn lp_alloc_summaries() {
+	mut changed = 1
+	mut round = 0
+	for changed != 0 && round < 30 {
+		changed = 0
+		mut i = 0
+		for i < len(prog_fns) {
+			let f = prog_fns[i]
+			if f.reach != 0 && f.body != 0 && f.regsum != 0 && f.regsum[14] == 0 && lp_allocs_in(cast(Block, f.body).stmts) != 0 {
+				f.regsum[14] = 1
+				changed = 1
+			}
+			i = i + 1
+		}
+		round = round + 1
+	}
+}
+
+fn lp_allocs_in(v []i64) i64 {
+	mut i = 0
+	for cast(i64, v) != 0 && i < len(v) {
+		if lp_allocs_stmt(v[i]) != 0 {
+			return 1
+		}
+		i = i + 1
+	}
+	return 0
+}
+
+fn lp_allocs_stmt(s i64) i64 {
+	if s == 0 {
+		return 0
+	}
+	let k = cast(Node, s).kind
+	if k == ST_BLOCK {
+		return lp_allocs_in(cast(Block, s).stmts)
+	}
+	if k == ST_LET {
+		return lp_allocs_expr(cast(LetStmt, s).init)
+	}
+	if k == ST_ASSIGN {
+		return i64(lp_allocs_expr(cast(AssignStmt, s).target) != 0 || lp_allocs_expr(cast(AssignStmt, s).value) != 0)
+	}
+	if k == ST_EXPR {
+		return lp_allocs_expr(cast(ExprStmt, s).x)
+	}
+	if k == ST_IF {
+		return i64(lp_allocs_expr(cast(IfStmt, s).cond) != 0 || lp_allocs_stmt(cast(IfStmt, s).then) != 0 || lp_allocs_stmt(cast(IfStmt, s).else_) != 0)
+	}
+	if k == ST_WHILE {
+		return i64(lp_allocs_expr(cast(WhileStmt, s).cond) != 0 || lp_allocs_stmt(cast(WhileStmt, s).body) != 0 || lp_allocs_stmt(cast(WhileStmt, s).post) != 0)
+	}
+	if k == ST_RETURN {
+		if lp_allocs_expr(cast(ReturnStmt, s).value) != 0 {
+			return 1
+		}
+		let vals = cast(ReturnStmt, s).values
+		mut j = 0
+		for cast(i64, vals) != 0 && j < len(vals) {
+			if lp_allocs_expr(vals[j]) != 0 {
+				return 1
+			}
+			j = j + 1
+		}
+		return 0
+	}
+	if k == ST_CALLMULTI {
+		return lp_allocs_expr(cast(CallMultiStmt, s).call)
+	}
+	if k == ST_BREAK || k == ST_CONTINUE {
+		return 0
+	}
+	// fail, defer, select: they allocate.
+	return 1
+}
+
+fn lp_allocs_expr(e i64) i64 {
+	if e == 0 {
+		return 0
+	}
+	let k = cast(Node, e).kind
+	if k == EX_CALL {
+		if lp_call_allocs(e) != 0 {
+			return 1
+		}
+		if lp_allocs_expr(cast(Call, e).callee) != 0 {
+			return 1
+		}
+		let args = cast(Call, e).args
+		mut i = 0
+		for cast(i64, args) != 0 && i < len(args) {
+			if lp_allocs_expr(args[i]) != 0 {
+				return 1
+			}
+			i = i + 1
+		}
+		return 0
+	}
+	if k == EX_BINARY {
+		return i64(lp_allocs_expr(cast(Binary, e).l) != 0 || lp_allocs_expr(cast(Binary, e).r) != 0)
+	}
+	if k == EX_UNARY {
+		return lp_allocs_expr(cast(Unary, e).x)
+	}
+	if k == EX_CONV {
+		return lp_allocs_expr(cast(Conv, e).x)
+	}
+	if k == EX_MEM {
+		return i64(lp_allocs_expr(cast(MemExpr, e).base) != 0 || lp_allocs_expr(cast(MemExpr, e).index) != 0 || lp_allocs_expr(cast(MemExpr, e).len) != 0)
+	}
+	if k == EX_ELEM {
+		return i64(lp_allocs_expr(cast(ElemExpr, e).seq) != 0 || lp_allocs_expr(cast(ElemExpr, e).idx) != 0)
+	}
+	if k == EX_INDEX {
+		return i64(lp_allocs_expr(cast(IndexExpr, e).x) != 0 || lp_allocs_expr(cast(IndexExpr, e).i) != 0)
+	}
+	if k == EX_SEQ {
+		return i64(lp_allocs_in(cast(SeqExpr, e).stmts) != 0 || lp_allocs_expr(cast(SeqExpr, e).value) != 0)
+	}
+	if k == EX_INT || k == EX_FLOAT || k == EX_STR || k == EX_IDENT || k == EX_FUNCREF || k == EX_NIL {
+		return 0
+	}
+	// A function literal makes a closure.
+	return 1
+}
+
+// lp_call_allocs reports whether call e itself may allocate pool memory (not its arguments).
+fn lp_call_allocs(e i64) i64 {
+	if cast(Call, e).callee != 0 || cast(Call, e).dyn_shape != 0 {
+		return 1
+	}
+	if cast(Call, e).intrinsic != 0 {
+		return 0
+	}
+	let name = cast(Call, e).name
+	if len(name) > 3 && str_prefix(name, "rt_") != 0 {
+		return lp_rt_allocates(name)
+	}
+	let f = cast(Fn, cast(Call, e).fn_)
+	if cast(i64, f) == 0 {
+		return 1
+	}
+	if f.extern_ != 0 {
+		return 0
+	}
+	if f.regsum == 0 {
+		return 1
+	}
+	return f.regsum[14]
+}
+
+// lp_rt_allocates reports a runtime call that takes pool memory.
+fn lp_rt_allocates(name str) i64 {
+	if str_prefix(name, "rt_slice_make") != 0 || str_prefix(name, "rt_map_make") != 0 || str_prefix(name, "rt_append") != 0 || str_prefix(name, "rt_slice_appendn") != 0 || str_prefix(name, "rt_str_from") != 0 || str_prefix(name, "rt_map_set") != 0 || str_prefix(name, "rt_kb_") != 0 {
+		return 1
+	}
+	return i64(name == "rt_alloc" || name == "rt_vdup" || name == "rt_str_cat" || name == "rt_str_grow" || name == "rt_str_sub" || name == "rt_bytes_from_str" || name == "rt_fmt_end" || name == "rt_slice_sub" || name == "rt_map_order" || name == "rt_err_str" || name == "rt_utf8" || name == "rt_copy_str" || name == "rt_slice_copy" || name == "rt_slice_copy_rc" || name == "rt_slice_copy_dyn")
+}
+
+// lp_rt_into_first reports whether runtime call name stores into, or grows, its first argument
+// (the region pass records that as a store into the argument).
+fn lp_rt_into_first(name str) i64 {
+	return i64(rg_grows_op(name) != 0 || name == "rt_slice_copy" || name == "rt_slice_copy_rc" || name == "rt_slice_copy_dyn" || name == "rt_map_set_pair" || name == "rt_append_pair" || name == "rt_append_mem")
+}
+
+// lp_pure_fn reports whether generated function q only reads its arguments (printing,
+// comparing, encoding keys) or copies them out (keep).
+fn lp_pure_fn(q str) i64 {
+	return i64(str_prefix(q, "say$") != 0 || str_prefix(q, "eq$") != 0 || str_prefix(q, "veq$") != 0 || str_prefix(q, "keyenc$") != 0 || str_prefix(q, "keydec$") != 0 || str_prefix(q, "keep$") != 0)
+}
+
+// lp_rt_keeps_nothing reports whether runtime call name keeps none of its arguments past the
+// call (it may read them, or return them or a new value built from them).
+fn lp_rt_keeps_nothing(name str) i64 {
+	if str_prefix(name, "rt_fmt_") != 0 || str_prefix(name, "rt_sys_") != 0 || str_prefix(name, "rt_kb_") != 0 || str_prefix(name, "rt_kd_") != 0 || str_prefix(name, "rt_keep") != 0 || str_prefix(name, "rt_bounds_fail") != 0 {
+		return 1
+	}
+	return i64(name == "rt_alloc" || name == "rt_vdup" || name == "rt_ingot_alloc" || name == "rt_slice_make" || name == "rt_slice_make_str" || name == "rt_slice_make_nest" || name == "rt_slice_make_grid" || name == "rt_map_make" || name == "rt_map_make_rc" || name == "rt_map_key" || name == "rt_map_slots" || name == "rt_map_live" || name == "rt_map_len" || name == "rt_map_val" || name == "rt_map_val_dyn" || name == "rt_map_get" || name == "rt_map_get_dyn" || name == "rt_map_found" || name == "rt_map_del" || name == "rt_map_order" || name == "rt_order_at" || name == "rt_str_eq" || name == "rt_str_cmp" || name == "rt_str_cat" || name == "rt_str_sub" || name == "rt_str_from_rune" || name == "rt_str_from_bytes" || name == "rt_bytes_from_str" || name == "rt_copy_str" || name == "rt_slice_sub" || name == "rt_utf8" || name == "rt_err_str" || name == "rt_panic" || name == "rt_overflow_fail" || name == "rt_div_fail" || name == "rt_bnd_poll" || name == "rt_rc_inc" || name == "rt_rc_dec" || name == "rt_rc_dec_dyn" || name == "rt_rc_drop_none" || name == "rt_rc_arr_n" || name == "rt_pool_used" || name == "rt_task_swap")
+}
+
+fn lp_scan_exprs(v []i64) {
+	mut i = 0
+	for cast(i64, v) != 0 && i < len(v) && lp_ok != 0 {
+		lp_scan_expr(v[i])
+		i = i + 1
+	}
+}
+
+fn lp_scan_expr(e i64) {
+	if e == 0 || lp_ok == 0 {
+		return
+	}
+	let k = cast(Node, e).kind
+	if k == EX_INT || k == EX_FLOAT || k == EX_STR || k == EX_IDENT || k == EX_FUNCREF || k == EX_NIL {
+		return
+	}
+	if k == EX_BINARY {
+		lp_scan_expr(cast(Binary, e).l)
+		lp_scan_expr(cast(Binary, e).r)
+	} else if k == EX_UNARY {
+		lp_scan_expr(cast(Unary, e).x)
+	} else if k == EX_CONV {
+		lp_scan_expr(cast(Conv, e).x)
+	} else if k == EX_MEM {
+		lp_scan_expr(cast(MemExpr, e).base)
+		lp_scan_expr(cast(MemExpr, e).index)
+	} else if k == EX_ELEM {
+		lp_scan_expr(cast(ElemExpr, e).seq)
+		lp_scan_expr(cast(ElemExpr, e).idx)
+	} else if k == EX_INDEX {
+		lp_scan_expr(cast(IndexExpr, e).x)
+		lp_scan_expr(cast(IndexExpr, e).i)
+	} else if k == EX_SEQ {
+		lp_scan(cast(SeqExpr, e).stmts)
+		lp_scan_expr(cast(SeqExpr, e).value)
+	} else if k == EX_CALL {
+		lp_scan_call(e)
+	} else {
+		// A function literal, and any node this scan does not know.
+		lp_ok = 0
+	}
+}
+
+// lp_scan_call checks a call: an indirect call is unknown; a runtime call that grows or stores
+// into its first argument needs that to be fresh; a call of a function needs its summary to keep
+// what it is given (no store into, no growth of, an argument from outside), and no pool reset.
+fn lp_scan_call(e i64) {
+	if lp_call_allocs(e) != 0 {
+		lp_calls = 1
+	}
+	let args = cast(Call, e).args
+	if cast(Call, e).callee != 0 || cast(Call, e).dyn_shape != 0 {
+		lp_ok = 0
+		return
+	}
+	let name = cast(Call, e).name
+	if cast(Call, e).intrinsic != 0 {
+		lp_scan_exprs(args)
+		return
+	}
+	if len(name) > 3 && name[0] == 'r' && name[1] == 't' && name[2] == '_' {
+		if lp_rt_into_first(name) != 0 {
+			if cast(i64, args) == 0 || len(args) == 0 || slice_has(lp_fresh, lp_root(args[0])) == 0 {
+				lp_ok = 0
+				return
+			}
+		} else if lp_rt_keeps_nothing(name) == 0 {
+			// Spawns, scopes, defer, select, use, within, guard, arenas, faults and the rest may
+			// keep what they are given past the iteration.
+			lp_ok = 0
+			return
+		}
+		lp_scan_exprs(args)
+		return
+	}
+	let f = cast(Fn, cast(Call, e).fn_)
+	if cast(i64, f) == 0 {
+		lp_ok = 0
+		return
+	}
+	if f.regsum == 0 {
+		// A generated or extern function: with no summary, it may keep anything.
+		if lp_pure_fn(f.qname) == 0 {
+			lp_ok = 0
+			return
+		}
+		lp_scan_exprs(args)
+		return
+	}
+	if f.regsum[12] != 0 || f.regsum[13] != 0 {
+		lp_ok = 0
+		return
+	}
+	mut i = 0
+	for cast(i64, args) != 0 && i < len(args) {
+		let a = args[i]
+		if has_ptr(cast(Ty, cast(Node, a).type_)) != 0 && i < 62 && lp_into_param(f, i) != 0 && slice_has(lp_fresh, lp_root(a)) == 0 {
+			lp_ok = 0
+			return
+		}
+		i = i + 1
+	}
+	lp_scan_exprs(args)
+}
+
+// lp_into_param reports whether f may store into, or grow, what parameter i reaches.
+fn lp_into_param(f Fn, i i64) i64 {
+	if (f.regsum[0] & (1 << i)) != 0 {
+		return 1
+	}
+	if lp_list_bit(rg_grows, cast(i64, f), i) != 0 || lp_list_bit(rg_fstores, cast(i64, f), i) != 0 {
+		return 1
+	}
+	mut k = 0
+	for cast(i64, rg_pstores) != 0 && k < len(rg_pstores) {
+		if rg_pstores[k] == cast(i64, f) && rg_pstores[k + 1] == i {
+			return 1
+		}
+		k = k + 3
+	}
+	return 0
+}
+
+fn lp_list_bit(h []i64, f i64, i i64) i64 {
+	if cast(i64, h) == 0 {
+		return 0
+	}
+	mut k = 0
+	for k < len(h) {
+		if h[k] == f {
+			return i64((h[k + 1] & (1 << i)) != 0)
+		}
+		k = k + 2
+	}
+	return 0
 }

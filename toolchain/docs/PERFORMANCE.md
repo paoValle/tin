@@ -247,7 +247,7 @@ re-measured with wrk since.
 
 Mixed demo (`examples/demo.tin` vs `examples/demo_go`): 0.80 s against 1.01 s.
 
-binary-trees uses 917 MB against 37 MB: a plain program never resets its pool.
+binary-trees used 917 MB against Go's 37 MB: a plain program never resets its pool. Since each loop iteration that keeps nothing it allocates gives its memory back (#633), it peaks at 32.8 MB against 43.2 MB on linux-amd64 and 32.8 MB against 39.1 MB on linux-arm64 (`tools/ci/loop_memory_check.py` on the GitHub runners, Go 1.26.8, `/usr/bin/time` peak RSS).
 
 ### Signed division by ten (native Linux amd64)
 

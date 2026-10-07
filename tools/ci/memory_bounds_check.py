@@ -2,18 +2,20 @@
 """Memory bounds by default (#356): the request budget, the soft limit and anvil.Load's memory.
 
 The fixture (tools/ci/fixtures/memory_bounds.tin, edition 1) keeps memory in a global
-(/keep/{mb}), holds request pool while it waits (/hold/{mb}), allocates without bound (/hog)
-and answers what its admission policy last saw in anvil.Load (/load).
+(/keep/{mb}), holds request pool while it waits (/hold/{mb}), allocates without bound (/hog),
+allocates as much but drops it as it goes (/churn, #633) and answers what its admission policy
+last saw in anvil.Load (/load).
 
 Native phase (every platform): with TIN_MEMORY_SOFT set, Load.Ingot grows by what /keep keeps
 and Load.Pool by what /hold holds; while the pool and ingot bytes are past the soft limit new
 requests get 503 with Retry-After before their handler runs and on server.overload runs; once
-the holds end, requests are served again and on server.recovered runs.
+the holds end, requests are served again and on server.recovered runs. With TIN_REQUEST_MEMORY
+at 96 MiB, /churn makes and drops 800 MB and answers: the budget counts live memory.
 
 Container phase (Linux; macOS with TIN_DOCKER=1): the fixture runs in a 256 MiB cgroup (a
 Docker container built FROM scratch, so nothing is pulled) with neither variable set. /hog
 ends at the default request budget (a quarter of the limit per core) with 500 and the server
-goes on; /keep then fills the long-lived heap until the default soft limit (90% of the limit)
+goes on, and /churn, which drops each block, is served; /keep then fills the long-lived heap until the default soft limit (90% of the limit)
 refuses new requests with 503, well before the cgroup's OOM killer would end the process.
 """
 import os
@@ -35,10 +37,14 @@ MiB = 1 << 20
 
 def build(out, target=None):
     exe = out / ('memory_bounds' if target is None else 'memory_bounds-' + target)
+    # Compiled from a copy outside tools/: the tree's tools read trusted, and the compiler leaves
+    # trusted code's loops alone (#633), so /churn would not be a user program's handler.
+    source = out / 'memory_bounds.tin'
+    shutil.copy(ROOT / 'tools/ci/fixtures/memory_bounds.tin', source)
     cmd = [str(ROOT / 'bin/tinc'), '-edition', '1']
     if target:
         cmd += ['-target', target]
-    subprocess.run(cmd + ['-o', str(exe), 'tools/ci/fixtures/memory_bounds.tin'],
+    subprocess.run(cmd + ['-o', str(exe), str(source)],
                    cwd=ROOT, env=dict(os.environ, TIN_ROOT=str(ROOT)), check=True)
     return exe
 
@@ -77,9 +83,12 @@ def native(out):
     with log.open('wb') as stdout:
         server = subprocess.Popen([str(exe)], stdout=stdout, stderr=subprocess.PIPE,
                                   env=dict(os.environ, PORT=str(port), TIN_CORES='1',
-                                           TIN_MEMORY_SOFT=str(64 * MiB)))
+                                           TIN_MEMORY_SOFT=str(64 * MiB),
+                                           TIN_REQUEST_MEMORY=str(96 * MiB)))
     try:
         eventually(lambda: server_ready(port, server), seconds=10)
+        # 800 MB made and dropped 8 MB at a time stays inside a 96 MiB request budget (#633).
+        assert get(port, '/churn', timeout=30)[::2] == (200, b'churned 100004950')
         pool0, ingot0 = load(port)
         assert get(port, '/keep/16')[2] == b'kept 1'
         _, ingot1 = load(port)
@@ -113,7 +122,8 @@ def native(out):
     events = [l for l in log.read_text().split('\n') if l in ('overload', 'recovered')]
     assert events == ['overload', 'recovered'], (events, log.read_text())
     print('soft limit: Load.Pool and Load.Ingot count held and kept memory; past TIN_MEMORY_SOFT '
-          'new requests get 503 with Retry-After; below it they are served; overload, recovered')
+          'new requests get 503 with Retry-After; below it they are served; overload, recovered; '
+          '/churn drops 800 MB inside a 96 MiB request budget')
 
 
 def docker_ok():
@@ -156,6 +166,8 @@ def container(out):
         assert get(port, '/plain')[::2] == (200, b'ok')
         assert get(port, '/hog', timeout=30)[0] == 500
         assert get(port, '/plain')[::2] == (200, b'ok')
+        # The same allocations, dropped as they go, are charged one block at a time (#633).
+        assert get(port, '/churn', timeout=30)[::2] == (200, b'churned 100004950')
         # Keep 4 MiB at a time: the default soft limit (90% of 256 MiB) refuses before the cgroup kills.
         kept = 0
         status = 200
@@ -180,7 +192,7 @@ def container(out):
     assert logs.stderr.count("limit exceeded: the request's memory budget") == 2, logs.stderr[-1000:]
     assert 'overload' in logs.stdout.split('\n'), logs.stdout
     print('256 MiB cgroup: /hog ends at the default request budget with 500 and the server goes '
-          'on; after %d MiB kept the default soft limit answers 503 and the process lives' % kept)
+          'on; /churn is served; after %d MiB kept the default soft limit answers 503 and the process lives' % kept)
 
 
 def main():

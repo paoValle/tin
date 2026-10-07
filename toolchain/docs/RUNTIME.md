@@ -56,6 +56,7 @@ for the thread's whole life (callee-saved in both ABIs, so C code never disturbs
 | 7, 8, 9 | ctxPoolBase, ctxPoolMark, ctxPoolExtra | the pool's first chunk, its high-water mark, overflow chunks and big blocks |
 | 10 | syscall error | Linux kernel thread error; compiler offsets stay unchanged |
 | 11 | vector mode | x86-64 AVX2 capability after CPUID/OSXSAVE/XGETBV checks; zero on arm64 |
+| 15 | ctxShareGen | counts scope children that share their parent's pool starting and ending (#633) |
 | 12–31 | reserved | preserve compiler offsets; heap state is a per-core global |
 | 32+ | | the core's copy of every per-core global (global i at word 32+i) |
 
@@ -130,6 +131,15 @@ startup allocations and mappings. Without that explicit flag the variable is ign
 - `rt_main_begin` switches to the request pool before `main.main`.
 - Each extra core runs `__core_init` (the per-core global initializers) in ingot mode,
   then switches to its pool.
+
+**Loop iterations (#633).** A loop whose iterations keep nothing they allocate (the compiler
+proves it after the region pass, design/design_escape.md section 3) reads context words 0, 9
+and 15 when each iteration starts, and when the first two moved by its end (or a `break`,
+`continue` or `return`) calls `rt_pool_release(bump, extra, gen)`: the overflow chunks and big
+blocks added since are freed and their `limit` charges refunded (each records its charge in
+its word 1), the bump pointer goes back and the bytes the iteration used are zeroed. It does
+nothing inside an arena, while a scope child that allocates from the same pool is alive
+(`poolSharers`), or when one started or ended during the iteration (`ctxShareGen` moved).
 
 **Arenas.** An `arena { }` block (#236) allocates from a pool of its own, made when it is
 entered and freed (chunks and big blocks) when it ends; only its value, copied out by a

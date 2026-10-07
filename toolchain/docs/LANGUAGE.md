@@ -1649,12 +1649,19 @@ Tin has no garbage collector. Each core has two kinds of memory:
 - **the request pool**: every allocation a request (or a plain program's `main`) makes is
   a bump-pointer allocation from it; a server wipes the pool after each response, so
   serving costs no frees and no collection pauses. A plain program's pool is freed only
-  when it exits, so **a loop that allocates on every step runs each step in an `arena`**
-  (below) or calls `hearth.Reset()` between batches; otherwise it grows until the kernel
-  stops the program. Past `TIN_POOL_WARN_MB` (512 MiB by default, 0 turns it off) the
-  runtime says so once on stderr (#629). It is a run-time warning, not a compile error:
-  almost every loop allocates something (an interpolated string), and whether it adds up
-  depends on how many steps run;
+  when it exits. A loop whose iterations keep nothing they allocate gives each iteration's
+  memory back when it ends, on its own (#633): the compiler proves that nothing made in the
+  body is stored outside it (an outer variable, slice, map or object, a global, a result), and
+  then the pool goes back to where it was when the iteration began, also before a `break`,
+  `continue` or `return`. A loop that keeps what it makes (appends it to an outer slice,
+  stores it in an outer object) grows the pool, and so does one the compiler cannot prove
+  (it calls a function value, a `dyn` method, spawns or opens a scope); **such a loop runs
+  each step in an `arena`** (below) or calls `hearth.Reset()` between batches, or it grows
+  until the kernel stops the program. Past `TIN_POOL_WARN_MB` (512 MiB by default, 0 turns
+  it off) the runtime says so once on stderr (#629). It is a run-time warning, not a compile
+  error: whether it adds up depends on how many steps run. A `limit memory` budget counts
+  what is live, so a loop inside it that drops what it makes is charged one iteration at a
+  time;
 - **the ingot heap**: long-lived memory for globals and everything they hold, a
   size-class allocator. Global initializers allocate here.
 

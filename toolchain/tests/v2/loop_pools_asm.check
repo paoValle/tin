@@ -1,0 +1,14 @@
+# #633: a loop that drops what it allocates takes a pool mark (core context words 0, 9 and 15)
+# and releases it; a loop that keeps its rows, and one that calls nothing, do neither.
+[arm64]
+CHECK: (?m)^_contained:
+CHECK: ldr x[0-9]+, \[x[0-9]+, #120\]
+CHECK: bl _rt_pool_release
+CHECK: (?m)^_collected:
+CHECK-NOT: rt_pool_release
+CHECK: (?m)^_counted:
+CHECK-NOT: rt_pool_release
+CHECK: (?m)^_main\.main:
+
+[amd64]
+CHECK: (?ms)# L(?P<c>[0-9]+): contained$.*?# L(?P<k>[0-9]+): collected$.*?# L(?P<m>[0-9]+): main\.main$.*?^L(?P=c):\n(?:(?!^L(?P=k):$)[\s\S])*?rt_pool_release(?:(?!^L(?P=k):$)[\s\S])*?^L(?P=k):\n(?:(?!rt_pool_release)(?!^L(?P=m):$)[\s\S])*^L(?P=m):$

@@ -24,6 +24,7 @@ const ctxPoolExtra = 9  // overflow chunks and big blocks, freed at reset: [next
 const ctxPoll = 12
 const ctxWatch = 13
 const ctxRunGen = 14
+const ctxShareGen = 15 // counts scope children that share a pool starting and ending (#633)
 const ctxAlt = 16      // the top of this thread's signal stack, where rt_altstack made it
 const ctxWords = 32
 
@@ -718,12 +719,15 @@ fn rt_alloc(n i64) i64 {
 fn rt_alloc_slow(n i64) i64 {
 	if curTask != 0 && n > 65536 { curTask[tTrim] = 1 }
 	let c = __ctx()
+	// What the block below is charged, kept in its word 1 so a loop iteration that gives it back
+	// refunds it (#633).
+	mut charged = 0
 	if c[ctxPoolBase] != 0 {
 		// Pool memory beyond the first chunk counts against limit budgets (#235).
 		if n >= bigAlloc || n+16 > rt_chunk() {
-			rt_bnd_charge(n + 16)
+			charged = rt_bnd_charge_n(n + 16)
 		} else {
-			rt_bnd_charge(rt_chunk())
+			charged = rt_bnd_charge_n(rt_chunk())
 		}
 	}
 	if c[ctxPoolBase] == 0 {
@@ -757,6 +761,7 @@ fn rt_alloc_slow(n i64) i64 {
 		}
 		rt_pool_took(b, false)
 		b[0] = c[ctxPoolExtra]
+		b[1] = charged
 		c[ctxPoolExtra] = b
 		rt_pool_warn(c)
 		return b + 16
@@ -767,11 +772,91 @@ fn rt_alloc_slow(n i64) i64 {
 	let chunk = calloc(1, rt_chunk())
 	rt_pool_took(chunk, false)
 	chunk[0] = c[ctxPoolExtra]
+	chunk[1] = charged
 	c[ctxPoolExtra] = chunk
 	c[ctxBump] = chunk + 16 + n
 	c[ctxEnd] = chunk + rt_chunk()
 	rt_pool_warn(c)
 	return chunk + 16
+}
+
+// rt_pool_release gives back what a loop iteration allocated since its pool mark (#633,
+// design/design_escape.md section 3): bump and extra are the bump pointer and the head of the
+// extra-block list when the iteration began, gen the core's ctxShareGen then. Nothing made in
+// the iteration outlives it (the compiler proved it), so the blocks added since are freed and
+// their charges refunded, and the bump pointer goes back, zeroing what the iteration used (the
+// pool hands out zeroed memory). It does nothing inside an arena (the arena gives everything
+// back when it ends) and when a scope child may have allocated from the same pool during the
+// iteration: one is alive, or one started or ended since the mark.
+fn rt_pool_release(bump i64, extra i64, gen i64) {
+	let c = __ctx()
+	if arenaLive > 0 || poolSharers > 0 || c[ctxShareGen] != gen {
+		return
+	}
+	let ch = rt_chunk()
+	mut moved = 0
+	{
+		mut p = c[ctxPoolExtra]
+		for p != extra && p != 0 {
+			let next = p[0]
+			if c[ctxBump] >= p && c[ctxBump] <= p + ch {
+				moved = 1
+			}
+			rt_bnd_uncharge(p[1])
+			rt_pool_gave(p, false)
+			free(p)
+			p = next
+		}
+	}
+	c[ctxPoolExtra] = extra
+	let base = c[ctxPoolBase]
+	if base == 0 {
+		return
+	}
+	if bump == 0 {
+		// The pool started in this iteration: its first chunk goes back to empty.
+		mut top = c[ctxBump]
+		if c[ctxPoolMark] != 0 {
+			top = c[ctxPoolMark]
+		}
+		memset(base, 0, top-base)
+		c[ctxBump] = base
+		c[ctxEnd] = base + ch
+		c[ctxPoolMark] = 0
+		return
+	}
+	// The chunk the mark was in: the first one, or the extra chunk that holds it.
+	mut start = base
+	if !(bump >= base && bump <= base+ch) {
+		start = 0
+		mut q = extra
+		for q != 0 && start == 0 {
+			if bump >= q && bump <= q+ch {
+				start = q
+			}
+			q = q[0]
+		}
+		if start == 0 {
+			return
+		}
+	}
+	let end = start + ch
+	mut top = c[ctxBump]
+	if moved != 0 || top < start || top > end {
+		// The iteration moved past the mark's chunk, so it may have used it to its end.
+		top = end
+		if start == base && c[ctxPoolMark] != 0 {
+			top = c[ctxPoolMark]
+		}
+	}
+	if top > bump {
+		memset(bump, 0, top-bump)
+	}
+	c[ctxBump] = bump
+	c[ctxEnd] = end
+	if start == base {
+		c[ctxPoolMark] = 0
+	}
 }
 
 mut poolWarn i64 // TIN_POOL_WARN_MB in bytes; 0 until read, -1 when off or already said (#629)
@@ -5327,6 +5412,7 @@ const aCharged = 9  // pool bytes charged to limit budgets inside the arena
 const arenaWords = 10
 
 mut arenaLive i64 // per core: open arenas
+mut poolSharers i64 // per core: live scope children that allocate from their parent's pool (#633)
 
 // rt_pool_home is where the pool words of task t (0: the core stack) live while it is not
 // running: the innermost arena it entered and has not left, else rt_pool_words(t).
@@ -5870,6 +5956,33 @@ fn rt_bnd_charge(n i64) {
 	}
 }
 
+// rt_bnd_charge_n charges n bytes to the running limit budgets (rt_bnd_charge) and gives the
+// amount charged: 0 when no budget runs (#633 refunds it).
+fn rt_bnd_charge_n(n i64) i64 {
+	if bndRoot == 0 || (curTask != 0 && curTask[tBnd] == 0) || (curTask == 0 && bndCur == 0) {
+		return 0
+	}
+	rt_bnd_charge(n)
+	return n
+}
+
+// rt_bnd_uncharge gives n bytes back to the running limit budgets: a loop iteration's blocks
+// that went back to the system (#633).
+fn rt_bnd_uncharge(n i64) {
+	if n == 0 || bndRoot == 0 || (curTask != 0 && curTask[tBnd] == 0) || (curTask == 0 && bndCur == 0) {
+		return
+	}
+	mut l = rt_bnd_current()[bLimit]
+	for l != 0 {
+		l[bMemUsed] -= n
+		let p = l[bParent]
+		if p == 0 {
+			break
+		}
+		l = p[bLimit]
+	}
+}
+
 // rt_bnd_set_limit gives b a memory budget (bytes) and a task budget (0: no bound).
 fn rt_bnd_set_limit(b i64, mem i64, tasks i64) {
 	b[bMemMax] = mem
@@ -5940,6 +6053,9 @@ fn (s scope) spawn(f fn() !) spawned {
 	}
 	rt_task_recover(t)
 	b[bLive] += 1
+	poolSharers += 1
+	let c = __ctx()
+	c[ctxShareGen] += 1
 	rt_task_queue(t)
 	return spawned{r: r}
 }
@@ -6378,6 +6494,9 @@ fn rt_task_finish_child(t i64) {
 	r[spTask] = 0
 	let b = r[spScope]
 	b[bLive] -= 1
+	poolSharers -= 1
+	let c = __ctx()
+	c[ctxShareGen] += 1
 	if r[spFault] != 0 && r[spCanceled] == 0 {
 		rt_child_fault(b, r[spFault])
 	}
