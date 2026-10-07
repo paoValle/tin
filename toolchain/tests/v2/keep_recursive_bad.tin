@@ -1,0 +1,28 @@
+package main
+
+import "say"
+
+// keep of a recursive type is E320 at each keep call, once per call (#625): it reported
+// position 0:0, once for the type and once more for ?Node.
+
+type Node struct {
+	name str
+	next ?Node
+}
+
+type Wrapper struct {
+	head ?Node
+	count i64
+}
+
+mut root ?Node = nil
+mut w = Wrapper{head: nil, count: 0}
+
+fn main() {
+	let a = Node{name: "a", next: nil}
+	root = keep(a)
+	let b = Node{name: "b", next: nil}
+	root = keep(b)
+	w = keep(Wrapper{head: nil, count: 1})
+	say.Line("kept")
+}

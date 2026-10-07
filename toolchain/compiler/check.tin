@@ -9279,20 +9279,40 @@ fn format_fn(t Ty) Fn {
 	return f
 }
 
+shared mut keep_at i64     // the position of the keep (or capture) that asks keep_fn for a copy (#625)
+shared mut keep_err_at i64 // where E320 was last reported: one keep reports one type
+shared mut keep_bad []i64  // the recursive types keep_fn has made a keep$N for
+
+// keep_cycle_error reports E320 for recursive type t at the keep that asked for the copy,
+// once per keep: the copy of a recursive type asks for its fields' types too.
+fn keep_cycle_error(t Ty) {
+	if keep_at != 0 && keep_err_at == keep_at {
+		return
+	}
+	keep_err_at = keep_at
+	err_code_type(keep_at, "E320 KEEP_TYPE", "keep cannot copy the recursive type ", cast(i64, t), "")
+}
+
 fn keep_fn(t Ty) Fn {
 	if cast(i64, keep_types) == 0 {
 		keep_types = []i64{}
 		keep_fns = cast([]Fn, []i64{})
+		keep_bad = []i64{}
 	}
 	mut i = 0
 	for i < len(keep_types) {
 		if cast(i64, cast(Ty, cast([]i64, keep_types)[i])) == cast(i64, t) {
+			if slice_has(keep_bad, cast(i64, t)) != 0 {
+				// Every keep of a recursive type is reported, not only the first.
+				keep_cycle_error(t)
+			}
 			return keep_fns[i]
 		}
 		i = i + 1
 	}
 	if type_cycle(t, cast([]Ty, []i64{})) != 0 {
-		err_code_type(0, "E320 KEEP_TYPE", "keep cannot copy the recursive type ", cast(i64, t), "")
+		keep_cycle_error(t)
+		keep_bad = append(keep_bad, cast(i64, t))
 	}
 	lifted_count = lifted_count + 1
 	let pos = 0
@@ -9959,6 +9979,58 @@ fn arenacopy_fn(t Ty) Fn {
 	body = append(body, cast(i64, ret))
 	ck_fn = saved_fn
 	return cast(Fn, f)
+}
+
+shared mut keep_panic_types []i64
+shared mut keep_panic_fns []i64
+
+// keep_panic_fn is the keep entry of a dyn table whose concrete type t is recursive
+// (#625): converting such a value to dyn is fine, and keeping it panics with E320's text.
+fn keep_panic_fn(t Ty) Fn {
+	if cast(i64, keep_panic_types) == 0 {
+		keep_panic_types = []i64{}
+		keep_panic_fns = []i64{}
+	}
+	mut i = 0
+	for i < len(keep_panic_types) {
+		if keep_panic_types[i] == cast(i64, t) {
+			return cast(Fn, keep_panic_fns[i])
+		}
+		i = i + 1
+	}
+	lifted_count = lifted_count + 1
+	let pos = 0
+	let f = fn_new(pos, "keep")
+	let nb = buf_new()
+	buf_str(nb, "keep$")
+	buf_int(nb, lifted_count)
+	f.qname = str(nb)
+	f.name = str(nb)
+	f.lifted = 2
+	f.params = append(f.params, "x")
+	f.ptypes = append(f.ptypes, cast(i64, t))
+	f.rtypes = append(f.rtypes, cast(i64, t))
+	f.type_ = func_of(f.ptypes, f.rtypes, 0)
+	f.locals = cast([]Sym, []i64{})
+	f.body = empty_block(pos)
+	keep_panic_types = append(keep_panic_types, cast(i64, t))
+	keep_panic_fns = append(keep_panic_fns, cast(i64, f))
+	prog_fns = append(prog_fns, cast(Fn, f))
+	let x = sym_new(SYM_LOCAL, "x", pos)
+	x.type_ = cast(i64, t)
+	x.slot = 0
+	f.slots = 1
+	mut vs1 = cast([]i64, f.locals)
+	vs1 = append(vs1, cast(i64, x))
+	let mb = buf_new()
+	buf_str(mb, "keep cannot copy the recursive type ")
+	type_name(cast([]u8, mb), t)
+	mut body = cast(Block, f.body).stmts
+	body = append(body, expr_stmt(cast(Node, rt_call(pos, "rt_panic", args1(lit_string(pos, str(mb))), ty_void))))
+	let ret = cast(ReturnStmt, node_new(ST_RETURN, pos))
+	ret.value = sym_ref_node(pos, x)
+	body = append(body, cast(i64, ret))
+	return f
 }
 
 // type_cycle reports whether t can reach itself through references (keep would not end).

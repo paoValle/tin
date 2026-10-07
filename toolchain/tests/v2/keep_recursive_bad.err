@@ -1,0 +1,3 @@
+toolchain/tests/v2/keep_recursive_bad.tin:23:9: error E320 KEEP_TYPE: keep cannot copy the recursive type Node
+toolchain/tests/v2/keep_recursive_bad.tin:25:9: error E320 KEEP_TYPE: keep cannot copy the recursive type Node
+toolchain/tests/v2/keep_recursive_bad.tin:26:6: error E320 KEEP_TYPE: keep cannot copy the recursive type Wrapper

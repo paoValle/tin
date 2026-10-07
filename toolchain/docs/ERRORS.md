@@ -2406,7 +2406,9 @@ instead of a handler), and build the rest after the block.
 ### E320 KEEP_TYPE
 
 `keep(x)` copies a value into the long-lived heap, following every reference in it; a type
-that contains itself through references would need a copy without end.
+that contains itself through references would need a copy without end. The error names the
+`keep` call, once per call. A recursive type can still be a `dyn` object; keeping such a
+`dyn` value panics with the same text (#625).
 
 ```tin edition=1
 package main
@@ -2424,8 +2426,7 @@ fn main() {
 ```
 
 ```text
-example.tin:0:0: error E320 KEEP_TYPE: keep cannot copy the recursive type Node
-example.tin:0:0: error E320 KEEP_TYPE: keep cannot copy the recursive type ?Node
+example.tin:11:9: error E320 KEEP_TYPE: keep cannot copy the recursive type Node
 ```
 
 Fix: keep a flat value instead (an index into a kept slice, or the fields you need), or

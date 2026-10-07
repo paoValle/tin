@@ -1304,7 +1304,12 @@ fn dyn_table_add(t Ty, dt Ty, pos i64) i64 {
 	let rec = cast(DynTable, calloc(5, 8))
 	rec.ty = cast(i64, t)
 	rec.dyn_ = cast(i64, dt)
-	rec.keep_ = cast(i64, keep_fn(t))
+	if type_cycle(t, cast([]Ty, []i64{})) != 0 {
+		// A recursive type can be a dyn object; keeping one panics (#625).
+		rec.keep_ = cast(i64, keep_panic_fn(t))
+	} else {
+		rec.keep_ = cast(i64, keep_fn(t))
+	}
 	rec.fns = fns
 	rec.slot = -1
 	dyn_tables = append(dyn_tables, cast(i64, rec))

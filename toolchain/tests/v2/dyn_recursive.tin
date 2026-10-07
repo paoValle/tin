@@ -1,0 +1,48 @@
+package main
+
+import "fault"
+import "say"
+
+// A recursive type can be a dyn object (#625): building its table asked keep_fn for a copy
+// and reported E320 at 0:0 although nothing was kept. Keeping such a dyn value panics with
+// E320's text instead.
+
+shape Named {
+	Name() str
+}
+
+type Node struct {
+	name str
+	next ?Node
+}
+
+fn (n Node) Name() str {
+	mut out = n.name
+	let nx = n.next
+	if nx != nil {
+		out = out + "," + nx.Name()
+	}
+	return out
+}
+
+mut kept = []dyn Named{}
+
+fn try_keep(d dyn Named) str {
+	let r = guard {
+		kept = append(kept, keep(d))
+		"kept"
+	} catch err {
+		if fault.Is(err, fault.Panic) {
+			return "panic: {err}"
+		}
+		return "other"
+	}
+	return r
+}
+
+fn main() {
+	let d dyn Named = Node{name: "a", next: Node{name: "b", next: nil}}
+	say.Line(d.Name())
+	say.Line(try_keep(d))
+	say.Line(len(kept))
+}
