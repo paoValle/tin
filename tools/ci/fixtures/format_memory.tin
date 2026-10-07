@@ -1,0 +1,44 @@
+package main
+
+import "mint"
+import "quarry"
+import "say"
+import "twine"
+
+// The format memory check's program (#553): a plain program, whose pool is never reset,
+// printing or formatting in a loop. Formatting must cost no more than the text it makes.
+fn main() {
+	let args = quarry.Args()
+	let what = args[1]
+	let n = mint.Atoi(args[2]) catch _ { 0 }
+	mut t = 0
+	for i in 0..n {
+		if what == "line" {
+			say.Line(i, 1.5, "x")
+		} else if what == "interp" {
+			let s = "key-{i}"
+			t += len(s)
+		} else if what == "fmt" {
+			let s = say.Fmt("key-%d", i)
+			t += len(s)
+		} else if what == "itoa" {
+			let s = "key-" + mint.Itoa(i)
+			t += len(s)
+		}
+	}
+	if what != "line" {
+		say.Line(t)
+	}
+	quarry.Eprintln(peak())
+}
+
+// peak is the process's peak resident memory in KiB (VmHWM), read on Linux.
+fn peak() str {
+	let st = quarry.ReadFile("/proc/self/status") catch _ { "" }
+	for line in twine.Split(st, "\n") {
+		if twine.HasPrefix(line, "VmHWM:") {
+			return twine.TrimSpace(twine.TrimSuffix(twine.TrimPrefix(line, "VmHWM:"), "kB"))
+		}
+	}
+	return "0"
+}

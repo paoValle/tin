@@ -203,6 +203,12 @@ fires. Messages are copied into the receiver's request pool.
   `rt_flush()`.
 - Formatting uses a per-core frame: the compiler emits one `rt_fmt_*` call per argument
   by static type (`rt_fmt_i`, `_u`, `_s`, `_f`, `_b`, `_e`, slices, maps, structs).
+- Frames, their text buffers and their scratch space for a number's digits live in the
+  heap and are reused (#553). A finished frame, whose text has been copied into a string,
+  stdout or a fault, goes back on the core's free list (`fmtFree`), keeping a buffer of up
+  to 64 KiB. A plain program, whose pool is never reset, prints in constant memory, and an
+  interpolation or `say.Fmt` costs only the string it returns. A frame that never finishes
+  (a panic in the middle of a format) is not reused.
 - No frame is open while user code runs: the compiler evaluates every argument that is more
   than a literal or a name into a hidden local before the begin call (`say_hoist` in
   lower.tin). The frame belongs to the core, so an argument that runs other tasks, such as

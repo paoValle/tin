@@ -1,0 +1,16 @@
+package main
+
+import "say"
+
+// Formatting throughput (#553): say.Fmt with three verbs and an interpolation per row.
+fn main() {
+	let names = []str{"alpha", "be", "gamma!", "d"}
+	mut n = 0
+	for i in 0..1000000 {
+		let s = say.Fmt("%d:%s:%.2f", i, names[i&3], f64(i)*0.5)
+		n += len(s)
+		let t = "row {i} {names[i&3]}"
+		n += len(t)
+	}
+	say.Line(n)
+}

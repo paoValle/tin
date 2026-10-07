@@ -3035,22 +3035,78 @@ const fNest = 16
 const fSpace = 17
 const fPlusV = 18 // the verb is %+v: structs print their field names, and numbers get no + sign
 const fExtra = 19 // arguments past the format's verbs were printed in a %!(EXTRA ...) marker (#529)
-const fWords = 20
+const fScratch = 20 // heap space for a number's digits before fmt_pad copies them in (#553)
+const fScratchCap = 21
+const fWords = 22
 
 fn rt_frame() i64 {
 	return __ctx()[ctxFmt]
 }
 
+// Format frames and their buffers live in the heap and are reused (#553): every say.Line or
+// interpolation used to take a frame and a buffer from the pool, which a plain program never
+// resets. A finished frame goes back on this core's free list once its text is copied out; a
+// frame that never finishes (a panic in the middle of a format) is simply not reused.
+mut fmtFree i64 // per core: frames ready for reuse, linked through fPrev
+
+const fmtKeepCap = 65536 // a free frame keeps a buffer up to this size
+
 fn rt_fmt_push(mode i64) i64 {
 	let c = __ctx()
-	let f = rt_alloc(fWords * 8)
+	mut f = fmtFree
+	if f != 0 {
+		fmtFree = f[fPrev]
+		let d = f[fData]
+		let n = f[fCap]
+		let sd = f[fScratch]
+		let sn = f[fScratchCap]
+		memset(f, 0, fWords*8)
+		f[fData] = d
+		f[fCap] = n
+		f[fScratch] = sd
+		f[fScratchCap] = sn
+	} else {
+		f = calloc(fWords, 8)
+		f[fCap] = 64
+		f[fData] = malloc(64)
+	}
 	f[fPrev] = c[ctxFmt]
 	f[fMode] = mode
-	f[fCap] = 64
-	f[fData] = rt_alloc(64)
-	f[fExtra] = 0
 	c[ctxFmt] = f
 	return f
+}
+
+// rt_fmt_release puts a finished frame, whose text has been copied out, back on the free list.
+fn rt_fmt_release(f i64) {
+	if f[fCap] > fmtKeepCap {
+		free(f[fData])
+		f[fData] = malloc(64)
+		f[fCap] = 64
+	}
+	if f[fScratchCap] > fmtKeepCap {
+		free(f[fScratch])
+		f[fScratch] = 0
+		f[fScratchCap] = 0
+	}
+	f[fPrev] = fmtFree
+	fmtFree = f
+}
+
+// fmt_frame_scratch is at least n bytes of the frame's scratch space, for a number's text before
+// fmt_pad copies it into the frame: the space is the frame's, and reused with it.
+fn fmt_frame_scratch(f i64, n i64) i64 {
+	if f[fScratchCap] < n {
+		if f[fScratch] != 0 {
+			free(f[fScratch])
+		}
+		mut c = 512
+		for c < n {
+			c *= 2
+		}
+		f[fScratch] = malloc(c)
+		f[fScratchCap] = c
+	}
+	return f[fScratch]
 }
 
 fn rt_fmt_begin(format str) {
@@ -3070,8 +3126,9 @@ fn fb_reserve(f i64, n i64) {
 	for c < f[fLen]+n {
 		c *= 2
 	}
-	let d = rt_alloc(c)
+	let d = malloc(c)
 	memcpy(d, f[fData], f[fLen])
+	free(f[fData])
 	f[fData] = d
 	f[fCap] = c
 }
@@ -3303,7 +3360,7 @@ fn fmt_uint_buf(buf i64, v i64, base i64, upper bool) i64 {
 }
 
 fn fmt_int(f i64, v i64, verb i64) {
-	let buf = rt_alloc(80)
+	let buf = fmt_frame_scratch(f, 80)
 	if verb == 'c' {
 		let n = rt_utf8_put(buf, v)
 		fmt_pad(f, buf, n)
@@ -3656,7 +3713,7 @@ fn fmt_nonfinite(f i64, x f64, verb i64) bool {
 }
 
 fn fmt_float_number(f i64, x f64, verb i64, prec i64) {
-	let buf = rt_alloc(prec + 400)
+	let buf = fmt_frame_scratch(f, prec + 400)
 	mut n = rt_number_format(buf, x, verb, prec)
 	if f[fPlus] != 0 && load8(buf) != '-' {
 		memmove(buf+1, buf, n)
@@ -3838,7 +3895,7 @@ fn shortest_into(out i64, x f64, lo i64, hi i64, json bool, plus bool) i64 {
 }
 
 fn fmt_shortest(f i64, x f64, lo i64, hi i64) {
-	let out = rt_alloc(400)
+	let out = fmt_frame_scratch(f, 400)
 	let n = shortest_into(out, x, lo, hi, false, f[fPlus] != 0)
 	fmt_pad(f, out, n)
 }
@@ -3993,17 +4050,22 @@ fn rt_fmt_finish() i64 {
 
 fn rt_fmt_end() str {
 	let f = rt_fmt_finish()
-	return rt_str_from_raw(f[fData], f[fLen])
+	let s = rt_str_from_raw(f[fData], f[fLen])
+	rt_fmt_release(f)
+	return s
 }
 
 fn rt_fmt_out() {
 	let f = rt_fmt_finish()
 	rt_out(f[fData], f[fLen])
+	rt_fmt_release(f)
 }
 
 fn rt_fmt_err() i64 {
 	let f = rt_fmt_finish()
-	return rt_fault_raw(f[fData], f[fLen], 0, 0)
+	let e = rt_fault_raw(f[fData], f[fLen], 0, 0)
+	rt_fmt_release(f)
+	return e
 }
 
 // ---- keep: copies into the long-lived ingot heap ----

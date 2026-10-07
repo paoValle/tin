@@ -122,6 +122,9 @@ jobs:
         run: python3 tools/ci/scope_check.py
       - name: Memory bounds (request budget, soft limit; 256 MiB cgroup on Linux)
         run: python3 tools/ci/memory_bounds_check.py
+      - name: Format memory (say.Line and interpolation in a plain program run in constant memory)
+        if: runner.os == 'Linux'
+        run: python3 tools/ci/format_memory_check.py
       - name: File I/O through io_uring (Linux) and helper threads (concurrent reads, contents, FIFO deadlines, helper thread count)
         env:
           TIN_REQUIRE_IO_URING: ${{ runner.os == 'Linux' && '1' || '' }}
