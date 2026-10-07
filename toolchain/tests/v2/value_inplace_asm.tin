@@ -1,0 +1,36 @@
+package main
+
+import "say"
+
+// #669: a read-only `for p in ps` over value structs reads each element in place, and a value
+// struct literal in a field of one is built in the field's bytes: neither copies.
+
+type Vec value struct {
+	x f64
+	y f64
+}
+
+type Particle value struct {
+	pos Vec
+	vel Vec
+}
+
+fn sum_x(ps []Particle) f64 {
+	mut s = 0.0
+	for p in ps {
+		s += p.pos.x + p.vel.x
+	}
+	return s
+}
+
+fn spawn(i i64) Particle {
+	return Particle{pos: Vec{x: f64(i), y: 0.0}, vel: Vec{x: 1.0, y: f64(i % 7)}}
+}
+
+fn main() {
+	mut ps = []Particle{}
+	for i in 0..10 {
+		ps = append(ps, spawn(i))
+	}
+	say.Line(sum_x(ps))
+}

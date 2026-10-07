@@ -422,6 +422,7 @@ type Sym struct {
 	live_lo i64  // first position analyze_fn saw the local at (-1: never), loops included (#570)
 	live_hi i64  // last position, loops included
 	live_def i64 // the first reference is the local's let
+	view i64     // a range variable that reads its value struct element in place: its word holds the element's address (#669)
 }
 
 type ScopeStmt struct {

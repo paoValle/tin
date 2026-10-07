@@ -1,0 +1,96 @@
+package main
+
+import "say"
+
+// #669: a `for p in ps` over value structs reads each element in place only when nothing in the
+// body can change it; otherwise p is a copy taken before the body runs, as in Go. Nested value
+// struct literals are built in their field's bytes.
+
+type P value struct {
+	x i64
+	y i64
+}
+
+type Box value struct {
+	lo P
+	hi P
+	n  i64
+}
+
+type Named value struct {
+	at   P
+	name str
+}
+
+mut shared_ps = []P{}
+
+fn bump(i i64) {
+	shared_ps[i].x = -1
+}
+
+fn grow(q mut P, ps []P) i64 {
+	mut t = 0
+	for p in ps {
+		q.x = 7 // q is the caller's ps[0]: p must be a copy
+		t += p.x
+	}
+	return t
+}
+
+fn main() {
+	mut ps = []P{P{x: 1, y: 2}, P{x: 3, y: 4}, P{x: 5, y: 6}}
+
+	// Read only: in place.
+	mut sx = 0
+	mut best = P{}
+	for p in ps {
+		sx += p.x * p.y
+		if p.y > best.y {
+			best = p
+		}
+	}
+	say.Line(sx, best)
+
+	// The body writes an element: each p is a copy.
+	mut seen = 0
+	for i, p in ps {
+		ps[2].x = 100 + i
+		seen += p.x
+	}
+	say.Line(seen, ps[2].x)
+
+	// The body calls a function that writes an element.
+	shared_ps = keep(ps)
+	mut got = 0
+	for i, p in shared_ps {
+		bump(i)
+		got += p.x
+	}
+	say.Line(got)
+
+	// A mut parameter is an element of the ranged slice.
+	say.Line(grow(mut ps[0], ps), ps[0])
+
+	// break and continue, and a slice of slices.
+	let rows = [][]P{ps, []P{P{x: -1, y: -1}}}
+	mut cnt = 0
+	for row in rows {
+		for p in row {
+			if p.x < 0 {
+				break
+			}
+			if p.x == 7 {
+				continue
+			}
+			cnt += 1
+		}
+	}
+	say.Line(cnt)
+
+	// Nested literals, in a function result, a local, an element and with a str beside them.
+	let b = Box{lo: P{x: 1, y: 2}, hi: P{x: sx, y: seen}, n: 3}
+	mut bs = make([]Box, 2)
+	bs[1] = Box{hi: P{y: 9}, lo: P{x: b.hi.x}}
+	let nm = Named{at: P{x: 4, y: 5}, name: "n"}
+	say.Line(b, bs, nm)
+}

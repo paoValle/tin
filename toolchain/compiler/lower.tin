@@ -2413,6 +2413,23 @@ fn lookup_name_local(name str) i64 {
 	return 0
 }
 
+// lit_in_place reports a checked value struct literal v of type t that can be built in its
+// field's bytes (#669): its sequence starts by zeroing its temporary and yields it, and t holds
+// no reference, so the region pass, which sees the stores as stores into the temporary, misses
+// nothing.
+fn lit_in_place(v i64, t Ty) i64 {
+	if cast(Node, v).kind != EX_SEQ || kind_of(t) != K_STRUCT || t.value == 0 || value_has_ref(t) != 0 {
+		return 0
+	}
+	let vs = cast(SeqExpr, v).stmts
+	let x = cast(SeqExpr, v).value
+	if len(vs) == 0 || cast(Node, vs[0]).kind != ST_LET || x == 0 || cast(Node, x).kind != EX_IDENT {
+		return 0
+	}
+	let l = cast(LetStmt, vs[0])
+	return i64(l.sym == cast(IdentExpr, x).ref && l.init != 0 && cast(Node, l.init).kind == EX_INT && cast(IntLit, l.init).val == 0)
+}
+
 // field_store builds the target for storing into field fi of struct object obj.
 fn field_store(pos i64, obj i64, t i64, fi i64) i64 {
 	return mk_mem(pos, obj, 0, 0, field_offset(cast(Ty, t), fi), field_type(cast(Ty, t), fi))
@@ -2493,12 +2510,25 @@ fn chk_composite(e i64, want i64) i64 {
 			set[fi] = 1
 			let ft = field_type(t, fi)
 			let v = elems[i]
+			let lit = i64(cast(Node, v).kind == EX_COMPOSITE)
 			let vt = chk(cast(Node, v), ft)
 			check_assignable(cast(Node, v), vt, cast(Ty, ft))
 			if is_untyped(vt) != 0 {
 				reconvert(cast(Node, v), ft)
 			}
-			if !(is_const_zero(cast(i64, v)) != 0 && is_ref(ft) == 0) {
+			if t.value != 0 && lit != 0 && lit_in_place(v, cast(Ty, ft)) != 0 {
+				// A value struct literal in a field of one is built in place, in the field's bytes
+				// (#669): its temporary becomes a view of the field, which starts zeroed.
+				let l = cast(LetStmt, cast(SeqExpr, v).stmts[0])
+				cast(Sym, l.sym).view = 1
+				l.init = field_store(pos, sym_ref_node(pos, cast(Sym, obj.sym)), cast(i64, t), fi)
+				let vs = cast(SeqExpr, v).stmts
+				mut j = 0
+				for j < len(vs) {
+					stmts = append(stmts, vs[j])
+					j = j + 1
+				}
+			} else if !(is_const_zero(cast(i64, v)) != 0 && is_ref(ft) == 0) {
 				stmts = append(stmts, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, obj.sym)), cast(i64, t), fi), cast(i64, v)))
 			}
 			i = i + 1

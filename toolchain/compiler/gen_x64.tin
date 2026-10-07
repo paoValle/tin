@@ -2322,7 +2322,7 @@ fn x_gen_effect(e i64) {
 }
 
 fn x_assign_local(s Sym, v i64) {
-	if is_value_struct(cast(Ty, s.type_)) != 0 {
+	if is_value_struct(cast(Ty, s.type_)) != 0 && s.view == 0 {
 		// Copy the bytes into the frame area, or through a mut parameter's address (#631).
 		if is_value_area(s) != 0 {
 			emit2(X_LEA, XSCR, x_mem1(RBP, s.off))
@@ -3111,8 +3111,9 @@ fn x_assign_homes(f Fn) i64 {
 			s.addr = 1
 			cast(Sym, s).words = 2
 		}
-		if is_value_struct(cast(Ty, s.type_)) != 0 && i >= len(f.ptypes) {
-			// A value struct local is a frame area holding its bytes (#631).
+		if is_value_struct(cast(Ty, s.type_)) != 0 && i >= len(f.ptypes) && s.view == 0 {
+			// A value struct local is a frame area holding its bytes (#631); a range view's word
+			// holds the element's address (#669).
 			s.addr = 1
 			cast(Sym, s).words = (cast(Ty, s.type_).size + 7) / 8
 		}

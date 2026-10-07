@@ -33,7 +33,7 @@ shared mut dyn_tables []i64 // [concrete type, dyn type, keep function, methods,
 shared mut ck_escaping_cells []str // variable names that must be allocated in heap cells
 
 fn sym_new(kind i64, name str, pos i64) Sym {
-	let s = cast(Sym, calloc(40, 8))
+	let s = cast(Sym, calloc(41, 8))
 	s.kind = kind
 	s.name = name
 	s.pos = pos
@@ -8087,12 +8087,124 @@ fn lower_range(s i64) {
 		}
 	}
 	check_stmt(body)
+	if k == K_SLICE && val != 0 && len(pre) > 0 && cast(Node, pre[len(pre) - 1]).kind == ST_LET && is_value_struct(cast(Ty, xt.elem)) != 0 && view_safe_stmt(body) != 0 {
+		// A read-only loop over value structs reads each element in place instead of copying it
+		// (#669): nothing in the body can change an element while the variable reads it.
+		cast(Sym, cast(LetStmt, pre[len(pre) - 1]).sym).view = 1
+	}
 	slice_truncate(safe_pairs, saved)
 	pop_scope()
 	slice_truncate(ck_labels, len(ck_labels) - 1)
 	ck_loops = ck_loops - 1
 	ck_breaks = ck_breaks - 1
 	pop_scope()
+}
+
+// view_safe_stmt reports a checked loop body that cannot change a slice element: it calls no
+// function, and assigns only to variables other than a value struct parameter, whose word holds
+// its caller's address (#669). Anything it does not know is unsafe.
+fn view_safe_stmt(s i64) i64 {
+	if s == 0 {
+		return 1
+	}
+	let k = cast(Node, s).kind
+	if k == ST_BLOCK {
+		let ss = cast(Block, s).stmts
+		mut i = 0
+		for i < len(ss) {
+			if view_safe_stmt(ss[i]) == 0 {
+				return 0
+			}
+			i = i + 1
+		}
+		return 1
+	}
+	if k == ST_LET {
+		return view_safe_expr(cast(LetStmt, s).init)
+	}
+	if k == ST_ASSIGN {
+		let t = cast(AssignStmt, s).target
+		if cast(Node, t).kind != EX_IDENT || cast(IdentExpr, t).ref == 0 {
+			return 0
+		}
+		let ts = cast(Sym, cast(IdentExpr, t).ref)
+		if is_value_struct(cast(Ty, ts.type_)) != 0 && (ts.kind != SYM_LOCAL || view_param(ts) != 0) {
+			return 0
+		}
+		return view_safe_expr(cast(AssignStmt, s).value)
+	}
+	if k == ST_EXPR {
+		return view_safe_expr(cast(ExprStmt, s).x)
+	}
+	if k == ST_IF {
+		return i64(view_safe_expr(cast(IfStmt, s).cond) != 0 && view_safe_stmt(cast(IfStmt, s).then) != 0 && view_safe_stmt(cast(IfStmt, s).else_) != 0)
+	}
+	if k == ST_WHILE {
+		return i64(view_safe_stmt(cast(WhileStmt, s).init) != 0 && view_safe_expr(cast(WhileStmt, s).cond) != 0 && view_safe_stmt(cast(WhileStmt, s).body) != 0 && view_safe_stmt(cast(WhileStmt, s).post) != 0)
+	}
+	return i64(k == ST_BREAK || k == ST_CONTINUE)
+}
+
+// view_param reports a parameter of the function being checked.
+fn view_param(s Sym) i64 {
+	let ls = cast(Fn, ck_fn).locals
+	mut i = 0
+	for i < len(ls) && i < len(cast(Fn, ck_fn).ptypes) {
+		if cast(i64, ls[i]) == cast(i64, s) {
+			return 1
+		}
+		i = i + 1
+	}
+	return 0
+}
+
+// view_safe_expr reports an expression that only reads: no call but the loads among the
+// intrinsics.
+fn view_safe_expr(e i64) i64 {
+	if e == 0 {
+		return 1
+	}
+	let k = cast(Node, e).kind
+	if k == EX_INT || k == EX_FLOAT || k == EX_STR || k == EX_IDENT || k == EX_NIL {
+		return 1
+	}
+	if k == EX_UNARY {
+		return view_safe_expr(cast(Unary, e).x)
+	}
+	if k == EX_SELECT {
+		return view_safe_expr(cast(SelectExpr, e).x)
+	}
+	if k == EX_BINARY {
+		return i64(view_safe_expr(cast(Binary, e).l) != 0 && view_safe_expr(cast(Binary, e).r) != 0)
+	}
+	if k == EX_CONV {
+		return view_safe_expr(cast(Conv, e).x)
+	}
+	if k == EX_INDEX {
+		return i64(view_safe_expr(cast(IndexExpr, e).x) != 0 && view_safe_expr(cast(IndexExpr, e).i) != 0)
+	}
+	if k == EX_MEM {
+		return i64(view_safe_expr(cast(MemExpr, e).base) != 0 && view_safe_expr(cast(MemExpr, e).index) != 0 && view_safe_expr(cast(MemExpr, e).len) != 0)
+	}
+	if k == EX_ELEM {
+		return i64(view_safe_expr(cast(ElemExpr, e).seq) != 0 && view_safe_expr(cast(ElemExpr, e).idx) != 0)
+	}
+	if k == EX_CALL && cast(Call, e).intrinsic != 0 {
+		let n = cast(Call, e).name
+		if n != "load8" && n != "__ld" && n != "__mulhu" && n != "__ctx" && n != "__fp" && n != "__empty" {
+			return 0
+		}
+		let args = cast(Call, e).args
+		mut i = 0
+		for i < len(args) {
+			if view_safe_expr(args[i]) == 0 {
+				return 0
+			}
+			i = i + 1
+		}
+		return 1
+	}
+	return 0
 }
 
 // check_loop_label reports a labeled break or continue whose label names no enclosing loop.

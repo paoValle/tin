@@ -3483,7 +3483,7 @@ fn gen_effect(e i64) {
 }
 
 fn assign_local(s Sym, v i64) {
-	if is_value_struct(cast(Ty, s.type_)) != 0 {
+	if is_value_struct(cast(Ty, s.type_)) != 0 && s.view == 0 {
 		// Copy the bytes into the frame area, or through a mut parameter's address (#631).
 		if is_value_area(s) != 0 {
 			fp_offset(X16, s.off)
@@ -4559,9 +4559,9 @@ fn assign_homes(f Fn) i64 {
 			s.addr = 1
 			cast(Sym, s).words = 2
 		}
-		if is_value_struct(cast(Ty, s.type_)) != 0 && i >= len(f.ptypes) {
+		if is_value_struct(cast(Ty, s.type_)) != 0 && i >= len(f.ptypes) && s.view == 0 {
 			// A value struct local is a frame area holding its bytes (#631); a parameter's word
-			// holds the address of its caller's.
+			// holds the address of its caller's, and a range view's the element's (#669).
 			s.addr = 1
 			cast(Sym, s).words = (cast(Ty, s.type_).size + 7) / 8
 		}

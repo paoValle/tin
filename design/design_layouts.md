@@ -140,6 +140,17 @@ writes the result once. A function with several results still returns each value
 pool copy. The two-register path for values up to 16 bytes is left for later: with no
 allocation on the result path, it would save one copy of at most 16 bytes per call.
 
+**As built in phase B, copies (#669).** Two copies the A1 representation made are gone:
+- **`for p in ps`** over a slice of value structs reads each element in place when the loop body
+  cannot change one: it calls no function and assigns only to variables that are not value struct
+  parameters (`view_safe_stmt`, checked after the body). `p`'s word then holds the element's
+  address (`Sym.view`), as a parameter's does, instead of a frame area holding a copy. Otherwise
+  `p` stays a copy taken before the body runs, as Go's is.
+- **A nested literal** (`Particle{pos: Vec{...}}`) whose value struct holds no reference is built
+  in its field's bytes: its temporary becomes a view of the field (`lit_in_place`). With
+  references it is still built apart and copied, since the region pass would see its stores as
+  stores into the temporary.
+
 ### 1.4 Reference fields
 
 A value struct may hold references (`str`, slices, maps, reference structs, `?T`). Inline storage

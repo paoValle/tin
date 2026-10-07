@@ -1,0 +1,13 @@
+# #669: a read-only `for p in ps` over value structs reads each element where it is (no copy
+# into a frame area), and spawn's nested literals are built in the bytes of the outer one, whose
+# copy into the destination is the only copy.
+[arm64]
+CHECK: (?m)^_sum_x:
+CHECK-NOT: ldr x17, \[x0\]
+CHECK: (?m)^_spawn:
+CHECK: ldr x17, \[x0\]\n\tstr x17, \[x16\]
+CHECK-NOT: ldr x17, \[x0\]\n\tstr x17, \[x16\]
+CHECK: (?m)^_main\.main:
+
+[amd64]
+CHECK: (?ms)^# L(?P<a>[0-9]+): sum_x\n# L(?P<b>[0-9]+): spawn$.*?^L(?P=a):\npush rbp\n(?:(?!mov rcx,QWORD PTR \[rsi\])(?!\nret\n)[\s\S])*?\nret\n.*?^L(?P=b):\npush rbp\n(?:(?!mov rcx,QWORD PTR \[rsi\]\n)(?!\nret\n)[\s\S])*?mov rcx,QWORD PTR \[rsi\]\n(?:(?!mov rcx,QWORD PTR \[rsi\]\n)(?!\nret\n)[\s\S])*?\nret\n
