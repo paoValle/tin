@@ -28,6 +28,48 @@ fn main() {
 }
 """
 ENV_WANT = 'a one\nb two true <nil>\nunset true false <nil>\n'
+# #573: without tide/tzdata an empty root has no zone; with the import the embedded database
+# answers. The instant 1700000000 s is 2023-11-14T22:13:20Z, 23:13:20 in Paris (UTC+1).
+ZONE_PROGRAM = """package main
+
+import "fault"
+import "say"
+import "tide"
+
+fn main() {
+	let (z, err) = tide.LoadZone("Europe/Paris")
+	if err != nil {
+		say.Line("zone unknown", fault.Is(err, tide.ErrUnknownZone))
+		return
+	}
+	say.Line("zone", z.Name())
+}
+"""
+ZONE_WANT = 'zone unknown true\n'
+ZONE_EMBED_PROGRAM = """package main
+
+import "say"
+import "tide"
+import "tide/tzdata"
+
+fn main() {
+	let (z, err) = tide.LoadZone("Europe/Paris")
+	if err != nil {
+		say.Line("zone error", err)
+		return
+	}
+	let c = tide.In(1700000000000000000, z)
+	say.Line("zone", z.Name(), c.Year, c.Month, c.Day, c.Hour, c.Offset)
+	let (k, kerr) = tide.LoadZone("Asia/Kathmandu")
+	if kerr != nil {
+		say.Line("kathmandu error", kerr)
+		return
+	}
+	let kc = tide.In(1700000000000000000, k)
+	say.Line("kathmandu", k.Name(), kc.Hour, kc.Min, kc.Offset)
+}
+"""
+ZONE_EMBED_WANT = 'zone Europe/Paris 2023 11 14 23 3600\nkathmandu Asia/Kathmandu 3 58 20700\n'
 
 
 def segments(path):
@@ -105,6 +147,48 @@ def symbols(work, envprog, machine):
     return True
 
 
+def zones(work, machine):
+    """#573: tide.LoadZone in an empty root. Without tide/tzdata the name is unknown
+    (tide.ErrUnknownZone); with the import the embedded database answers. The two Linux
+    executables run in an empty root directory (chroot) and in an image built FROM scratch (no
+    files at all)."""
+    env = dict(os.environ, TIN_ROOT=str(ROOT))
+    exes, wanted = {}, {}
+    for name, program, want in (('zone', ZONE_PROGRAM, ZONE_WANT),
+                                ('zone-embed', ZONE_EMBED_PROGRAM, ZONE_EMBED_WANT)):
+        source = work / (name + '.tin')
+        source.write_text(program)
+        exe = work / name
+        subprocess.run([str(ROOT / 'bin/tinc'), '-target', 'linux-' + machine, '-o', str(exe), str(source)],
+                       check=True, timeout=120, env=env)
+        assert_static(exe)
+        exes[name], wanted[name] = exe, want
+    jailed = False
+    for name, exe in exes.items():
+        root = work / (name + '-root')
+        root.mkdir()
+        got = run_in(root, exe, [], {})
+        if got is None:
+            break
+        assert got.returncode == 0 and got.stdout.decode() == wanted[name], (name, got)
+        jailed = True
+    docker = shutil.which('docker')
+    if docker is None or subprocess.run([docker, 'info'], capture_output=True).returncode != 0:
+        assert os.environ.get('CI') != 'true', 'CI needs docker for the FROM scratch zone runs'
+        return jailed, False
+    for name, exe in exes.items():
+        image = work / (name + '-image')
+        image.mkdir()
+        shutil.copy(exe, image / 'prog')
+        (image / 'Dockerfile').write_text('FROM scratch\nCOPY prog /prog\nENTRYPOINT ["/prog"]\n')
+        tag = 'tin-static-check:' + name
+        subprocess.run([docker, 'build', '-q', '-t', tag, str(image)], check=True, capture_output=True, timeout=300)
+        got = subprocess.run([docker, 'run', '--rm', tag], capture_output=True, text=True, timeout=300)
+        subprocess.run([docker, 'rmi', '-f', tag], capture_output=True)
+        assert got.returncode == 0 and got.stdout == wanted[name], (name, got)
+    return jailed, True
+
+
 def main(programs=()):
     out = ROOT / 'bin/ci/static'
     out.mkdir(parents=True, exist_ok=True)
@@ -147,6 +231,8 @@ def main(programs=()):
         assert got.returncode == 0 and got.stdout == ENV_WANT, got
         contained = False
         named = False
+        zone_jailed = False
+        zone_contained = False
         if os.uname().sysname == 'Linux':
             # The compiler is static at every stage: the checked-in seed, the bin/tinc it builds
             # and the compiler that compiled itself (make bootstrap).
@@ -156,11 +242,14 @@ def main(programs=()):
                 assert_static(compiler)
             contained = run_in_containers(work, exe)
             named = symbols(work, envprog, machine)
+            zone_jailed, zone_contained = zones(work, machine)
     print('PASS static linux-arm64/amd64 images (no PT_INTERP, no PT_DYNAMIC); _start passes argc, argv and envp'
           + ('' if jailed is None else '; runs in an empty root')
           + '; a program using getenv/setenv and the compiler (seed, bin/tinc, stage 3) are static'
           + ('; the program runs on Alpine and FROM scratch' if contained else '')
-          + ('; nm and addr2line name its functions, and -strip removes the symbols' if named else ''))
+          + ('; nm and addr2line name its functions, and -strip removes the symbols' if named else '')
+          + ('; tide.LoadZone finds no zone in an empty root and tide/tzdata answers there'
+             if zone_jailed or zone_contained else ''))
 
 
 if __name__ == '__main__':

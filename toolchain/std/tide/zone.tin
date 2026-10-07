@@ -3,6 +3,7 @@ package tide
 import "fault"
 import "quarry"
 import "say"
+import "squash"
 
 // zone is one local time type of a Zone: its offset in seconds east of UTC and its abbreviation.
 type zone struct {
@@ -34,6 +35,53 @@ let zoneDirs = []str{"/usr/share/zoneinfo/", "/usr/share/lib/zoneinfo/", "/usr/l
 
 // zoneCache is this core's cache of loaded zones, keyed by name.
 mut zoneCache map[str]Zone = map[str]Zone{}
+
+// embeddedZones is this core's embedded database from tide/tzdata, keyed by zone name; empty
+// until the package is imported.
+mut embeddedZones map[str]str = map[str]str{}
+
+// embeddedMax is the most the embedded database may inflate to (the IANA database is about
+// 350 KiB today).
+const embeddedMax = 4 * 1024 * 1024
+
+// leU32 reads the little-endian u32 at at.
+fn leU32(s str, at i64) i64 {
+	return i64(s[at]) | i64(s[at+1])<<8 | i64(s[at+2])<<16 | i64(s[at+3])<<24
+}
+
+// RegisterEmbedded installs the packed IANA database of tide/tzdata on this core: it inflates the
+// DEFLATE stream (RFC 1951) into the container of u32 count; per zone, u32 name length, u32 data
+// length, the name and the TZif bytes (RFC 8536), and keeps each zone's bytes. The package
+// tide/tzdata calls it from its globals' initializer, on every core, before main; it reports
+// whether the stream was well formed. LoadZone reads the database after $ZONEINFO and the system
+// directories miss.
+fn RegisterEmbedded(packed str) bool {
+	let (raw, err) = squash.Inflate(packed, embeddedMax)
+	if err != nil || len(raw) < 4 {
+		return false
+	}
+	let count = leU32(raw, 0)
+	mut at = 4
+	mut zones = map[str]str{}
+	for i in 0..count {
+		if at+8 > len(raw) {
+			return false
+		}
+		let nameLen = leU32(raw, at)
+		let dataLen = leU32(raw, at+4)
+		at += 8
+		if nameLen <= 0 || dataLen <= 0 || at+nameLen+dataLen > len(raw) {
+			return false
+		}
+		let name = raw[at:at+nameLen]
+		at += nameLen
+		let data = raw[at:at+dataLen]
+		at += dataLen
+		zones[keep(name)] = keep(data)
+	}
+	embeddedZones = zones
+	return true
+}
 
 // Name returns the zone's name, like "Europe/Paris".
 fn (z Zone) Name() str {
@@ -70,8 +118,9 @@ fn tryZoneFile(dir str, name str) ?Zone {
 }
 
 // LoadZone returns the zone with an IANA name ("Europe/Paris", "Asia/Kathmandu", "UTC") from
-// $ZONEINFO and the system directories, reading each name once per core. Unknown names fail
-// with ErrUnknownZone (fault.Is). Loading reads files, and so needs the files capability.
+// $ZONEINFO, the system directories and the database embedded by tide/tzdata, reading each name
+// once per core. Unknown names fail with ErrUnknownZone (fault.Is). Loading reads files, and so
+// needs the files capability.
 fn LoadZone(name str) !Zone {
 	if len(name) == 0 || name[0] == '/' || containsDotDot(name) {
 		fail fault.Wrap(ErrUnknownZone, say.Fmt("tide: %s", name))
@@ -93,6 +142,14 @@ fn LoadZone(name str) !Zone {
 	}
 	for _, dir in zoneDirs {
 		if let z = tryZoneFile(dir, name) {
+			zoneCache[keep(name)] = keep(z)
+			return z
+		}
+	}
+	let (data, have) = embeddedZones[name]
+	if have {
+		let (z, perr) = parseTZif(name, data)
+		if perr == nil {
 			zoneCache[keep(name)] = keep(z)
 			return z
 		}

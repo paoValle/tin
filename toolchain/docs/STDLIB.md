@@ -867,7 +867,7 @@ Package lever parses command-line flags (like Go's flag): register handles, Pars
 
 ## tide
 
-Package tide is clocks, durations and civil (calendar) time in UTC, like Go's time package.
+Package tide is clocks, durations, civil (calendar) time and time zones, like Go's time package. A Zone comes from the IANA database (TZif, RFC 8536): $ZONEINFO, the system directories, or the nested package tide/tzdata, which embeds the whole database for images with no /usr/share/zoneinfo (import it for its side effect).
 
 - `Truncate(ns i64, d i64) i64`: Truncate returns ns rounded down to a multiple of d since the zero time (0001-01-01), like Go's Time.Truncate; d <= 0 returns ns unchanged. A result outside Unix nanoseconds panics.
 - `Round(ns i64, d i64) i64`: Round returns ns rounded to the nearest multiple of d since the zero time, with halfway values rounding up, like Go's Time.Round; d <= 0 returns ns unchanged. A result outside Unix nanoseconds panics.
@@ -936,11 +936,12 @@ Package tide is clocks, durations and civil (calendar) time in UTC, like Go's ti
 - `ParseRFC3339(s str) !i64`: ParseRFC3339 parses "2026-10-01T11:22:05Z", optional fraction ".123" and offsets "+02:00", accepting what Go's time.Parse(RFC3339) accepts, into Unix nanoseconds.
 - `FormatHTTP(unixSec i64) str`: FormatHTTP renders Unix seconds in the HTTP date format "Thu, 01 Oct 2026 11:22:05 GMT".
 - `type Zone struct`: Zone is a time zone: the transitions of the IANA database with the local time in effect after each, plus the TZ string that extends the zone past its last transition. A Zone is a handle that can be stored in a global; LoadZone caches one per core.
+- `RegisterEmbedded(packed str) bool`: RegisterEmbedded installs the packed IANA database of tide/tzdata on this core: it inflates the DEFLATE stream (RFC 1951) into the container of u32 count; per zone, u32 name length, u32 data length, the name and the TZif bytes (RFC 8536), and keeps each zone's bytes. The package tide/tzdata calls it from its globals' initializer, on every core, before main; it reports whether the stream was well formed. LoadZone reads the database after $ZONEINFO and the system directories miss.
 - `(z Zone) Name() str`: Name returns the zone's name, like "Europe/Paris".
 - `UTCZone() Zone`: UTCZone returns the UTC zone.
 - `FixedZone(name str, offset i64) Zone`: FixedZone returns a zone that is always offset seconds east of UTC, shown as name.
 - `LoadZoneData(name str, data str) !Zone`: LoadZoneData parses the bytes of a TZif file (RFC 8536) as the zone called name, like Go's time.LoadLocationFromTZData.
-- `LoadZone(name str) !Zone`: LoadZone returns the zone with an IANA name ("Europe/Paris", "Asia/Kathmandu", "UTC") from $ZONEINFO and the system directories, reading each name once per core. Unknown names fail with ErrUnknownZone (fault.Is). Loading reads files, and so needs the files capability.
+- `LoadZone(name str) !Zone`: LoadZone returns the zone with an IANA name ("Europe/Paris", "Asia/Kathmandu", "UTC") from $ZONEINFO, the system directories and the database embedded by tide/tzdata, reading each name once per core. Unknown names fail with ErrUnknownZone (fault.Is). Loading reads files, and so needs the files capability.
 - `Local() Zone`: Local returns the local zone: $TZ ("" is UTC, a path after ':' or a leading '/' is a file, "UTC" and names are looked up like LoadZone) or /etc/localtime when $TZ is unset, falling back to UTC, as Go's time.Local does.
 - `In(ns i64, z Zone) Civil`: In returns the civil time of the instant ns in zone z, with Offset (seconds east of UTC) and Zone (the abbreviation, like "CET") set.
 - `DateIn(year0 i64, month0 i64, day0 i64, hour0 i64, min0 i64, sec0 i64, nano0 i64, z Zone) i64`: DateIn returns the Unix nanoseconds of the civil time in zone z. Fields out of range carry like Date. A wall time in a gap (the clocks going forward) or an overlap (going back) picks the instant Go's time.Date picks: the one whose zone offset is valid there.

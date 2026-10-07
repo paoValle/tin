@@ -1,4 +1,7 @@
-// Package tide is clocks, durations and civil (calendar) time in UTC, like Go's time package.
+// Package tide is clocks, durations, civil (calendar) time and time zones, like Go's time
+// package. A Zone comes from the IANA database (TZif, RFC 8536): $ZONEINFO, the system
+// directories, or the nested package tide/tzdata, which embeds the whole database for images
+// with no /usr/share/zoneinfo (import it for its side effect).
 package tide
 
 import "say"
