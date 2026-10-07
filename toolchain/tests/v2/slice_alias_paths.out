@@ -1,0 +1,7 @@
+a same object 1 1
+b clone 1 2
+c rebound 3
+d sorted [1 2 3]
+e fresh [9] [1 2]
+f map [4]
+g closure 1 1

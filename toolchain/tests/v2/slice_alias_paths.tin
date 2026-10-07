@@ -1,0 +1,57 @@
+package main
+
+import "say"
+import "sift"
+
+// What E641's places (#627) must leave alone: one object under two names is one place, a copy
+// is its own slice, a name read after it was written again is fresh, a call that takes a slice
+// mut without appending (sort) grows nothing, and a closure that only reads changes nothing.
+// The lines print in sorted order, so the output reads the same sorted or not.
+
+type Box struct {
+	items []i64
+}
+
+fn sortonly(xs mut []i64) {
+	sift.Sort(mut xs)
+}
+
+fn main() {
+	let a = Box{items: make([]i64, 0, 1)}
+	let b = a
+	a.items = append(a.items, 1)
+	say.Line("a same object", len(b.items), len(a.items))
+
+	let copied = sift.Clone(a.items)
+	a.items = append(a.items, 2)
+	say.Line("b clone", len(copied), len(a.items))
+
+	mut view = a.items
+	a.items = append(a.items, 3)
+	view = a.items
+	say.Line("c rebound", len(view))
+
+	mut xs = []i64{3, 1, 2}
+	let ys = xs
+	sift.Sort(mut xs)
+	sortonly(mut xs)
+	say.Line("d sorted", ys)
+
+	mut zs = []i64{1}
+	mut ws = zs
+	ws = []i64{9}
+	zs = append(zs, 2)
+	say.Line("e fresh", ws, zs)
+
+	mut m = map[str][]i64{"k": []i64{}}
+	m["k"] = append(m["k"], 4)
+	let v = m["k"]
+	say.Line("f map", v)
+
+	mut rs = []i64{5}
+	let peek = fn() i64 {
+		return len(rs)
+	}
+	let qs = rs
+	say.Line("g closure", peek(), len(qs))
+}

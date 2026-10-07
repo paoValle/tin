@@ -481,6 +481,20 @@ capsule.
 
 ---
 
+- **Slices stay references; the alias trap is a compile error, followed through places**
+  (#352, #627). `mut ys = xs` is one slice under two names, and `append` grows the shared
+  header in place, so a "snapshot" changes under its author. The checker reports reading the
+  other name after the growth (E641). #352 followed local names only; #627 follows **places**
+  within a function: a local, a field path (`b.items`, `a.inner.items`), a constant index
+  (`xs[0]`) and a constant map key (`m["k"]`), with structs as objects (after `let b = a`,
+  `b.items` is the place `a.items`, not an alias of it), struct literals' fields, calls that take
+  the slice `mut` and append to that parameter, and calls of a local closure that appends to an
+  outer variable. Chosen over only documenting the local-names limit because the agent primer
+  promises the trap is guarded, and models writing Tin take that at face value. Not followed (a
+  missed E641, never a wrong one): dynamic indices and keys, a slice reached through a call's
+  result, a `mut` struct parameter whose slice fields the callee grows, growth two calls deep,
+  a closure stored elsewhere than a local or called through another name, and other tasks.
+
 ## 14. What this changes in design_foundations.md
 
 1. **`detach` exists** (section 6), owned by the core's background boundary, with kept

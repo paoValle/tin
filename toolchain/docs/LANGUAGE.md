@@ -223,8 +223,14 @@ Use `keep(x)` (a deep copy into long-lived memory) or explicit copies (`copy`,
 `ore.Clone`, `sift.Clone`, a new literal) when independent values are needed.
 
 Slices stay references (#352), so the trap is guarded rather than removed: in user code, once
-`append` has grown a slice that another local name shares (`mut ys = xs`), reading that other
-name is E641 (`ys` would have changed under you). Take `sift.Clone(xs)` for a snapshot.
+`append` has grown a slice that another name shares (`mut ys = xs`), reading that other name is
+E641 (`ys` would have changed under you). Take `sift.Clone(xs)` for a snapshot. The names the
+check follows within a function (#627) are locals, field paths (`let view = b.items`, also
+after `let b = a`, which makes the two one object), constant indices (`rows[0]`) and constant
+map keys (`m["k"]`), struct literal fields (`Box{items: xs}`), a call that takes the slice
+`mut` and appends to that parameter, and a call of a local closure that appends to an outer
+variable. Not followed: dynamic indices and keys, a slice that comes back from a call, a `mut`
+struct whose slice fields the callee grows, growth two calls deep, and other tasks.
 
 ### Slices
 

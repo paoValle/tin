@@ -1,0 +1,70 @@
+package main
+
+import "say"
+
+// E641 follows places, not only local names (#627): a slice reached through a field, a map
+// value with a constant key, a constant element, a struct literal's field, a call that takes it
+// mut and appends, or a closure that appends to it.
+
+type Box struct {
+	items []i64
+}
+
+fn field() {
+	let a = Box{items: make([]i64, 0, 1)}
+	let b = a
+	let view = b.items
+	a.items = append(a.items, 1)
+	say.Line(len(view), len(b.items), len(a.items))
+}
+
+fn mapvalue() {
+	mut m = map[str][]i64{"k": make([]i64, 0, 4)}
+	let v = m["k"]
+	m["k"] = append(m["k"], 1)
+	say.Line(len(v))
+}
+
+fn element() {
+	mut rows = [][]i64{make([]i64, 0, 4)}
+	let first = rows[0]
+	rows[0] = append(rows[0], 7)
+	say.Line(len(first))
+}
+
+fn literal() {
+	mut xs = make([]i64, 0, 4)
+	let b = Box{items: xs}
+	xs = append(xs, 1)
+	say.Line(len(b.items))
+}
+
+fn grow(xs mut []i64) {
+	xs = append(xs, 1)
+}
+
+fn mutcall() {
+	mut xs = make([]i64, 0, 4)
+	let ys = xs
+	grow(mut xs)
+	say.Line(len(ys))
+}
+
+fn closure() {
+	mut xs = make([]i64, 0, 4)
+	let ys = xs
+	let add = fn(v i64) {
+		xs = append(xs, v)
+	}
+	add(1)
+	say.Line(len(ys))
+}
+
+fn main() {
+	field()
+	mapvalue()
+	element()
+	literal()
+	mutcall()
+	closure()
+}

@@ -1,0 +1,6 @@
+toolchain/tests/v2/slice_alias_paths_bad.tin:18:15: error E641 SLICE_ALIAS: 'view' is the same slice as 'a.items', which append has grown since: 'view' changed too; copy the slice (sift.Clone) when two independent slices are meant
+toolchain/tests/v2/slice_alias_paths_bad.tin:25:15: error E641 SLICE_ALIAS: 'v' is the same slice as 'm["k"]', which append has grown since: 'v' changed too; copy the slice (sift.Clone) when two independent slices are meant
+toolchain/tests/v2/slice_alias_paths_bad.tin:32:15: error E641 SLICE_ALIAS: 'first' is the same slice as 'rows[0]', which append has grown since: 'first' changed too; copy the slice (sift.Clone) when two independent slices are meant
+toolchain/tests/v2/slice_alias_paths_bad.tin:39:16: error E641 SLICE_ALIAS: 'b.items' is the same slice as 'xs', which append has grown since: 'b.items' changed too; copy the slice (sift.Clone) when two independent slices are meant
+toolchain/tests/v2/slice_alias_paths_bad.tin:50:15: error E641 SLICE_ALIAS: 'ys' is the same slice as 'xs', which append has grown since: 'ys' changed too; copy the slice (sift.Clone) when two independent slices are meant
+toolchain/tests/v2/slice_alias_paths_bad.tin:60:15: error E641 SLICE_ALIAS: 'ys' is the same slice as 'xs', which append has grown since: 'ys' changed too; copy the slice (sift.Clone) when two independent slices are meant

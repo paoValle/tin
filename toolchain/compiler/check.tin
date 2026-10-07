@@ -680,6 +680,8 @@ fn check() {
 	init_stmts = []i64{}
 	safe_pairs = []i64{}
 	len_aliases = []i64{}
+	// Global initializers are checked outside any function (#627).
+	al_reset()
 	dyn_tables = []i64{}
 	gtab = 0
 	gtab_size = 0
@@ -2758,6 +2760,8 @@ fn check_fn_closure(f i64) {
 	let saved_cells = ck_escaping_cells
 	let saved_depth = ck_scope_depth
 	let saved_base = ck_fn_base
+	// The enclosing function's places (#627): the closure's check starts its own.
+	let saved_al = al_save()
 	// A closure's own variables (and its parameters, which a caller may fill with handles of
 	// scopes the closure never sees) count as deeper than anything it captures (#232).
 	ck_scope_depth = ck_scope_depth + 65536
@@ -2777,6 +2781,7 @@ fn check_fn_closure(f i64) {
 	sc_marks = cast([]i64, saved_marks)
 	safe_pairs = saved_safe
 	len_aliases = saved_len_aliases
+	al_restore(saved_al)
 	ck_escaping_cells = saved_cells
 	ck_scope_depth = saved_depth
 	ck_fn_base = saved_base
@@ -2796,6 +2801,7 @@ fn check_fn(f Fn) {
 	ck_labels = []str{}
 	ck_escaping_cells = []str{}
 	len_aliases = []i64{}
+	al_reset()
 	if f.body != 0 {
 		mark_spawns(cast(Block, f.body).stmts, sb_scope_params(f))
 		scan_captures(f, ck_escaping_cells)
@@ -5842,69 +5848,530 @@ fn check_cond(c Node) {
 	}
 }
 
-// ---- slice aliases (#352): `mut ys = xs` makes one slice with two names, and append to either
-// grows both. In user code, reading a name after append grew the slice it shares is E641. ----
+// ---- slice aliases (#352, #627): `mut ys = xs` makes one slice with two names, and append to
+// either grows both. In user code, reading a name after append grew the slice it shares is E641.
+//
+// The names are places: a local, a field path from one (`b.items`, `a.inner.items`), a constant
+// index (`xs[0]`) or a constant map key (`m["k"]`). Each place holds a class, the object or slice
+// it names as far as the checker can tell; a place it has not seen gets a class of its own.
+// `let` and assignment copy a class, so after `let b = a` the structs are one object and `b.items`
+// is the place `a.items`, and after `let view = b.items` view names that slice. append through a
+// place makes every other place of its class stale until it is written; reading a stale place is
+// E641. The walk is per function, in statement order. Not followed: dynamic indices and keys,
+// values passed to a call (unless the call takes the slice `mut` and may grow it) and
+// variables a closure appends to (#627, LANGUAGE.md section 3).
+shared mut al_keys []str  // the places of the function being checked
+shared mut al_cls []i64   // the class each holds
+shared mut al_stale []i64 // where append grew the class through another place (0: not stale)
+shared mut al_by []str    // the text of that other place
+shared mut al_texts []str // a place's text, for the message
+shared mut al_next i64
+shared mut al_nstale i64  // places stale now: reads look only when this is not 0
+shared mut al_writing i64 // checking an assignment's target, which is not a read
+shared mut al_ptext str   // the text of the place al_place last found
 
-fn alias_slice_local(s Sym) i64 {
-	return i64(cast(i64, s) != 0 && s.kind == SYM_LOCAL && s.captured == 0 && s.cell == 0 && kind_of(cast(Ty, s.type_)) == K_SLICE)
+fn al_reset() {
+	al_keys = []str{}
+	al_cls = []i64{}
+	al_stale = []i64{}
+	al_by = []str{}
+	al_texts = []str{}
+	al_next = 1
+	al_nstale = 0
+	al_writing = 0
+	al_clos = []str{}
+	al_cgrow = []i64{}
 }
 
-// alias_unlink makes a stop sharing a slice with another name.
-fn alias_unlink(a Sym) {
-	let p = cast(Sym, a.alias)
-	if cast(i64, p) != 0 && p.alias2 == cast(i64, a) {
-		p.alias2 = 0
-	}
-	let q = cast(Sym, a.alias2)
-	if cast(i64, q) != 0 && q.alias == cast(i64, a) {
-		q.alias = 0
-	}
-	a.alias = 0
-	a.alias2 = 0
-	a.stale = 0
+// al_save and al_restore keep a function's places while a closure inside it is checked.
+fn al_save() []i64 {
+	mut v = []i64{}
+	v = append(v, cast(i64, al_keys))
+	v = append(v, cast(i64, al_cls))
+	v = append(v, cast(i64, al_stale))
+	v = append(v, cast(i64, al_by))
+	v = append(v, cast(i64, al_texts))
+	v = append(v, al_next)
+	v = append(v, al_nstale)
+	v = append(v, al_writing)
+	v = append(v, cast(i64, al_clos))
+	v = append(v, cast(i64, al_cgrow))
+	return v
 }
 
-// alias_link notes that a now names the slice b names.
-fn alias_link(a Sym, b Sym) {
-	if ck_trusted != 0 || alias_slice_local(a) == 0 || alias_slice_local(b) == 0 || cast(i64, a) == cast(i64, b) {
+fn al_restore(v []i64) {
+	al_keys = cast([]str, v[0])
+	al_cls = cast([]i64, v[1])
+	al_stale = cast([]i64, v[2])
+	al_by = cast([]str, v[3])
+	al_texts = cast([]str, v[4])
+	al_next = v[5]
+	al_nstale = v[6]
+	al_writing = v[7]
+	al_clos = cast([]str, v[8])
+	al_cgrow = cast([]i64, v[9])
+}
+
+fn al_num(n i64) str {
+	let b = buf_new()
+	buf_int(b, n)
+	return str(b)
+}
+
+fn al_find(key str) i64 {
+	mut i = 0
+	for i < len(al_keys) {
+		if al_keys[i] == key {
+			return i
+		}
+		i = i + 1
+	}
+	return -1
+}
+
+// al_class is the class place key holds; with make, a place not seen yet gets a class of its own.
+fn al_class(key str, text str, make i64) i64 {
+	let i = al_find(key)
+	if i >= 0 {
+		return al_cls[i]
+	}
+	if make == 0 {
+		return 0
+	}
+	al_keys = append(al_keys, key)
+	al_cls = append(al_cls, al_next)
+	al_stale = append(al_stale, 0)
+	al_by = append(al_by, "")
+	al_texts = append(al_texts, text)
+	al_next = al_next + 1
+	return al_next - 1
+}
+
+// al_place is the key of place expression e, before it is checked and lowered ("" when e is not
+// a place: a call, a literal, a dynamic index, a package member). al_ptext is its text. Without
+// make, a place whose parent was never seen is not one.
+fn al_place(e i64, make i64) str {
+	if ck_trusted != 0 || e == 0 {
+		return ""
+	}
+	let k = cast(Node, e).kind
+	if k == EX_IDENT {
+		let s = lookup_name(cast(IdentExpr, e).name)
+		if cast(i64, s) == 0 || s.kind != SYM_LOCAL {
+			return ""
+		}
+		al_ptext = cast(IdentExpr, e).name
+		return "s" + al_num(cast(i64, s))
+	}
+	if k == EX_SELECT {
+		let pk = al_place(cast(SelectExpr, e).x, make)
+		if len(pk) == 0 {
+			return ""
+		}
+		let pt = al_ptext
+		let c = al_class(pk, pt, make)
+		if c == 0 {
+			return ""
+		}
+		al_ptext = pt + "." + cast(SelectExpr, e).name
+		return "c" + al_num(c) + "." + cast(SelectExpr, e).name
+	}
+	if k == EX_INDEX && cast(IndexExpr, e).i != 0 {
+		let ix = cast(Node, cast(IndexExpr, e).i)
+		mut it = ""
+		if ix.kind == EX_INT {
+			it = al_num(cast(IntLit, ix).val)
+		} else if ix.kind == EX_STR {
+			it = "\"" + cast(StrLit, ix).ptr + "\""
+		} else {
+			return ""
+		}
+		let pk = al_place(cast(IndexExpr, e).x, make)
+		if len(pk) == 0 {
+			return ""
+		}
+		let pt = al_ptext
+		let c = al_class(pk, pt, make)
+		if c == 0 {
+			return ""
+		}
+		al_ptext = pt + "[" + it + "]"
+		return "c" + al_num(c) + "[" + it + "]"
+	}
+	return ""
+}
+
+// al_sym_key is the place key of local s.
+fn al_sym_key(s Sym) str {
+	return "s" + al_num(cast(i64, s))
+}
+
+// al_set makes place dst (text dt) hold class c, as a write does: dst is no longer stale.
+fn al_set(dst str, dt str, c i64) {
+	mut i = al_find(dst)
+	if i < 0 {
+		al_class(dst, dt, 1)
+		i = al_find(dst)
+	}
+	al_cls[i] = c
+	if al_stale[i] != 0 {
+		al_stale[i] = 0
+		al_nstale = al_nstale - 1
+	}
+}
+
+// al_copy is `dst = src` for two places: dst now names what src names.
+fn al_copy(dst str, dt str, src str, st str) {
+	if len(dst) == 0 || len(src) == 0 || dst == src {
 		return
 	}
-	alias_unlink(a)
-	a.alias = cast(i64, b)
-	b.alias2 = cast(i64, a)
+	al_set(dst, dt, al_class(src, st, 1))
 }
 
-// alias_grown notes that append grew the slice v names: every other name for it changed too.
-fn alias_grown(pos i64, v Sym) {
-	if ck_trusted != 0 || alias_slice_local(v) == 0 {
+// al_fresh is `dst = v` for a value that is no place (a call, a literal): a class of its own.
+fn al_fresh(dst str, dt str) {
+	if len(dst) == 0 {
 		return
 	}
-	let p = cast(Sym, v.alias)
-	if cast(i64, p) != 0 {
-		p.stale = pos
-		p.stale_by = cast(i64, v)
+	al_set(dst, dt, al_next)
+	al_next = al_next + 1
+}
+
+// al_grow notes that append grew the slice place key (text t) names: every other place of the
+// same class changed too.
+fn al_grow(pos i64, key str, t str) {
+	if len(key) == 0 {
+		return
 	}
-	let q = cast(Sym, v.alias2)
-	if cast(i64, q) != 0 {
-		q.stale = pos
-		q.stale_by = cast(i64, v)
+	let c = al_class(key, t, 1)
+	mut i = 0
+	for i < len(al_keys) {
+		if al_cls[i] == c && al_keys[i] != key && al_stale[i] == 0 {
+			al_stale[i] = pos
+			al_by[i] = t
+			al_nstale = al_nstale + 1
+		}
+		i = i + 1
 	}
 }
 
-// alias_read reports a read of a name whose slice append grew through another name.
-fn alias_read(pos i64, s Sym) {
-	if s.stale == 0 {
+// al_fields gives, for a struct literal e (before it is checked), [field, key, text] for each
+// field set from a place: `Box{items: xs}` makes the new object's items name xs's slice.
+fn al_fields(e i64) []str {
+	mut out = []str{}
+	if ck_trusted != 0 || e == 0 || cast(Node, e).kind != EX_COMPOSITE {
+		return out
+	}
+	let elems = cast(Composite, e).elems
+	let keys = cast(Composite, e).keys
+	mut i = 0
+	for i < len(elems) && i < len(cast([]i64, keys)) {
+		let key = keys[i]
+		if key != 0 && cast(Node, key).kind == EX_IDENT {
+			let vk = al_place(elems[i], 1)
+			if len(vk) != 0 {
+				out = append(out, cast(IdentExpr, key).name)
+				out = append(out, vk)
+				out = append(out, al_ptext)
+			}
+		}
+		i = i + 1
+	}
+	return out
+}
+
+// al_fields_set makes the fields of the object place dst holds name what al_fields found.
+fn al_fields_set(dst str, dt str, fields []str) {
+	if len(dst) == 0 || len(fields) == 0 {
 		return
 	}
-	let by = cast(Sym, s.stale_by)
-	s.stale = 0
+	let c = al_class(dst, dt, 1)
+	mut i = 0
+	for i + 2 < len(fields) {
+		al_copy("c" + al_num(c) + "." + fields[i], dt + "." + fields[i], fields[i + 1], fields[i + 2])
+		i = i + 3
+	}
+}
+
+// al_assign_begin takes the places of assignment s before checking lowers it: [target key,
+// target text, value key, value text, "grow" when the value is append(target, ...)], then the
+// fields of a struct literal value.
+fn al_assign_begin(s i64) []str {
+	mut out = []str{}
+	if ck_trusted != 0 {
+		return out
+	}
+	let target = cast(AssignStmt, s).target
+	let v = cast(AssignStmt, s).value
+	let tk = al_place(target, 1)
+	let tt = al_ptext
+	if len(tk) == 0 {
+		return out
+	}
+	let vk = al_place(v, 1)
+	let vt = al_ptext
+	mut grow = ""
+	if cast(Node, v).kind == EX_CALL && len(cast(Call, v).name) != 0 && cast(Call, v).name == "append" && len(cast(Call, v).args) > 0 && al_place(cast(Call, v).args[0], 1) == tk {
+		grow = "grow"
+	}
+	out = append(out, tk)
+	out = append(out, tt)
+	out = append(out, vk)
+	out = append(out, vt)
+	out = append(out, grow)
+	let fs = al_fields(v)
+	mut i = 0
+	for i < len(fs) {
+		out = append(out, fs[i])
+		i = i + 1
+	}
+	return out
+}
+
+// al_assign_end applies the write after the value was checked (its reads came first): the target
+// names what the value names, a value that is no place gives it a class of its own, and
+// `t = append(t, ...)` leaves it the slice it grew.
+fn al_assign_end(a []str) {
+	if len(a) < 5 || a[4] == "grow" {
+		return
+	}
+	if len(a[2]) != 0 {
+		al_copy(a[0], a[1], a[2], a[3])
+	} else {
+		al_fresh(a[0], a[1])
+	}
+	if len(a) > 5 {
+		al_fields_set(a[0], a[1], a[5:])
+	}
+}
+
+// ---- what a call may grow (#627): a function that appends to a mut slice parameter grows the
+// caller's slice in place, and a closure that appends to an outer variable grows that variable's
+// slice when it is called. The scans below look for `append` (or, in a body already lowered,
+// rt_append and its siblings) whose slice is rooted at the name, through statements, blocks,
+// conditions, loops, ranges and boundary blocks. They do not follow a call the body makes in turn,
+// so a slice grown two calls away is not seen (a missed E641, never a wrong one).
+shared mut al_gfns []i64   // functions already scanned
+shared mut al_gmasks []i64 // their parameters that may grow, as a bit mask
+shared mut al_clos []str   // the place keys of locals holding a closure that appends to an outer place
+shared mut al_cgrow []i64  // per such local, a []str of [key, text] pairs it grows
+
+// al_root is the name a place expression starts from, in source or lowered form.
+fn al_root(e i64) str {
+	if e == 0 {
+		return ""
+	}
+	let k = cast(Node, e).kind
+	if k == EX_IDENT {
+		return cast(IdentExpr, e).name
+	}
+	if k == EX_SELECT {
+		return al_root(cast(SelectExpr, e).x)
+	}
+	if k == EX_INDEX {
+		return al_root(cast(IndexExpr, e).x)
+	}
+	if k == EX_MEM {
+		return al_root(cast(MemExpr, e).base)
+	}
+	if k == EX_ELEM {
+		return al_root(cast(ElemExpr, e).seq)
+	}
+	if k == EX_CONV {
+		return al_root(cast(Conv, e).x)
+	}
+	if k == EX_MUTARG {
+		return al_root(cast(MutArg, e).x)
+	}
+	return ""
+}
+
+fn al_is_append(name str) i64 {
+	return i64(name == "append" || name == "rt_append" || name == "rt_append_rc" || name == "rt_append_dyn" || name == "rt_slice_appendn" || name == "rt_slice_appendn_rc" || name == "rt_slice_appendn_dyn")
+}
+
+// al_appends collects into roots the names the appends in e grow (the root of the slice each
+// appends to).
+fn al_appends(e i64, roots []str) {
+	if e == 0 {
+		return
+	}
+	let k = cast(Node, e).kind
+	if k == EX_CALL {
+		let c = cast(Call, e)
+		if len(c.name) != 0 && al_is_append(c.name) != 0 && len(c.args) > 0 {
+			let r = al_root(c.args[0])
+			if len(r) != 0 {
+				roots = append(roots, r)
+			}
+		}
+		if c.callee != 0 {
+			al_appends(c.callee, roots)
+		}
+		mut i = 0
+		for i < len(c.args) {
+			al_appends(c.args[i], roots)
+			i = i + 1
+		}
+	} else if k == EX_UNARY {
+		al_appends(cast(Unary, e).x, roots)
+	} else if k == EX_BINARY {
+		al_appends(cast(Binary, e).l, roots)
+		al_appends(cast(Binary, e).r, roots)
+	} else if k == EX_SEQ {
+		al_appends_stmts(cast(SeqExpr, e).stmts, roots)
+		al_appends(cast(SeqExpr, e).value, roots)
+	} else if k == EX_CONV {
+		al_appends(cast(Conv, e).x, roots)
+	} else if k == EX_MUTARG {
+		al_appends(cast(MutArg, e).x, roots)
+	} else if k == EX_BOUNDARY {
+		al_appends_stmt(cast(BoundaryStmt, e).body, roots)
+	}
+}
+
+fn al_appends_stmts(v []i64, roots []str) {
+	if cast(i64, v) == 0 {
+		return
+	}
+	mut i = 0
+	for i < len(v) {
+		al_appends_stmt(v[i], roots)
+		i = i + 1
+	}
+}
+
+fn al_appends_stmt(s i64, roots []str) {
+	if s == 0 {
+		return
+	}
+	let k = cast(Node, s).kind
+	if k == ST_BLOCK {
+		al_appends_stmts(cast(Block, s).stmts, roots)
+	} else if k == ST_LET {
+		al_appends(cast(LetStmt, s).init, roots)
+	} else if k == ST_ASSIGN {
+		al_appends(cast(AssignStmt, s).value, roots)
+	} else if k == ST_EXPR {
+		al_appends(cast(ExprStmt, s).x, roots)
+	} else if k == ST_IF {
+		al_appends(cast(IfStmt, s).cond, roots)
+		al_appends_stmt(cast(IfStmt, s).then, roots)
+		al_appends_stmt(cast(IfStmt, s).else_, roots)
+	} else if k == ST_WHILE {
+		al_appends(cast(WhileStmt, s).cond, roots)
+		al_appends_stmt(cast(WhileStmt, s).body, roots)
+		al_appends_stmt(cast(WhileStmt, s).post, roots)
+	} else if k == ST_RANGE {
+		al_appends_stmt(cast(RangeStmt, s).body, roots)
+	} else if k == ST_RETURN {
+		al_appends(cast(ReturnStmt, s).value, roots)
+	} else if k == ST_CALLMULTI {
+		al_appends(cast(CallMultiStmt, s).call, roots)
+	} else if k == ST_SCOPE {
+		al_appends_stmt(cast(ScopeStmt, s).body, roots)
+	}
+}
+
+// al_fn_grows reports whether f may append to its parameter i (cached per function).
+fn al_fn_grows(f Fn, i i64) i64 {
+	if cast(i64, f) == 0 || i >= 63 || i >= len(f.params) || f.body == 0 {
+		return 0
+	}
+	if cast(i64, al_gfns) == 0 {
+		al_gfns = []i64{}
+		al_gmasks = []i64{}
+	}
+	mut j = 0
+	for j < len(al_gfns) {
+		if al_gfns[j] == cast(i64, f) {
+			return (al_gmasks[j] >> i) & 1
+		}
+		j = j + 1
+	}
+	mut roots = []str{}
+	al_appends_stmts(cast(Block, f.body).stmts, roots)
+	mut mask = 0
+	mut p = 0
+	for p < len(f.params) && p < 63 {
+		mut r = 0
+		for r < len(roots) {
+			if roots[r] == f.params[p] {
+				mask = mask | (1 << p)
+			}
+			r = r + 1
+		}
+		p = p + 1
+	}
+	al_gfns = append(al_gfns, cast(i64, f))
+	al_gmasks = append(al_gmasks, mask)
+	return (mask >> i) & 1
+}
+
+// al_closure_roots is, for `let name = fn(...) { ... }` (lf: the literal's function, read before
+// checking lowers its body), the outer locals the literal appends to, as [key, text] pairs: they
+// grow when the closure is called through name.
+fn al_closure_roots(lf i64) []str {
+	mut grows = []str{}
+	if ck_trusted != 0 || lf == 0 {
+		return grows
+	}
+	let f = cast(Fn, lf)
+	if f.body == 0 {
+		return grows
+	}
+	mut roots = []str{}
+	al_appends_stmts(cast(Block, f.body).stmts, roots)
+	mut r = 0
+	for r < len(roots) {
+		let s = lookup_name(roots[r])
+		if cast(i64, s) != 0 && s.kind == SYM_LOCAL && slice_has_str(f.params, roots[r]) == 0 {
+			grows = append(grows, al_sym_key(s))
+			grows = append(grows, roots[r])
+		}
+		r = r + 1
+	}
+	return grows
+}
+
+// al_closure_let records what calling the closure local key grows (al_closure_roots).
+fn al_closure_let(key str, grows []str) {
+	if len(grows) != 0 {
+		al_clos = append(al_clos, key)
+		al_cgrow = append(al_cgrow, cast(i64, grows))
+	}
+}
+
+// al_closure_grows is what calling the closure place key grows ([key, text] pairs), if anything.
+fn al_closure_grows(key str) []str {
+	mut i = len(al_clos) - 1
+	for i >= 0 {
+		if al_clos[i] == key {
+			return cast([]str, al_cgrow[i])
+		}
+		i = i - 1
+	}
+	return []str{}
+}
+
+// al_read reports a read of place key whose slice append has grown through another place.
+fn al_read(pos i64, key str) {
+	if al_nstale == 0 || al_writing != 0 || len(key) == 0 {
+		return
+	}
+	let i = al_find(key)
+	if i < 0 || al_stale[i] == 0 {
+		return
+	}
+	al_stale[i] = 0
+	al_nstale = al_nstale - 1
 	let u = err_code(pos, "E641 SLICE_ALIAS")
 	buf_str(u, "'")
-	buf_str(u, s.name)
+	buf_str(u, al_texts[i])
 	buf_str(u, "' is the same slice as '")
-	buf_str(u, by.name)
+	buf_str(u, al_by[i])
 	buf_str(u, "', which append has grown since: '")
-	buf_str(u, s.name)
+	buf_str(u, al_texts[i])
 	buf_str(u, "' changed too; copy the slice (sift.Clone) when two independent slices are meant")
 	err_end(cast([]u8, u))
 }
@@ -5923,6 +6390,14 @@ fn check_let(s i64) {
 	if cast(i64, init) != 0 && init.kind == EX_MATCH {
 		check_match_let(s, init, t)
 		return
+	}
+	// The places the value names (#627), taken before checking lowers it.
+	let alk = al_place(cast(i64, init), 1)
+	let alt = al_ptext
+	let alf = al_fields(cast(i64, init))
+	mut alcg = []str{}
+	if cast(i64, init) != 0 && init.kind == EX_FUNCLIT {
+		alcg = al_closure_roots(cast(FuncLit, init).fn_)
 	}
 	if cast(i64, init) != 0 {
 		let it = chk(init, t)
@@ -5958,8 +6433,11 @@ fn check_let(s i64) {
 	if cast(LetStmt, s).mut_ == 0 && byte_at(cast(LetStmt, s).name, 0) != '$' {
 		cast(Sym, cast(LetStmt, s).sym).fixed = 1
 	}
-	if cast(i64, init) != 0 && init.kind == EX_IDENT && ck_trusted == 0 {
-		alias_link(cast(Sym, cast(LetStmt, s).sym), lookup_name(cast(IdentExpr, init).name))
+	if ck_trusted == 0 {
+		let sk = al_sym_key(cast(Sym, cast(LetStmt, s).sym))
+		al_copy(sk, cast(LetStmt, s).name, alk, alt)
+		al_fields_set(sk, cast(LetStmt, s).name, alf)
+		al_closure_let(sk, alcg)
 	}
 	len_alias_remember(cast(Sym, cast(LetStmt, s).sym), cast(i64, init))
 	if cast(Sym, cast(LetStmt, s).sym).cell != 0 {
@@ -6041,6 +6519,7 @@ fn check_target(t i64) i64 {
 fn check_assign(s i64) {
 	mut target = cast(AssignStmt, s).target
 	let v = cast(Node, cast(AssignStmt, s).value)
+	let alw = al_assign_begin(s)
 	let_assign_check(target)
 	// Assigning to a variable narrowed from ?number: the value is boxed and the box replaces the
 	// old one. x op= v shares the target node with v, and reading x there loads the number from
@@ -6073,17 +6552,6 @@ fn check_assign(s i64) {
 		}
 	}
 	shared_let_write(cast(Node, s).pos, target)
-	if ck_trusted == 0 && cast(Node, target).kind == EX_IDENT {
-		let ts = lookup_name(cast(IdentExpr, target).name)
-		if alias_slice_local(ts) != 0 {
-			if v.kind == EX_IDENT {
-				alias_link(ts, lookup_name(cast(IdentExpr, v).name))
-			} else if !(v.kind == EX_CALL && len(cast(Call, v).name) != 0 && cast(Call, v).name == "append" && len(cast(Call, v).args) > 0 && cast(Node, cast(Call, v).args[0]).kind == EX_IDENT && cast(IdentExpr, cast(Call, v).args[0]).name == cast(IdentExpr, target).name) {
-				// xs = something else: xs no longer shares a slice with another name
-				alias_unlink(ts)
-			}
-		}
-	}
 	// A mut slice parameter reaches the caller only through `p = append(p, ...)`, which grows the
 	// shared header in place; any other value (a reslice, another slice) rebinds only the callee's
 	// copy and is silently lost, as for the struct, optional, map and dyn parameters in check_target.
@@ -6145,6 +6613,7 @@ fn check_assign(s i64) {
 			}
 			store.store = 1
 			replace_node(s, expr_stmt(cast(Node, mset)))
+			al_assign_end(alw)
 			return
 		}
 		if kind_of(xt) == K_STRING {
@@ -6152,7 +6621,10 @@ fn check_assign(s i64) {
 			return
 		}
 	}
+	// The target is written, not read (#627).
+	al_writing = al_writing + 1
 	let tt = check_target(target)
+	al_writing = al_writing - 1
 	let vt = chk(v, tt)
 	check_assignable(v, vt, cast(Ty, tt))
 	if is_untyped(vt) != 0 {
@@ -6165,6 +6637,7 @@ fn check_assign(s i64) {
 	if cast(Node, target).kind == EX_IDENT {
 		len_alias_invalidate(cast(IdentExpr, target).ref)
 	}
+	al_assign_end(alw)
 }
 
 fn check_assignable(e Node, from i64, to Ty) {

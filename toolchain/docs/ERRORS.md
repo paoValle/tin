@@ -3521,8 +3521,11 @@ example.tin:9:15: error E641 SLICE_ALIAS: 'ys' is the same slice as 'xs', which 
 ```
 
 Fix: take a copy for the snapshot (`mut ys = sift.Clone(xs)`), or stop using the old name.
-The check follows plain names inside one function: a slice reached through a field, a
-parameter's other callers or a closure is not tracked.
+The check follows places inside one function (#627): locals, field paths (`let view = b.items`,
+with `let b = a` making the two one object), constant indices and map keys, struct literal
+fields, calls that take the slice `mut` and append to it, and calls of a local closure that
+appends to an outer variable. Dynamic indices, slices returned by calls, `mut` structs and
+growth two calls deep are not followed (LANGUAGE.md section 3).
 
 ### E650 BOUNDARY
 

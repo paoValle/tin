@@ -503,8 +503,8 @@ fn runtime_use(pos i64, f Fn, name str) {
 // use_sym turns a resolved name into a variable read, a constant or a function value.
 fn use_sym(e i64, s Sym, want i64) i64 {
 	let k = s.kind
-	if k == SYM_LOCAL && s.stale != 0 {
-		alias_read(cast(Node, e).pos, s)
+	if k == SYM_LOCAL && al_nstale != 0 {
+		al_read(cast(Node, e).pos, al_sym_key(s))
 	}
 	if k == SYM_FUNC {
 		let f = cast(Fn, s.fn_)
@@ -1655,6 +1655,10 @@ fn mk_elem(pos i64, seq i64, index i64, t i64, isstr i64) ElemExpr {
 
 fn chk_index(e i64) i64 {
 	let pos = cast(Node, e).pos
+	if al_nstale != 0 {
+		// A read of a constant element or map key whose slice append grew elsewhere (#627).
+		al_read(pos, al_place(e, 0))
+	}
 	let x = cast(IndexExpr, e).x
 	if cast(IndexExpr, e).i == 0 && index_from_targs(e) == 0 {
 		err_code_at(pos, "E501 NOT_GENERIC", "type arguments go only to a generic function or type")
@@ -1907,6 +1911,10 @@ fn enum_construct(e Node, t Ty, name str, args []i64) i64 {
 
 fn chk_select(e i64, want i64) i64 {
 	let pos = cast(Node, e).pos
+	if al_nstale != 0 {
+		// A read of a field path whose slice append grew through another place (#627).
+		al_read(pos, al_place(e, 0))
+	}
 	let x = cast(SelectExpr, e).x
 	let name = cast(SelectExpr, e).name
 	let et = enum_type_of(x)
@@ -3527,10 +3535,19 @@ fn chk_args(e i64, ptypes []i64, variadic i64, mask i64) {
 		buf_int(cast([]u8, a), len(args))
 		err_end(cast([]u8, a))
 	}
+	mut algrow = []str{}
 	mut i = 0
 	for i < len(args) {
 		let a = args[i]
 		let marked = unwrap_mut(a)
+		if ck_trusted == 0 && marked != 0 && i < len(ptypes) && kind_of(cast(Ty, ptypes[i])) == K_SLICE && al_fn_grows(cast(Fn, cast(Call, e).fn_), i) != 0 {
+			// A callee that appends to this mut slice grows the caller's slice (#627).
+			let mk = al_place(a, 1)
+			if len(mk) != 0 {
+				algrow = append(algrow, mk)
+				algrow = append(algrow, al_ptext)
+			}
+		}
 		if !(i == 0 && cast(Call, e).method != 0) {
 			let pm = i64(i < n && i < 63 && (mask & (1 << i)) != 0)
 			if pm != 0 && marked == 0 {
@@ -3562,6 +3579,11 @@ fn chk_args(e i64, ptypes []i64, variadic i64, mask i64) {
 			reconvert(cast(Node, a), default_type(at))
 		}
 		i = i + 1
+	}
+	i = 0
+	for i + 1 < len(algrow) {
+		al_grow(cast(Node, e).pos, algrow[i], algrow[i + 1])
+		i = i + 2
 	}
 }
 
@@ -3960,6 +3982,8 @@ fn overload(pkg str, name str, e Call) i64 {
 
 fn indirect_call(e i64) i64 {
 	let callee = cast(Call, e).callee
+	// A closure that appends to an outer variable grows its slice when called (#627).
+	let algrow = al_closure_grows(al_place(callee, 0))
 	let ft = cast(Ty, chk(cast(Node, callee), 0))
 	if kind_of(ft) != K_FUNC {
 		err_code_type(cast(Node, e).pos, "E215 NOT_CALLABLE", "cannot call a value of type ", cast(i64, ft), "")
@@ -3967,6 +3991,11 @@ fn indirect_call(e i64) i64 {
 	}
 	cast(Call, e).fn_ = 0
 	chk_args(e, ft.fields, ft.variadic, ft.key)
+	mut gi = 0
+	for gi + 1 < len(algrow) {
+		al_grow(cast(Node, e).pos, algrow[gi], algrow[gi + 1])
+		gi = gi + 2
+	}
 	return func_result(ft)
 }
 
@@ -4120,10 +4149,11 @@ fn chk_builtin(e i64, name str, want i64) i64 {
 			return ty_int
 		}
 		shared_let_write(pos, arg0(cast(Call, e)))
+		// The place append grows (#627), taken before checking lowers it.
+		let agk = al_place(arg0(cast(Call, e)), 1)
+		let agt = al_ptext
 		mut st = cast(Ty, chk(cast(Node, arg0(cast(Call, e))), want))
-		if cast(Node, arg0(cast(Call, e))).kind == EX_IDENT {
-			alias_grown(pos, lookup_name(cast(IdentExpr, arg0(cast(Call, e))).name))
-		}
+		al_grow(pos, agk, agt)
 		// append can grow a bounded slice past its bound: the result is unbounded (#240).
 		st = cast(Ty, unbounded(st))
 		if kind_of(st) != K_SLICE {
