@@ -1,0 +1,2 @@
+toolchain/tests/v2/method_values_bad.tin:16:11: error E213 FIELD: Counter has no field nope
+toolchain/tests/v2/method_values_bad.tin:18:11: error E421 UNCHECKED_OPTIONAL: cannot use a field of optional ?Counter before checking it against nil

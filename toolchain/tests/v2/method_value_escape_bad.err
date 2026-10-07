@@ -1,0 +1,1 @@
+toolchain/tests/v2/method_value_escape_bad.tin:18:2: error E310 REQUEST_ESCAPE: request memory stored into global 'saved', which outlives the request: wrap the value in keep()

@@ -1,0 +1,19 @@
+package main
+
+// A method value is a closure holding its receiver (#565): stored in a global, it would keep
+// request memory past the request, so it needs keep() like any closure.
+
+type Counter struct {
+	n i64
+}
+
+fn (c Counter) get() i64 {
+	return c.n
+}
+
+mut saved fn() i64 = fn() i64 { return 0 }
+
+fn main() {
+	let c = Counter{n: 1}
+	saved = c.get
+}

@@ -1,0 +1,21 @@
+package main
+
+// A method value's method must exist, and an optional receiver must be checked against nil
+// first (#565).
+
+type Counter struct {
+	n i64
+}
+
+fn (c Counter) get() i64 {
+	return c.n
+}
+
+fn main() {
+	let c = Counter{n: 1}
+	let f = c.nope
+	let o ?Counter = nil
+	let g = o.get
+	_ = f
+	_ = g
+}

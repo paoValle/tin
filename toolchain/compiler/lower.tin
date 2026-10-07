@@ -1890,11 +1890,37 @@ fn chk_select(e i64, want i64) i64 {
 		return ty_int
 	}
 	if kind_of(xt) == K_DYN {
-		err_code_at(pos, "E530 DYN_NOT_YET", "a method value on a dyn value needs the table: the next step (#141)")
-		return ty_int
+		let info = cast(Pair, dyn_shape_method(xt, name))
+		if cast(i64, info) == 0 {
+			let dm = err_code(pos, "E214 METHOD")
+			buf_str(dm, "dyn shape ")
+			buf_str(dm, cast(Decl, xt.gdecl).name)
+			buf_str(dm, " has no method ")
+			buf_str(dm, name)
+			err_end(cast([]u8, dm))
+			return ty_int
+		}
+		let sig = cast(ShapeSig, info.b)
+		return method_value(e, x, cast(i64, xt), name, sig.types, sig.muts, sig.results, i64(sig.bang != 0) | (i64(sig.mutres != 0) << 1))
 	}
 	if kind_of(xt) == K_STRUCT {
 		let i = struct_field(xt, name)
+		let mf = find_fn(xt.name + "." + name)
+		if i < 0 && cast(i64, mf) != 0 && cast(i64, xt.enum_) == 0 {
+			if is_private(name) != 0 && foreign_type(xt) != 0 {
+				private_use(pos, "method", name, type_pkg(xt))
+			}
+			// x.m not called: a method value (#565). Parameter zero is the receiver.
+			mut ps = []i64{}
+			mut ms = []i64{}
+			mut pi = 1
+			for pi < len(mf.ptypes) {
+				ps = append(ps, mf.ptypes[pi])
+				ms = append(ms, mf.muts[pi])
+				pi = pi + 1
+			}
+			return method_value(e, x, cast(i64, xt), name, ps, ms, mf.rtypes, i64(mf.bang != 0) | (i64(mf.mutres != 0) << 1))
+		}
 		if i < 0 {
 			let u = err_code(pos, "E213 FIELD")
 			type_name(cast([]u8, u), xt)
@@ -1911,6 +1937,112 @@ fn chk_select(e i64, want i64) i64 {
 	}
 	err_code_type(pos, "E213 FIELD", "cannot select a field of ", cast(i64, xt), "")
 	return ty_int
+}
+
+// method_value makes x.m, a method that is not called, a closure: it holds x, evaluated now,
+// and calls x.m with its own arguments, so let f = c.get is a fn() i64 (#565). ps, ms and rs
+// are the method's parameter types and mut marks without the receiver, and its results;
+// flags is its bang (1) and mutres (2).
+fn method_value(e i64, x i64, xt i64, name str, ps []i64, ms []i64, rs []i64, flags i64) i64 {
+	let pos = cast(Node, e).pos
+	let bang = flags & 1
+	let mutres = flags >> 1
+	// The closure is checked at once, so "$mv" is the innermost one when its body is.
+	let rsym = cast(Sym, declare_local(pos, "$mv", xt))
+	// The closure may outlive this frame, so the receiver lives in a cell, as a captured let does.
+	give_cell(rsym, pos, "$mv")
+	let csym = cast(Sym, rsym.cell_sym)
+	mut hs = []i64{}
+	hs = append(hs, let_stmt(pos, csym, rt_call(pos, "rt_alloc", args1(mk_int(pos, 8, ty_int)), ty_int)))
+	hs = append(hs, assign_stmt(pos, mk_mem(pos, sym_ref_node(pos, csym), 0, 0, 0, xt), x))
+	let f = fn_new(pos, "func")
+	// The signature's types are resolved already; the closure names them through type
+	// bindings ($T0, $T1, ...), as a generic instance names its type arguments.
+	mut binds = []i64{}
+	mut args = []i64{}
+	mut i = 0
+	for i < len(ps) {
+		let b = buf_new()
+		buf_str(b, "$p")
+		buf_int(b, i)
+		let pn = str(b)
+		f.params = append(f.params, pn)
+		f.ptypes = append(f.ptypes, mv_type(pos, ps[i], mut binds))
+		f.muts = append(f.muts, ms[i])
+		let id = cast(IdentExpr, node_new(EX_IDENT, pos))
+		id.name = pn
+		mut a = cast(i64, id)
+		if ms[i] != 0 {
+			let ma = cast(MutArg, node_new(EX_MUTARG, pos))
+			ma.x = a
+			a = cast(i64, ma)
+		}
+		args = append(args, a)
+		i = i + 1
+	}
+	mut rts = []i64{}
+	for rt in rs {
+		rts = append(rts, mv_type(pos, rt, mut binds))
+	}
+	f.rtypes = rts
+	f.bang = bang
+	f.mutres = mutres
+	let rid = cast(IdentExpr, node_new(EX_IDENT, pos))
+	rid.name = "$mv"
+	let sel = cast(SelectExpr, node_new(EX_SELECT, pos))
+	sel.x = cast(i64, rid)
+	sel.name = name
+	let call = cast(Call, node_new(EX_CALL, pos))
+	call.callee = cast(i64, sel)
+	call.args = cast([]i64, args)
+	mut v = cast(i64, call)
+	if bang != 0 {
+		let tr = cast(TryExpr, node_new(EX_TRY, pos))
+		tr.x = v
+		v = cast(i64, tr)
+	}
+	let body = cast(Block, empty_block(pos))
+	mut stmts = body.stmts
+	if len(rs) - i64(bang != 0) > 0 {
+		let ret = cast(ReturnStmt, node_new(ST_RETURN, pos))
+		ret.value = v
+		stmts = append(stmts, cast(i64, ret))
+	} else {
+		let es = cast(ExprStmt, node_new(ST_EXPR, pos))
+		es.x = v
+		stmts = append(stmts, cast(i64, es))
+	}
+	body.stmts = stmts
+	f.body = cast(i64, body)
+	let lit = cast(FuncLit, node_new(EX_FUNCLIT, pos))
+	lit.fn_ = cast(i64, f)
+	lit.escape = 1
+	let saved = ck_tbind
+	if cast(i64, saved) != 0 {
+		for sb in cast([]i64, saved) {
+			binds = append(binds, sb)
+		}
+	}
+	ck_tbind = binds
+	let ct = chk_funclit(cast(i64, lit))
+	ck_tbind = saved
+	replace_node(e, mk_seq(pos, cast(i64, hs), cast(i64, lit), ct))
+	cast(Node, e).type_ = 0
+	return ct
+}
+
+// mv_type is a type expression naming the resolved type t through a new binding in binds.
+fn mv_type(pos i64, t i64, binds mut []i64) i64 {
+	let b = buf_new()
+	buf_str(b, "$T")
+	buf_int(b, len(binds))
+	let nb = cast(NameBind, calloc(2, 8))
+	nb.name = str(b)
+	nb.val = t
+	binds = append(binds, cast(i64, nb))
+	let tx = cast(TypeExpr, node_new(TX_NAME, pos))
+	cast(TypeName, tx).name = nb.name
+	return cast(i64, tx)
 }
 
 fn lookup_name_local(name str) i64 {

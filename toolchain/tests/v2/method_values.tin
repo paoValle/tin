@@ -1,0 +1,139 @@
+package main
+
+import "constraints"
+import "say"
+import "sift"
+
+// A method that is not called is a method value (#565): a closure that holds its receiver,
+// evaluated where the value is made, and takes the method's other parameters.
+
+type Counter struct {
+	n i64
+}
+
+fn (c Counter) get() i64 {
+	return c.n
+}
+
+fn (c mut Counter) add(k i64) {
+	c.n += k
+}
+
+fn (c Counter) div(d i64) !i64 {
+	if d == 0 {
+		fail "divide by zero"
+	}
+	return c.n / d
+}
+
+fn (c Counter) both() (i64, str) {
+	return c.n, "n"
+}
+
+type ByLen struct {
+	desc bool
+}
+
+fn (b ByLen) cmp(x str, y str) i64 {
+	if b.desc {
+		return len(y) - len(x)
+	}
+	return len(x) - len(y)
+}
+
+type Stack[T constraints.Any] struct {
+	items []T
+}
+
+fn (s mut Stack[T]) push(x T) {
+	s.items = append(s.items, x)
+}
+
+fn (s Stack[T]) size() i64 {
+	return len(s.items)
+}
+
+shape Named {
+	Name() str
+}
+
+type Dog struct {
+	name str
+}
+
+fn (d Dog) Name() str {
+	return d.name
+}
+
+type Handlers struct {
+	on fn(i64)
+}
+
+fn call(f fn() i64) i64 {
+	return f()
+}
+
+fn twice(f fn(i64), k i64) {
+	f(k)
+	f(k)
+}
+
+mut saved fn() i64 = fn() i64 { return -1 }
+
+fn keep_it(c Counter) {
+	saved = keep(c.get)
+}
+
+fn safe(f fn(i64) !i64, d i64) i64 {
+	let v = f(d) catch _ { -1 }
+	return v
+}
+
+fn main() {
+	mut c = Counter{n: 3}
+	let get = c.get
+	say.Line("value", get(), call(c.get))
+	let add = c.add
+	add(4)
+	twice(c.add, 1)
+	say.Line("mut method", c.n, get())
+	let h = Handlers{on: c.add}
+	h.on(10)
+	say.Line("field", c.n)
+	mut table = map[str]fn() i64{}
+	table["get"] = c.get
+	say.Line("map", table["get"]())
+	say.Line("fallible", safe(c.div, 4), safe(c.div, 0))
+	let pair = c.both
+	let (n, s) = pair()
+	say.Line("results", n, s)
+	mut words = []str{"ccc", "a", "bb"}
+	sift.SortFunc(mut words, ByLen{desc: true}.cmp)
+	say.Line("sort", words)
+	mut st = Stack[i64]{items: []i64{}}
+	let push = st.push
+	push(1)
+	push(2)
+	say.Line("generic", st.size(), st.items)
+	let d dyn Named = Dog{name: "rex"}
+	let nm = d.Name
+	say.Line("dyn", nm())
+	// The receiver is the one the value was made from: a later assignment to the variable
+	// does not change it, while a change to the struct itself is seen (structs are references).
+	mut r = Counter{n: 1}
+	let rg = r.get
+	r.n = 2
+	say.Line("same struct", rg())
+	r = Counter{n: 100}
+	say.Line("old receiver", rg(), r.get())
+	keep_it(Counter{n: 42})
+	say.Line("kept", saved())
+	mut fs = []fn() i64{}
+	for i in 0..3 {
+		let k = Counter{n: i * 10}
+		fs = append(fs, k.get)
+	}
+	for f in fs {
+		say.Line("loop", f())
+	}
+}

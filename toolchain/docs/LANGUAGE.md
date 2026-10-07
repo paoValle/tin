@@ -777,6 +777,15 @@ fn main() {
 The receiver comes first and is a parameter like any other: `mut` lets the method modify
 it. Methods are declared on named types in the same package.
 
+A method that is not called is a *method value* (#565): `let get = c.get` is a closure of
+type `fn() i64` that holds `c`, evaluated where the value is made, and calls `get` on it;
+`c.add` with `fn (c mut Counter) add(k i64)` is a `fn(i64)`. Structs are references, so a
+later change to the struct is seen through the value, but assigning another struct to `c`
+is not. A method value is a closure in every other way: it can be passed (`sift.SortFunc(mut
+words, order.cmp)`), stored in fields, maps and slices, and stored in a global with `keep`
+(E310 otherwise). It works on `dyn S` values too (`let name = d.Name`). Method expressions
+(`Counter.get` as a `fn(Counter) i64`) are not part of the language.
+
 ### Types
 
 ```tin
