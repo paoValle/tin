@@ -1305,7 +1305,12 @@ fn dyn_table_add(t Ty, dt Ty, pos i64) i64 {
 	let rec = cast(DynTable, calloc(5, 8))
 	rec.ty = cast(i64, t)
 	rec.dyn_ = cast(i64, dt)
-	rec.keep_ = cast(i64, keep_fn(t))
+	if is_value_struct(t) != 0 {
+		// A value struct's box is kept as a block (#692).
+		rec.keep_ = keepbox_fn(t)
+	} else {
+		rec.keep_ = cast(i64, keep_fn(t))
+	}
 	rec.fns = fns
 	rec.slot = -1
 	dyn_tables = append(dyn_tables, cast(i64, rec))

@@ -1,3 +1,3 @@
-toolchain/tests/v2/value_refs_bad.tin:15:6: error E295 NOT_YET: a value struct field of type func() i64 is not built yet (#692): a value struct holds numbers, bool, str, slices, maps, structs, pointer optionals and other value structs, and an inline array holds none of the references
-toolchain/tests/v2/value_refs_bad.tin:19:7: error E295 NOT_YET: a value struct field of type [2]str is not built yet (#692): a value struct holds numbers, bool, str, slices, maps, structs, pointer optionals and other value structs, and an inline array holds none of the references
-toolchain/tests/v2/value_refs_bad.tin:24:13: error E237 COMPARE: cannot compare Entry values: a field holds ?str, which has no value equality
+toolchain/tests/v2/value_refs_bad.tin:20:13: error E237 COMPARE: cannot compare Entry values: a field holds ?str, which has no value equality
+toolchain/tests/v2/value_refs_bad.tin:21:2: error E203 NO_ZERO_VALUE: field ids of type func() i64 must be set (it cannot be nil; declare it ?T to allow that)
+toolchain/tests/v2/value_refs_bad.tin:23:10: error E316 ARENA_VALUE: an arena block's value is copied out of the arena, but type Rows holds a func or dyn value, which cannot be copied: return the data it needs instead

@@ -670,6 +670,10 @@ fn value_has_ref(t Ty) i64 {
 	if cast(i64, t) == 0 {
 		return 0
 	}
+	if t.kind == K_VARRAY && value_ref_field(cast(Ty, t.elem)) != 0 {
+		// An inline array of references (#692).
+		return 1
+	}
 	if t.kind == K_VARRAY || opt_value(t) != 0 {
 		return value_has_ref(cast(Ty, t.elem))
 	}
@@ -680,13 +684,19 @@ fn value_has_ref(t Ty) i64 {
 	mut i = 0
 	for i < len(t.fields) {
 		let ft = cast(Ty, cast(Field, t.fields[i]).ty)
-		let fk = kind_of(ft)
-		if fk == K_STRING || fk == K_SLICE || fk == K_MAP || (fk == K_STRUCT && is_value_struct(ft) == 0) || (fk == K_OPT && opt_scalar(ft) == 0) || value_has_ref(ft) != 0 {
+		if value_ref_field(ft) != 0 || value_has_ref(ft) != 0 {
 			return 1
 		}
 		i = i + 1
 	}
 	return 0
+}
+
+// value_ref_field reports a field or inline array element of type ft that is itself a reference:
+// a str, slice, map, func, dyn value, reference struct or pointer optional.
+fn value_ref_field(ft Ty) i64 {
+	let fk = kind_of(ft)
+	return i64(fk == K_STRING || fk == K_SLICE || fk == K_MAP || fk == K_FUNC || fk == K_DYN || (fk == K_STRUCT && is_value_struct(ft) == 0) || (fk == K_OPT && opt_scalar(ft) == 0))
 }
 
 // type_align is the alignment of a value in memory: a number's width, a value struct's

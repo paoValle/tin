@@ -1,5 +1,5 @@
 toolchain/tests/v2/value_ref_fields_bad.tin:26:2: error E203 NO_ZERO_VALUE: field owner of type Node must be set (it cannot be nil; declare it ?T to allow that)
-toolchain/tests/v2/value_ref_fields_bad.tin:27:13: error E203 NO_ZERO_VALUE: make with a length would fill the slice with Row values whose map or struct field is nil: use make([]T, 0, n) and append
-toolchain/tests/v2/value_ref_fields_bad.tin:28:12: error E203 NO_ZERO_VALUE: make with a length would fill the slice with Index values whose map or struct field is nil: use make([]T, 0, n) and append
+toolchain/tests/v2/value_ref_fields_bad.tin:27:13: error E203 NO_ZERO_VALUE: make with a length would fill the slice with Row values whose map, struct, func or dyn field is nil: use make([]T, 0, n) and append
+toolchain/tests/v2/value_ref_fields_bad.tin:28:12: error E203 NO_ZERO_VALUE: make with a length would fill the slice with Index values whose map, struct, func or dyn field is nil: use make([]T, 0, n) and append
 toolchain/tests/v2/value_ref_fields_bad.tin:30:13: error E203 NO_ZERO_VALUE: field owner of type Node must be set (it cannot be nil; declare it ?T to allow that)
 toolchain/tests/v2/value_ref_fields_bad.tin:32:62: error E237 COMPARE: cannot compare Bag values: a field holds []i64, which has no value equality

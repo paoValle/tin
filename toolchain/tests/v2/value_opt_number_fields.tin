@@ -1,0 +1,42 @@
+package main
+
+import "argo"
+import "say"
+
+// #692: a value struct may hold optional numbers and bools, two words each, nil when zeroed, in
+// inline arrays too; they narrow, print and encode to JSON as optionals do.
+
+type Reading value struct {
+	at    i64
+	temp  ?f64
+	count ?i64
+	ok    ?bool
+	tags  [2]?i32
+}
+
+mut last Reading
+
+fn main() {
+	mut r Reading
+	say.Line(r, r.temp == nil)
+	r.temp = 21.5
+	r.count = 3
+	r.tags[1] = 7
+	if let t = r.temp {
+		say.Line("temp", t)
+	}
+	let rs = make([]Reading, 2)
+	mut all = append(rs, r)
+	all[0].ok = true
+	say.Line(all, all[2].count ?? -1, all[0].count ?? -1)
+	last = r
+	mut b = []u8{}
+	argo.Put(mut b, r)
+	say.Line(str(b))
+	mut back Reading
+	argo.Get(str(b), mut back) catch err {
+		say.Line("bad", err)
+		return
+	}
+	say.Line(back, last)
+}

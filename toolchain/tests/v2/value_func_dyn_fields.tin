@@ -1,0 +1,79 @@
+package main
+
+import "hearth"
+import "say"
+
+// #692: a value struct may hold a func, a dyn value and an optional dyn value. Copies share them,
+// keep keeps them, and each long-lived slot that holds one counts them, so a hundred rounds of
+// replacements leave the counted blocks where they were; a kept closure that captured one keeps
+// them too.
+
+shape Named {
+	Name() str
+}
+
+type Dog struct {
+	n str
+}
+
+fn (d Dog) Name() str {
+	return d.n
+}
+
+type Op value struct {
+	tag str
+	f   fn(i64) i64
+	who dyn Named
+	alt ?dyn Named
+}
+
+mut current = Op{tag: "init", f: fn(v i64) i64 { return v }, who: Dog{n: "init"}}
+mut table = []Op{}
+
+fn make_op(k i64, name str) Op {
+	let label = "x{k}"
+	return Op{tag: label, f: fn(v i64) i64 { return v * k + len(label) }, who: Dog{n: name}}
+}
+
+fn round(r i64) {
+	current = keep(make_op(r, "cur{r}"))
+	current.who = keep(Dog{n: "who{r}"})
+	current.alt = keep(Dog{n: "alt{r}"})
+	table = keep([]Op{make_op(1, "a{r}"), make_op(2, "b{r}")})
+	table[1] = keep(make_op(3, "c{r}"))
+	table[0].f = keep(fn(v i64) i64 { return v - r })
+}
+
+fn show() {
+	mut alt = "nil"
+	if let a = current.alt {
+		alt = a.Name()
+	}
+	say.Line(current.tag, current.f(10), current.who.Name(), alt, table[0].f(100), table[1].who.Name(), table[1].f(1))
+}
+
+fn main() {
+	say.Line(current.tag, current.f(3), current.who.Name())
+	round(0)
+	show()
+	hearth.Reset()
+	round(1)
+	hearth.Reset()
+	for r in 2..102 {
+		round(r)
+		hearth.Reset()
+	}
+	let (b0, _, _) = hearth.RcStats()
+	for r in 102..202 {
+		round(r)
+		hearth.Reset()
+	}
+	show()
+	let (b1, _, _) = hearth.RcStats()
+	say.Line("counted blocks steady:", b1 == b0)
+	// A kept closure that captured one.
+	let o = make_op(7, "cap")
+	let g = keep(fn() i64 { return o.f(1) })
+	hearth.Reset()
+	say.Line(g())
+}

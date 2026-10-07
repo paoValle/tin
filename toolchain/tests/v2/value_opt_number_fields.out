@@ -1,0 +1,5 @@
+{0 <nil> <nil> <nil> [<nil> <nil>]} true
+temp 21.5
+[{0 <nil> <nil> true [<nil> <nil>]} {0 <nil> <nil> <nil> [<nil> <nil>]} {0 21.5 3 <nil> [<nil> 7]}] 3 -1
+{"at":0,"temp":21.5,"count":3,"ok":null,"tags":[null,7]}
+{0 21.5 3 <nil> [<nil> 7]} {0 21.5 3 <nil> [<nil> 7]}

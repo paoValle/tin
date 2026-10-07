@@ -360,7 +360,7 @@ fn resolve_type(tx i64) i64 {
 	if k == TX_CHAN {
 		let ct = resolve_type(cast(TypeExpr, tx).a)
 		if is_value_struct(cast(Ty, ct)) != 0 {
-			value_not_yet(cast(Node, tx).pos, ct, " cannot travel on a channel yet (#692)")
+			value_not_yet(cast(Node, tx).pos, ct, " cannot travel on a channel (edition 0 code) yet: send a reference struct that holds it")
 		}
 		return chan_of(ct)
 	}
@@ -643,7 +643,7 @@ fn array_make(pos i64, t Ty, n i64) i64 {
 	if (ek == K_STRUCT || ek == K_MAP || ek == K_FUNC) && is_value_struct(cast(Ty, t.elem)) == 0 {
 		err_code_type(pos, "E203 NO_ZERO_VALUE", "an array of ", t.elem, " would start with nil elements: use a slice and append")
 	} else if is_value_struct(cast(Ty, t.elem)) != 0 && value_no_zero(cast(Ty, t.elem)) != 0 {
-		err_code_type(pos, "E203 NO_ZERO_VALUE", "an array of ", t.elem, " would start with nil fields (a map or struct field cannot be nil): use a slice and append")
+		err_code_type(pos, "E203 NO_ZERO_VALUE", "an array of ", t.elem, " would start with nil fields (a map, struct, func or dyn field cannot be nil): use a slice and append")
 	}
 	if ek == K_STRING {
 		return rt_call(pos, "rt_slice_make_str", args2(nn, mk_int(pos, n, ty_int)), cast(i64, t))
@@ -690,9 +690,14 @@ fn value_no_zero(t Ty) i64 {
 	}
 	mut i = 0
 	for i < len(t.fields) {
-		let ft = cast(Ty, cast(Field, t.fields[i]).ty)
+		mut ft = cast(Ty, cast(Field, t.fields[i]).ty)
+		for kind_of(ft) == K_VARRAY {
+			// An inline array's elements (#692).
+			ft = cast(Ty, ft.elem)
+		}
 		let fk = kind_of(ft)
-		if fk == K_MAP || (fk == K_STRUCT && is_value_struct(ft) == 0) {
+		if fk == K_MAP || fk == K_FUNC || fk == K_DYN || (fk == K_STRUCT && is_value_struct(ft) == 0) {
+			// (a func or dyn field cannot be nil either, #692)
 			return cast(i64, ft)
 		}
 		if fk == K_STRUCT && is_value_struct(ft) != 0 && value_no_zero(ft) != 0 {
@@ -712,17 +717,27 @@ fn value_str_offsets(t Ty, base i64, offs []i64, slices []i64) {
 	}
 	mut i = 0
 	for i < len(t.fields) {
-		let ft = cast(Ty, cast(Field, t.fields[i]).ty)
-		let off = base + field_offset(t, i)
-		if kind_of(ft) == K_STRING {
-			offs = append(offs, off)
-		} else if kind_of(ft) == K_SLICE {
-			slices = append(slices, off)
-			slices = append(slices, elem_size(ft))
-		} else if kind_of(ft) == K_STRUCT && is_value_struct(ft) != 0 {
-			value_str_offsets(ft, off, offs, slices)
-		}
+		value_str_at(cast(Ty, cast(Field, t.fields[i]).ty), base + field_offset(t, i), offs, slices)
 		i = i + 1
+	}
+}
+
+// value_str_at adds the offsets value_str_offsets collects for a field of type ft at off, and for
+// each element of an inline array (#692).
+fn value_str_at(ft Ty, off i64, offs []i64, slices []i64) {
+	if kind_of(ft) == K_STRING {
+		offs = append(offs, off)
+	} else if kind_of(ft) == K_SLICE {
+		slices = append(slices, off)
+		slices = append(slices, elem_size(ft))
+	} else if kind_of(ft) == K_STRUCT && is_value_struct(ft) != 0 {
+		value_str_offsets(ft, off, offs, slices)
+	} else if kind_of(ft) == K_VARRAY && value_has_ref(ft) != 0 {
+		mut j = 0
+		for j < ft.key {
+			value_str_at(cast(Ty, ft.elem), off + j * type_width(cast(Ty, ft.elem)), offs, slices)
+			j = j + 1
+		}
 	}
 }
 
@@ -838,23 +853,21 @@ fn resolve_fields(st Ty, tx TypeExpr) {
 		}
 	}
 	if st.value != 0 {
-		// A value struct holds numbers, bool, str, pointer optionals and other value structs;
-		// the other references come with #669, when the memory model counts what its bytes
-		// point at. An inline array holds numbers, bool and value structs of those.
+		// A value struct, and an inline array in one, holds numbers, bool, value structs and the
+		// references the memory model counts in its bytes (#669, #692).
 		i = 0
 		for i < len(fs) {
 			mut ft = cast(Ty, cast(Field, fs[i]).ty)
-			let inline = i64(kind_of(ft) == K_VARRAY)
 			for kind_of(ft) == K_VARRAY {
 				ft = cast(Ty, ft.elem)
 			}
 			let fk = kind_of(ft)
-			let refok = i64(inline == 0 && (fk == K_STRING || fk == K_SLICE || fk == K_MAP || (fk == K_STRUCT && is_value_struct(ft) == 0) || (fk == K_OPT && opt_scalar(ft) == 0 && is_value_struct(cast(Ty, ft.elem)) == 0)))
-			if (fk != K_INT && fk != K_FLOAT && fk != K_BOOL && is_value_struct(ft) == 0 && refok == 0) || (inline != 0 && value_has_ref(ft) != 0) {
+			let refok = i64(fk == K_STRING || fk == K_SLICE || fk == K_MAP || fk == K_FUNC || fk == K_DYN || (fk == K_STRUCT && is_value_struct(ft) == 0) || (fk == K_OPT && opt_scalar(ft) == 0 && is_value_struct(cast(Ty, ft.elem)) == 0))
+			if fk != K_INT && fk != K_FLOAT && fk != K_BOOL && is_value_struct(ft) == 0 && refok == 0 && opt_scalar(ft) == 0 {
 				let m = err_code(cast(Node, cast(ParsedField, src[i]).ty).pos, "E295 NOT_YET")
 				buf_str(m, "a value struct field of type ")
 				type_name(cast([]u8, m), cast(Ty, cast(Field, fs[i]).ty))
-				buf_str(m, " is not built yet (#692): a value struct holds numbers, bool, str, slices, maps, structs, pointer optionals and other value structs, and an inline array holds none of the references")
+				buf_str(m, " is not built yet (#692): a value struct holds numbers, bool, str, slices, maps, structs, funcs, dyn values, pointer optionals, other value structs and inline arrays of those")
 				err_end(cast([]u8, m))
 			}
 			i = i + 1
@@ -7189,10 +7202,6 @@ fn check_assignable(e Node, from i64, to Ty) {
 		}
 		return
 	}
-	if (kind_of(to) == K_DYN || (kind_of(to) == K_OPT && kind_of(cast(Ty, to.elem)) == K_DYN)) && is_value_struct(cast(Ty, from)) != 0 {
-		value_not_yet(e.pos, from, " cannot be a dyn object yet (#692)")
-		return
-	}
 	if kind_of(to) == K_DYN && kind_of(cast(Ty, from)) != K_DYN {
 		if kind_of(cast(Ty, from)) != K_STRUCT {
 			err_code_type(e.pos, "E516 DYN_OBJECT", "only a struct or enum can be a dyn object, not ", from, "")
@@ -7201,7 +7210,11 @@ fn check_assignable(e Node, from i64, to Ty) {
 		let before = error_count
 		check_shape(e.pos, cast(Ty, from), cast(Decl, to.gdecl), to.targs)
 		if error_count == before {
-			let x = expr_clone(cast(i64, e))
+			mut x = expr_clone(cast(i64, e))
+			if is_value_struct(cast(Ty, from)) != 0 {
+				// A value struct is boxed (#692).
+				x = box_dyn_value(e.pos, x, cast(Ty, from))
+			}
 			let cv = cast(Conv, mk_conv(e.pos, x, CV_DYN, cast(i64, to)))
 			cv.dyn_table = dyn_table_add(cast(Ty, from), cast(Ty, dyn_type(to)), e.pos)
 			replace_node(cast(i64, e), cast(i64, cv))
@@ -7216,7 +7229,11 @@ fn check_assignable(e Node, from i64, to Ty) {
 		let before = error_count
 		check_shape(e.pos, cast(Ty, from), cast(Decl, cast(Ty, to.elem).gdecl), cast(Ty, to.elem).targs)
 		if error_count == before {
-			let x = expr_clone(cast(i64, e))
+			mut x = expr_clone(cast(i64, e))
+			if is_value_struct(cast(Ty, from)) != 0 {
+				// A value struct is boxed (#692).
+				x = box_dyn_value(e.pos, x, cast(Ty, from))
+			}
 			let cv = cast(Conv, mk_conv(e.pos, x, CV_DYN, cast(i64, to)))
 			cv.dyn_table = dyn_table_add(cast(Ty, from), cast(Ty, dyn_type(to)), e.pos)
 			replace_node(cast(i64, e), cast(i64, cv))
@@ -10487,6 +10504,84 @@ fn narrow_kill(target i64) {
 // ---- keep: deep copies into the long-lived heap ----
 shared mut keep_types []i64
 shared mut keep_fns []Fn
+shared mut keepbox_types []i64
+shared mut keepbox_fns []i64
+
+// keepbox_fn returns (generating on first use) keepbox$N(x i64) i64, the keep of a dyn object
+// that is a value struct of type t in its box (#692): a long-lived block with a copy of its
+// bytes, whose fields are kept and counted by the block, as a reference struct's are.
+fn keepbox_fn(t Ty) i64 {
+	if cast(i64, keepbox_types) == 0 {
+		keepbox_types = []i64{}
+		keepbox_fns = []i64{}
+	}
+	mut i = 0
+	for i < len(keepbox_types) {
+		if keepbox_types[i] == cast(i64, t) {
+			return keepbox_fns[i]
+		}
+		i = i + 1
+	}
+	mut names = []str{}
+	names = append(names, "x")
+	mut types = []i64{}
+	types = append(types, ty_int)
+	mut rtypes = []i64{}
+	rtypes = append(rtypes, ty_int)
+	let f = lifted_fn("keepbox", names, cast([]i64, types), cast(i64, rtypes))
+	keepbox_types = append(keepbox_types, cast(i64, t))
+	keepbox_fns = append(keepbox_fns, cast(i64, f))
+	let saved_fn = ck_fn
+	ck_fn = cast(Fn, f)
+	let pos = 0
+	let x = cast([]i64, f.locals)[0]
+	mut body = cast(Block, f.body).stmts
+	let out = temp(pos, rt_call(pos, "rt_keep_raw", args2(sym_ref_node(pos, cast(Sym, x)), mk_int(pos, t.size, ty_int)), ty_int), ty_int)
+	body = append(body, cast(i64, out))
+	mut fi = 0
+	for fi < len(t.fields) {
+		let ft = field_type(t, fi)
+		if is_ref(ft) != 0 || is_dyn_value(cast(Ty, ft)) != 0 || value_has_ref(cast(Ty, ft)) != 0 {
+			let src = mk_mem(pos, sym_ref_node(pos, cast(Sym, out.sym)), 0, 0, field_offset(t, fi), ft)
+			body = append(body, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, out.sym)), cast(i64, t), fi), keep_call(pos, keep_fn(cast(Ty, ft)), src, ft)))
+			// The box owns what it holds (#176).
+			if rc_counted(cast(Ty, ft)) != 0 {
+				body = append(body, expr_stmt(rc_inc_call(pos, mk_mem(pos, sym_ref_node(pos, cast(Sym, out.sym)), 0, 0, field_offset(t, fi), ft))))
+			}
+		}
+		fi = fi + 1
+	}
+	let ret = cast(ReturnStmt, node_new(ST_RETURN, pos))
+	ret.value = sym_ref_node(pos, cast(Sym, out.sym))
+	body = append(body, cast(i64, ret))
+	ck_fn = saved_fn
+	return cast(i64, f)
+}
+
+// box_dyn_value is value struct x of type t as a dyn object (#692): its bytes copied into a block
+// of request memory, whose address is the object word. Its methods take that address as their
+// receiver, as a value struct parameter's word holds one.
+fn box_dyn_value(pos i64, x i64, t Ty) i64 {
+	let kept_plain = i64(cast(Node, x).region == R_OWNED && value_has_ref(t) == 0)
+	if kept_plain != 0 || (cast(Node, x).kind == EX_CALL && cast(Call, x).fn_ == cast(i64, keep_fn(t))) {
+		// keep(v) as a dyn object: the box itself is kept, a long-lived block (keepbox). The
+		// sequence is the value struct whose address the call returns, and is long-lived.
+		mut v = x
+		if kept_plain == 0 {
+			v = cast(Call, x).args[0]
+		}
+		let kb = call_fn(pos, cast(Fn, keepbox_fn(t)), args1(mk_conv(pos, v, CV_SAME, ty_int)), ty_int)
+		let ks = mk_seq(pos, cast(i64, []i64{}), cast(i64, kb), cast(i64, t))
+		cast(Node, ks).region = R_OWNED
+		return ks
+	}
+	mut stmts = []i64{}
+	let b = temp(pos, rt_call(pos, "rt_alloc", args1(mk_int(pos, t.size, ty_int)), ty_int), ty_int)
+	stmts = append(stmts, cast(i64, b))
+	stmts = append(stmts, assign_stmt(pos, mk_mem(pos, sym_ref_node(pos, cast(Sym, b.sym)), 0, 0, 0, cast(i64, t)), x))
+	// The value struct is the block's address, and its region the block's.
+	return mk_seq(pos, cast(i64, stmts), sym_ref_node(pos, cast(Sym, b.sym)), cast(i64, t))
+}
 
 // keep_fn returns (generating on first use) keep$N(x T) T, which copies x and everything
 // it references into the core's ingot heap.
@@ -10695,6 +10790,14 @@ fn keep_fn(t Ty) Fn {
 			vi = vi + 1
 		}
 		ret.value = sym_ref_node(pos, cast(Sym, out.sym))
+	} else if k == K_VARRAY {
+		// An inline array of references (#692): a copy whose elements are kept.
+		let out = temp(pos, sym_ref_node(pos, x), cast(i64, t))
+		body = append(body, cast(i64, out))
+		let lp = varray_loop(pos, body, sym_ref_node(pos, cast(Sym, out.sym)), t)
+		mut ls = cast(Block, lp.a).stmts
+		ls = append(ls, assign_stmt(pos, lp.b, keep_call(pos, keep_fn(cast(Ty, t.elem)), varray_elem_again(pos, lp.b), t.elem)))
+		ret.value = sym_ref_node(pos, cast(Sym, out.sym))
 	} else if is_value_struct(t) != 0 {
 		// A value struct with str fields (#669): a copy whose strs are kept. It is a value, not a
 		// slot: whoever stores it in long-lived memory counts its fields.
@@ -10703,7 +10806,7 @@ fn keep_fn(t Ty) Fn {
 		mut fi = 0
 		for fi < len(t.fields) {
 			let ft = field_type(t, fi)
-			if is_ref(ft) != 0 || value_has_ref(cast(Ty, ft)) != 0 {
+			if is_ref(ft) != 0 || is_dyn_value(cast(Ty, ft)) != 0 || value_has_ref(cast(Ty, ft)) != 0 {
 				let src = mk_mem(pos, sym_ref_node(pos, cast(Sym, out.sym)), 0, 0, field_offset(t, fi), ft)
 				body = append(body, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, out.sym)), cast(i64, t), fi), keep_call(pos, keep_fn(cast(Ty, ft)), src, ft)))
 			}
@@ -11019,6 +11122,16 @@ fn vinc_fn(t i64) i64 {
 		ck_fn = saved_fn
 		return cast(i64, f)
 	}
+	if vt.kind == K_VARRAY {
+		// An inline array: each element's (#692).
+		if rc_counted(cast(Ty, vt.elem)) != 0 {
+			let lp = varray_loop(pos, body, sym_ref_node(pos, cast(Sym, x)), vt)
+			mut ls = cast(Block, lp.a).stmts
+			ls = append(ls, expr_stmt(rc_inc_call(pos, lp.b)))
+		}
+		ck_fn = saved_fn
+		return cast(i64, f)
+	}
 	mut fi = 0
 	for fi < len(vt.fields) {
 		let ft = field_type(vt, fi)
@@ -11029,6 +11142,13 @@ fn vinc_fn(t i64) i64 {
 	}
 	ck_fn = saved_fn
 	return cast(i64, f)
+}
+
+// varray_elem_again is another reference to the element varray_loop made (lower.tin), for a walker
+// that stores into the element what it computed from it (#692).
+fn varray_elem_again(pos i64, el i64) i64 {
+	let m = cast(MemExpr, el)
+	return mk_mem(pos, sym_ref_node(pos, cast(Sym, cast(IdentExpr, m.base).ref)), sym_ref_node(pos, cast(Sym, cast(IdentExpr, m.index).ref)), m.scale, 0, cast(Node, el).type_)
 }
 
 // rc_drop_body appends the releases of x's children to body: what one long-lived
@@ -11084,6 +11204,13 @@ fn rc_drop_body(pos i64, body []i64, x i64, t Ty) {
 		mut vs4 = cast(Block, ifs.then).stmts
 		vs4 = append(vs4, expr_stmt(rc_dec_call(pos, opt_payload(pos, x, t.elem), drop_fn(t.elem))))
 		body = append(body, cast(i64, ifs))
+	} else if k == K_VARRAY {
+		// An inline array: each element's (#692).
+		if rc_counted(cast(Ty, t.elem)) != 0 {
+			let lp = varray_loop(pos, body, x, t)
+			mut ls = cast(Block, lp.a).stmts
+			ls = append(ls, expr_stmt(rc_dec_call(pos, lp.b, drop_fn(t.elem))))
+		}
 	} else if k == K_OPT {
 		let ifs = cast(IfStmt, node_new(ST_IF, pos))
 		ifs.cond = mk_bin(pos, "!=", x, mk_int(pos, 0, cast(i64, t)), ty_bool)
@@ -11320,6 +11447,14 @@ fn arenacopy_fn(t Ty) Fn {
 			w.body = cast(i64, wb)
 			body = append(body, cast(i64, w))
 		}
+		ret.value = sym_ref_node(pos, cast(Sym, out.sym))
+	} else if k == K_VARRAY {
+		// An inline array of references (#692): a copy whose elements are copied out.
+		let out = temp(pos, sym_ref_node(pos, x), cast(i64, t))
+		body = append(body, cast(i64, out))
+		let lp = varray_loop(pos, body, sym_ref_node(pos, cast(Sym, out.sym)), t)
+		mut ls = cast(Block, lp.a).stmts
+		ls = append(ls, assign_stmt(pos, lp.b, keep_call(pos, arenacopy_fn(cast(Ty, t.elem)), varray_elem_again(pos, lp.b), t.elem)))
 		ret.value = sym_ref_node(pos, cast(Sym, out.sym))
 	} else if k == K_STRUCT && cast(i64, t.enum_) != 0 {
 		let out = temp(pos, rt_call(pos, "rt_arena_raw", args2(sym_ref_node(pos, x), mk_int(pos, t.size, ty_int)), cast(i64, t)), cast(i64, t))

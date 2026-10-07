@@ -1,0 +1,5 @@
+toolchain/tests/v2/value_func_dyn_bad.tin:37:2: error E310 REQUEST_ESCAPE: request memory stored into global 'op', which outlives the request: wrap the value in keep()
+toolchain/tests/v2/value_func_dyn_bad.tin:38:4: error E310 REQUEST_ESCAPE: request memory stored into global 'op', which outlives the request: wrap the value in keep()
+toolchain/tests/v2/value_func_dyn_bad.tin:39:4: error E310 REQUEST_ESCAPE: request memory stored into global 'op', which outlives the request: wrap the value in keep()
+toolchain/tests/v2/value_func_dyn_bad.tin:40:12: error E310 REQUEST_ESCAPE: request memory stored into global 'tags', which outlives the request: wrap the value in keep()
+toolchain/tests/v2/value_func_dyn_bad.tin:41:2: error E310 REQUEST_ESCAPE: request memory stored into global 'one', which outlives the request: wrap the value in keep()

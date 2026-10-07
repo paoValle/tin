@@ -332,19 +332,22 @@ argument, a result), so two names never share a value. (`value` is a contextual 
   u.b` ranges over a copy, and it compares, hashes, prints (`[a b c]`) and encodes to JSON as
   its elements do. It cannot be sliced or appended to. Outside a value struct `[N]T` keeps its
   meaning, a slice that starts with N zero elements.
-- A value struct holds numbers, `bool`, inline arrays of those, `str`, slices, maps, structs,
-  pointer optionals (`?str`, `?Node`) and other value structs (#669). A `str` field starts as
-  `""` and a slice field as an empty slice; a map or struct field cannot be nil, so a value
-  struct holding one has no zero value (E203 for `mut v V`, `make([]V, n)` and `[N]V`). Copying
+- A value struct holds numbers, `bool`, `str`, slices, maps, structs, funcs, `dyn` values,
+  optionals (`?str`, `?Node`, `?f64`, `?dyn S`), other value structs and inline arrays of any of
+  these (#669, #692). A `str` field or element starts as `""`, a slice as an empty slice and an
+  optional as nil; a map, struct, func or `dyn` field cannot be nil, so a value struct holding
+  one has no zero value (E203 for `mut v V`, `make([]V, n)` and `[N]V`). Copying
   the value copies each field's word, so strings, slices and objects are shared as they always
   are; `type Tree value struct { kids []Tree }` is how a recursive value is built. Stored into
   long-lived memory it follows the rule for its fields: `keep` it first (E310 otherwise), and
   each long-lived slot that holds it (a global, a global slice's element, a field of a kept
   object) counts what its fields point at, so a replaced value gives them back; a kept closure
-  that captured one keeps its fields, and an `arena` block's value has them copied out. A func
-  or `dyn` field,
-  a reference in an inline array, a channel element and a `dyn` object of a value struct are
-  E295 (#692, design/design_layouts.md).
+  that captured one keeps its fields, and an `arena` block's value has them copied out (one with
+  a func or `dyn` field cannot be an arena's value, E316). A channel element of a value struct,
+  in edition 0 code, is E295 (design/design_layouts.md).
+- A value struct can be a `dyn` object (#692): it is boxed, its bytes copied into a block whose
+  address its methods take as their receiver, so a `mut` method changes the box, not the value
+  it was made from. `keep` of the `dyn` value, or `keep(v)` converted to one, keeps the box.
 - `?P` of a value struct `P` is a value too (#669): a tag word and `P`'s bytes, stored inline
   and copied like `P`, nil when zeroed, so `make([]?P, n)` holds n nils and a `?P` field
   needs no initializer. It narrows like any optional (`if x != nil`, `if let p = x`, `x ?? d`);

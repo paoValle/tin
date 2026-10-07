@@ -2,9 +2,9 @@ package main
 
 import "say"
 
-// #669: what a value struct with a str field cannot do yet: a func field and a str in an inline
-// array are E295, and an optional field has no == (the region rules for a kept one are in
-// value_refs_escape_bad).
+// #669: what a value struct with references cannot do: an optional field has no ==, and a func
+// field cannot be nil, so the value has no zero value, nor be copied out of an arena (#692; the
+// region rules for a kept one are in value_refs_escape_bad and value_func_dyn_bad).
 
 type Entry value struct {
 	key  str
@@ -15,11 +15,13 @@ type Rows value struct {
 	ids fn() i64
 }
 
-type Codes value struct {
-	tags [2]str
-}
-
 fn main() {
 	let e = Entry{key: "a"}
 	say.Line(e == e)
+	mut r Rows
+	_ = r
+	let a = arena {
+		Rows{ids: fn() i64 { return 1 }}
+	}
+	_ = a
 }

@@ -2220,9 +2220,8 @@ Fix: end each block arm with its value, or leave from it.
 ### E295 NOT_YET
 
 A form the parser reads but the checker does not build yet: a generic tuple alias, or a value
-struct (#631) where it does not go yet (#692). Such places are a func or `dyn` field inside it,
-a reference in an inline array, a channel element and a `dyn` object. Until it is, write the result list out, or
-store the value struct's fields.
+struct (#631) as a channel element in edition 0 code. Until it is, write the result list out, or
+send a reference struct holding the value.
 
 ```tin edition=1
 package main

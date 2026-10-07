@@ -1,0 +1,80 @@
+package main
+
+import "hearth"
+import "say"
+
+// #692: an inline array in a value struct may hold references: strs and slices start as "" and
+// empty slices, optionals as nil; keep, the counted slots of long-lived memory and arenas follow
+// each element, and an array of strs compares and hashes by its strings.
+
+type Tags value struct {
+	id    i64
+	names [3]str
+	lists [2][]i64
+}
+
+type Key value struct {
+	parts [2]str
+	n     i32
+}
+
+type Row value struct {
+	t    Tags
+	opt  [2]?str
+	more [2]Tags
+}
+
+mut kept Row
+mut rows = []Row{}
+
+fn round(r i64) {
+	mut x Row
+	x.t.names[0] = "a{r}"
+	x.t.names[2] = "c{r}"
+	x.t.lists[1] = []i64{r, r + 1}
+	x.opt[1] = "o{r}"
+	x.more[1].names[1] = "m{r}"
+	kept = keep(x)
+	kept.t.names[1] = keep("b{r}")
+	rows = keep([]Row{x, x})
+	rows[1].more[0].names[2] = keep("z{r}")
+}
+
+fn main() {
+	mut z Row
+	say.Line(len(z.t.names[0]), z.t.names, len(z.t.lists[0]), z.opt[0] == nil, z)
+	let zs = make([]Tags, 2)
+	say.Line(zs)
+	mut m = map[Key]i64{}
+	mut k Key
+	k.parts[0] = "key"
+	m[k] = 5
+	mut k2 Key
+	k2.parts[0] = "k" + "ey"
+	k2.parts[1] = ""
+	say.Line(m[k2], k == k2, k2)
+	round(0)
+	say.Line(kept.t.names, kept.t.lists, rows[1].more[0].names, kept.opt[1] ?? "nil")
+	hearth.Reset()
+	round(1)
+	hearth.Reset()
+	for r in 2..102 {
+		round(r)
+		hearth.Reset()
+	}
+	let (b0, _, _) = hearth.RcStats()
+	for r in 102..202 {
+		round(r)
+		hearth.Reset()
+	}
+	say.Line(kept.t.names, kept.t.lists, rows[1].more[0].names, rows[0].more[1].names, kept.opt[1] ?? "nil")
+	let (b1, _, _) = hearth.RcStats()
+	say.Line("counted blocks steady:", b1 == b0)
+	let a = arena {
+		mut t Tags
+		t.names[1] = "arena"
+		t.lists[0] = []i64{7}
+		t
+	}
+	say.Line(a.names, a.lists)
+}

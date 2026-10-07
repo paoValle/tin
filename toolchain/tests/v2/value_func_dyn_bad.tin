@@ -1,0 +1,46 @@
+package main
+
+// #692: request memory in a value struct's func, dyn and inline-array fields, or a value struct
+// boxed as a dyn object, stored into long-lived memory without keep is E310 (an arena block's
+// value holding a func is in value_refs_bad).
+
+shape Named {
+	Name() str
+}
+
+type Dog struct {
+	n str
+}
+
+fn (d Dog) Name() str {
+	return d.n
+}
+
+type Op value struct {
+	f   fn(i64) i64
+	who dyn Named
+}
+
+type Tags value struct {
+	names [2]str
+}
+
+fn (t Tags) Name() str {
+	return t.names[0]
+}
+
+mut op = Op{f: fn(v i64) i64 { return v }, who: Dog{n: "init"}}
+mut tags Tags
+mut one ?dyn Named = nil
+
+fn set(k i64) {
+	op = Op{f: fn(v i64) i64 { return v * k }, who: Dog{n: "x"}}
+	op.f = fn(v i64) i64 { return v + k }
+	op.who = Dog{n: "y{k}"}
+	tags.names[1] = "t{k}"
+	one = Tags{}
+}
+
+fn main() {
+	set(1)
+}

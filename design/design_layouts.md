@@ -174,6 +174,14 @@ then carries pointers that the memory model must see:
 - **`keep`** copies the value and keeps each reference field (a `keep$N` that takes and returns
   the value).
 
+**As built (#669, #692).** The references are `str`, slices, maps, reference structs, funcs,
+`dyn` values and optionals, in fields and in inline arrays: the walkers that follow fields
+(`drop$N`, `vinc$N`, `keep$N`, `arenacopy$N`, the zero values) follow an inline array's elements
+too. A value struct as a `dyn` object is boxed: a block with a copy of its bytes is the object
+word, and its methods take the block's address as the receiver, the representation of a value
+struct parameter. The table's keep entry (`keepbox$N`) keeps the box as a block that counts its
+fields, as a reference struct's keep does.
+
 ### 1.5 What a value struct cannot do
 
 - `same`, as above. `nil`: a value struct is never nil; `?Point` is the optional.

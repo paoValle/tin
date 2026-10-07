@@ -728,8 +728,9 @@ fn rg_expr(e i64) i64 {
 		if cast(Conv, e).kind == CV_DYN_KEEP {
 			return RG_INGOT
 		}
-		if has_ptr(cast(Ty, cast(Node, e).type_)) != 0 && has_ptr(cast(Ty, cast(Node, cast(Conv, e).x).type_)) == 0 {
-			// A raw word turned into a reference (standard library only): origin unknown.
+		if has_ptr(cast(Ty, cast(Node, e).type_)) != 0 && has_ptr(cast(Ty, cast(Node, cast(Conv, e).x).type_)) == 0 && cast(Conv, e).kind != CV_DYN {
+			// A raw word turned into a reference (standard library only): origin unknown. (A
+			// value struct without references as a dyn object is its box: x, #692.)
 			return x | RG_UNK | RG_EMB
 		}
 		return x
@@ -792,6 +793,11 @@ fn rg_expr(e i64) i64 {
 		if rg_unseq(e) != e {
 			// A dyn append is its call: the slice it grows (#618).
 			return v
+		}
+		if is_value_struct(cast(Ty, cast(Node, e).type_)) != 0 && is_value_struct(cast(Ty, cast(Node, cast(SeqExpr, e).value).type_)) == 0 {
+			// A value struct boxed as a dyn object (box_dyn_value, #692): a block of request
+			// memory, holding what its bytes were given.
+			return v | RG_FRESH | RG_EMB
 		}
 		if is_value_struct(cast(Ty, cast(Node, e).type_)) != 0 {
 			// A value struct built in a frame area (a literal, ?P's box): what its fields were

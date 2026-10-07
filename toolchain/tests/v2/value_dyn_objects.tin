@@ -1,0 +1,107 @@
+package main
+
+import "hearth"
+import "say"
+
+// #692: a value struct can be a dyn object: it is boxed, a copy of its bytes in a block whose
+// address its methods take as their receiver (a mut method changes the box), and keep of a dyn
+// value, or of the value converted to one, keeps the box with its fields.
+
+shape Named {
+	Name() str
+	mut Bump(k i64)
+	Total() i64
+}
+
+type Tag value struct {
+	label str
+	n     i64
+	parts [2]str
+}
+
+fn (t Tag) Name() str {
+	return "{t.label}/{t.parts[1]}"
+}
+
+fn (t mut Tag) Bump(k i64) {
+	t.n += k
+}
+
+fn (t Tag) Total() i64 {
+	return t.n
+}
+
+type Dog struct {
+	n str
+}
+
+fn (d Dog) Name() str {
+	return d.n
+}
+
+fn (d mut Dog) Bump(k i64) {
+}
+
+fn (d Dog) Total() i64 {
+	return 0
+}
+
+type Num value struct {
+	n i64
+}
+
+fn (t Num) Name() str {
+	return "num{t.n}"
+}
+
+fn (t mut Num) Bump(k i64) {
+	t.n += k
+}
+
+fn (t Num) Total() i64 {
+	return t.n
+}
+
+mut plain ?dyn Named = nil
+
+mut keepers = []dyn Named{}
+mut one ?dyn Named = nil
+
+fn round(r i64) {
+	mut t = Tag{label: "t{r}", n: r}
+	t.parts[1] = "p{r}"
+	let d dyn Named = t
+	t.n = 1000 // the box holds a copy
+	d.Bump(1)
+	keepers = keep([]dyn Named{d, Dog{n: "dog{r}"}})
+	let od dyn Named = Tag{label: "one{r}", n: 7}
+	one = keep(od)
+	plain = keep(Num{n: r})
+}
+
+fn main() {
+	round(0)
+	say.Line(keepers[0].Name(), keepers[0].Total(), keepers[1].Name(), keepers)
+	if let o = one {
+		say.Line(o.Name(), o)
+	}
+	if let p = plain {
+		p.Bump(5)
+		say.Line(p.Name(), p.Total(), plain)
+	}
+	hearth.Reset()
+	round(1)
+	hearth.Reset()
+	for r in 2..102 {
+		round(r)
+		hearth.Reset()
+	}
+	let (b0, _, _) = hearth.RcStats()
+	for r in 102..202 {
+		round(r)
+		hearth.Reset()
+	}
+	say.Line(keepers[0].Name(), keepers[0].Total(), keepers)
+	let (b1, _, _) = hearth.RcStats()
+	say.Line("counted blocks steady:", b1 == b0)
+}
