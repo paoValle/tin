@@ -1,0 +1,7 @@
+package main
+
+// A byte that is not UTF-8 is named as a byte, not printed (#559).
+
+fn main() {
+	let x = 1 ÿ
+}

@@ -279,11 +279,59 @@ fn lex_next() i64 {
 		return token_new(TK_PUNCT, one, 0, pos)
 	}
 	let e = cast([]i64, err_code(pos, "E010 UNEXPECTED_CHARACTER"))
-	buf_str(cast([]u8, e), "unexpected character '")
-	buf_byte(cast([]u8, e), c)
-	buf_byte(cast([]u8, e), '\'')
+	if c >= 0x80 {
+		lx_bad_rune(cast([]u8, e))
+	} else {
+		buf_str(cast([]u8, e), "unexpected character '")
+		buf_byte(cast([]u8, e), c)
+		buf_byte(cast([]u8, e), '\'')
+	}
 	fatal(cast([]u8, e))
 	return 0
+}
+
+// lx_bad_rune describes the non-ASCII character at the current byte whole, with its code
+// point, and a hint for the usual pastes (#559): one byte of it alone is not valid UTF-8.
+fn lx_bad_rune(b []u8) {
+	let start = lx_i
+	let r = lx_rune(0)
+	let text = lx_src[start:lx_i]
+	if r == 0xfffd && text != "\xef\xbf\xbd" {
+		buf_str(b, "invalid UTF-8 byte 0x")
+		buf_hex2(b, i64(text[0]))
+		return
+	}
+	buf_str(b, "unexpected character '")
+	buf_str(b, text)
+	buf_str(b, "' (U+")
+	mut d = 12
+	if r > 0xfffff {
+		d = 20
+	} else if r > 0xffff {
+		d = 16
+	}
+	for d >= 0 {
+		buf_byte(b, i64("0123456789ABCDEF"[(r >> d) & 15]))
+		d = d - 4
+	}
+	buf_str(b, ")")
+	if r == 0x201c || r == 0x201d || r == 0x2018 || r == 0x2019 || r == 0xab || r == 0xbb {
+		buf_str(b, ": a typographic quote; use \" or '")
+	} else if r == 0xa0 || r == 0x202f || r == 0x2007 || (r >= 0x2000 && r <= 0x200b) {
+		buf_str(b, ": a special space; use a plain space")
+	} else if r == 0x2013 || r == 0x2014 || r == 0x2212 {
+		buf_str(b, ": a dash; use - (a hyphen-minus)")
+	} else if r == 0xfeff {
+		buf_str(b, ": a byte order mark; save the file as UTF-8 without one")
+	} else {
+		buf_str(b, ": outside strings and comments a program is ASCII, and names are ASCII letters, digits and _")
+	}
+}
+
+// buf_hex2 appends v (0-255) as two hex digits.
+fn buf_hex2(b []u8, v i64) {
+	buf_byte(b, i64("0123456789abcdef"[(v >> 4) & 15]))
+	buf_byte(b, i64("0123456789abcdef"[v & 15]))
 }
 
 // lex_float scans the fraction and exponent of a float literal starting at start.

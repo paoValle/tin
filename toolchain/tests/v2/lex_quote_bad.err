@@ -1,0 +1,1 @@
+toolchain/tests/v2/lex_quote_bad.tin:6:10: error E010 UNEXPECTED_CHARACTER: unexpected character '“' (U+201C): a typographic quote; use " or '

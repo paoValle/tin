@@ -1,0 +1,7 @@
+package main
+
+// A typographic quote pasted from a document gets a hint (#559).
+
+fn main() {
+	let s = “hello”
+}

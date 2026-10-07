@@ -117,6 +117,10 @@ example.tin:4:16: error E010 UNEXPECTED_CHARACTER: unexpected character '$'
 
 Fix: remove the character, or put the text in a string.
 
+A character outside ASCII is shown whole with its code point, `unexpected character 'é'
+(U+00E9)`, with a hint for typographic quotes, special spaces, dashes and a byte order mark; a
+byte that is not UTF-8 is shown as `invalid UTF-8 byte 0xff`. Columns count bytes.
+
 ### E011 INVALID_NUMBER
 
 A number literal uses only the digits of its base (`0x` hexadecimal, `0b` binary, `0o`
