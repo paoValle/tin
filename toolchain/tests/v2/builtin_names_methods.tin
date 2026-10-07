@@ -1,0 +1,32 @@
+package main
+
+import "say"
+import "squash"
+
+// A method may take a builtin's name (#556), and a local shadows one inside its scope; the
+// builtins keep working everywhere else, in the standard library too.
+
+type Box struct {
+	n i64
+}
+
+fn (b Box) len() i64 {
+	return b.n
+}
+
+fn (b Box) min(x i64) i64 {
+	return x - b.n
+}
+
+fn main() {
+	let b = Box{n: 3}
+	say.Line(b.len(), b.min(10), len("ab"), min(4, 2), max(4, 2))
+	let z = squash.Deflate("hello hello hello hello hello hello", 6)
+	let back = squash.Inflate(z, 1000) catch _ { "" }
+	say.Line(back)
+	if true {
+		let len = 7
+		say.Line(len)
+	}
+	say.Line(len("abc"))
+}

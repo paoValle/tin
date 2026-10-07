@@ -1,0 +1,26 @@
+package main
+
+import "squash"
+
+// A top-level declaration cannot take a builtin's name (#556): it replaced the builtin in the
+// runtime and the standard library too (a program's min made squash.Deflate panic).
+
+fn min(a i64, b i64) i64 {
+	return a + b
+}
+
+let len = 3
+
+const append = 4
+
+type str struct {
+	n i64
+}
+
+fn f64(x i64) i64 {
+	return x
+}
+
+fn main() {
+	_ = squash.Deflate("hello hello hello", 6)
+}

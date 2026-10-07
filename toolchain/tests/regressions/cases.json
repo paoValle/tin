@@ -868,5 +868,14 @@
       "stdout": "20 11\n",
       "stderr": ""
     }
+  },
+  {
+    "source": "builtin-name-min.tin",
+    "issue": 556,
+    "expected": {
+      "phase": "compile",
+      "exit": 1,
+      "stderr_contains": "E102 BUILTIN_NAME: 'min' is a builtin and cannot be redeclared"
+    }
   }
 ]

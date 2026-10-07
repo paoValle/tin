@@ -1,0 +1,14 @@
+package main
+
+import "say"
+import "squash"
+
+// A program's own min replaced the builtin inside squash, and Deflate panicked (#556).
+fn min(a i64, b i64) i64 {
+	return a + b
+}
+
+fn main() {
+	let z = squash.Deflate("hello hello hello hello hello hello hello hello", 6)
+	say.Line(len(z))
+}
