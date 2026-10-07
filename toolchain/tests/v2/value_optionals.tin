@@ -1,0 +1,97 @@
+package main
+
+// #669: ?P for a value struct P is a tag word and P's bytes, stored inline (zero is nil). A P
+// where ?P is wanted sets the tag; x != nil narrows x to its value; if let, ?? and printing,
+// argo, slices, maps, fields and kept long-lived values work as for other optionals.
+
+import "argo"
+import "hearth"
+import "say"
+
+type P value struct {
+	x i64
+	y i64
+}
+
+type Entry value struct {
+	key  str
+	n    i64
+}
+
+type Holder value struct {
+	name str
+	at   ?P
+	e    ?Entry
+}
+
+type Box struct {
+	label str
+	best  ?Entry
+}
+
+mut cache ?Entry
+mut slots = []?Entry{}
+
+fn find(n i64) ?P {
+	if n > 0 {
+		return P{x: n, y: n * 2}
+	}
+	return nil
+}
+
+fn show(p ?P) str {
+	if let q = p {
+		return "{q.x},{q.y}"
+	}
+	return "none"
+}
+
+fn main() {
+	let c = find(0)
+	let d = find(3)
+	say.Line(c == nil, d != nil, (c ?? P{x: 7, y: 8}).x, (d ?? P{x: 0, y: 0}).y)
+	mut a ?P = P{x: 1, y: 2}
+	say.Line(a, show(a), show(nil))
+	a = nil
+	say.Line(a, show(a))
+	mut h Holder
+	h.name = "h"
+	say.Line(h, h.at == nil)
+	h.at = P{x: 3, y: 4}
+	h.e = Entry{key: "k", n: 5}
+	if let e = h.e {
+		say.Line(e.key, e.n)
+	}
+	say.Line(h)
+	mut ps = make([]?P, 3)
+	ps[1] = P{x: 5, y: 6}
+	say.Line(ps, ps[0] == nil, ps[1] != nil)
+	mut m = map[str]?P{}
+	m["a"] = P{x: 7, y: 8}
+	m["b"] = nil
+	say.Line(m["a"], m["b"], m["c"], len(m))
+	let b = Box{label: "b", best: Entry{key: "best", n: 1}}
+	say.Line(b)
+	mut out = []u8{}
+	argo.Put(mut out, h)
+	say.Line(str(out))
+	mut back Holder
+	argo.Get(str(out), mut back) catch err {
+		say.Line(err)
+	}
+	say.Line(back)
+	for i in 0..3 {
+		cache = keep(Entry{key: "c{i}", n: i})
+		slots = keep([]?Entry{Entry{key: "s{i}"}, nil})
+		hearth.Reset()
+	}
+	let (b0, _, _) = hearth.RcStats()
+	for i in 0..100 {
+		cache = keep(Entry{key: "c{i}", n: i})
+		slots = keep([]?Entry{Entry{key: "s{i}"}, nil})
+		cache = nil
+		hearth.Reset()
+	}
+	let (b1, _, _) = hearth.RcStats()
+	say.Line(cache, slots, b1 - b0 <= 2)
+}

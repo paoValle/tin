@@ -1,0 +1,29 @@
+package main
+
+import "say"
+
+// #669: a value struct cannot hold itself, also as an optional (E205: its size would never end);
+// a ?P is read through a nil check (E421), and two of them do not compare (E237).
+
+type Node value struct {
+	v    i64
+	next ?Node
+}
+
+type P value struct {
+	x i64
+}
+
+type Outer value struct {
+	inner Inner
+}
+
+type Inner value struct {
+	back ?Outer
+}
+
+fn main() {
+	let a ?P = P{x: 1}
+	let b ?P = nil
+	say.Line(a.x, a == b)
+}

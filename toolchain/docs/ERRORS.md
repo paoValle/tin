@@ -1115,6 +1115,30 @@ example.tin:5:10: error E204 TUPLE_TYPE: 'Pair' is a tuple: a list of results, n
 
 Fix: take the values as separate parameters (`fn sum(a i64, b i64)`), or a struct.
 
+### E205 RECURSIVE_VALUE
+
+A value struct's bytes are stored inline, so it cannot hold itself: not as a field, inside
+another value struct, in an inline array or as an optional (`?Node`). Its size would never
+end (#669).
+
+```tin edition=1
+package main
+
+type Node value struct {
+	v    i64
+	next ?Node
+}
+
+fn main() {
+}
+```
+
+```text
+example.tin:5:7: error E205 RECURSIVE_VALUE: value struct Node holds itself through field next, so its size would never end: hold it through a slice ([]T) or a reference struct
+```
+
+Fix: hold the next values through a slice (`kids []Node`), or make the type a reference struct.
+
 ### E210 ARG_COUNT
 
 A call passes exactly as many arguments as the function has parameters (a variadic
@@ -2197,7 +2221,7 @@ Fix: end each block arm with its value, or leave from it.
 
 A form the parser reads but the checker does not build yet: a generic tuple alias, or a value
 struct (#631) where it does not go yet (#669). Such places are a func or `dyn` field inside it,
-a reference in an inline array, an optional, a channel element and a `dyn` object. Until it is, write the result list out, or
+a reference in an inline array, a channel element and a `dyn` object. Until it is, write the result list out, or
 store the value struct's fields.
 
 ```tin edition=1

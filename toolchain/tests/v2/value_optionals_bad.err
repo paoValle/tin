@@ -1,0 +1,4 @@
+toolchain/tests/v2/value_optionals_bad.tin:10:7: error E205 RECURSIVE_VALUE: value struct Node holds itself through field next, so its size would never end: hold it through a slice ([]T) or a reference struct
+toolchain/tests/v2/value_optionals_bad.tin:18:8: error E205 RECURSIVE_VALUE: value struct Outer holds itself through field inner, so its size would never end: hold it through a slice ([]T) or a reference struct
+toolchain/tests/v2/value_optionals_bad.tin:28:12: error E421 UNCHECKED_OPTIONAL: cannot use a field of optional ?P before checking it against nil
+toolchain/tests/v2/value_optionals_bad.tin:28:18: error E237 COMPARE: cannot compare ?P values: compare their fields after narrowing (x != nil)

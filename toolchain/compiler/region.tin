@@ -793,6 +793,11 @@ fn rg_expr(e i64) i64 {
 			// A dyn append is its call: the slice it grows (#618).
 			return v
 		}
+		if is_value_struct(cast(Ty, cast(Node, e).type_)) != 0 {
+			// A value struct built in a frame area (a literal, ?P's box): what its fields were
+			// given, which rg_value_store added to the area's local (#669).
+			return v
+		}
 		if has_ptr(cast(Ty, cast(Node, e).type_)) != 0 {
 			return v | RG_FRESH | RG_EMB
 		}

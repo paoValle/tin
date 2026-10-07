@@ -1,0 +1,12 @@
+true true 7 6
+{1 2} 1,2 none
+<nil> none
+{h <nil> <nil>} true
+k 5
+{h {3 4} {k 5}}
+[<nil> {5 6} <nil>] true true
+{7 8} <nil> <nil> 2
+{b {best 1}}
+{"name":"h","at":{"x":3,"y":4},"e":{"key":"k","n":5}}
+{h {3 4} {k 5}}
+<nil> [{s99 0} <nil>] true

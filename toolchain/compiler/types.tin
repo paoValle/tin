@@ -166,7 +166,22 @@ fn chan_of(elem i64) i64 {
 }
 
 fn opt_of(elem i64) i64 {
-	return interned(K_OPT, elem, 0, cast([]i64, 0), cast([]i64, 0), 0)
+	let t = interned(K_OPT, elem, 0, cast([]i64, 0), cast([]i64, 0), 0)
+	opt_value_size(cast(Ty, t))
+	return t
+}
+
+// opt_value reports ?P for a value struct P (#669): a tag word (0 for nil, 1 for a value) and
+// then P's bytes, stored inline and copied like a value struct, whose zero is nil.
+fn opt_value(t Ty) i64 {
+	return i64(cast(i64, t) != 0 && t.kind == K_OPT && is_value_struct(cast(Ty, t.elem)) != 0)
+}
+
+// opt_value_size sets ?P's size once P's is known: the tag word and P's bytes.
+fn opt_value_size(t Ty) {
+	if opt_value(t) != 0 && cast(Ty, t.elem).size > 0 {
+		t.size = 8 + align_up(cast(Ty, t.elem).size, 8)
+	}
 }
 
 // ---- optional numbers and bools (#353, #632) ----
@@ -350,8 +365,8 @@ fn type_width(t Ty) i64 {
 	if is_dyn_value(t) != 0 {
 		return 16
 	}
-	if (k == K_STRUCT && t.value != 0) || k == K_VARRAY {
-		// A value struct's or inline array's bytes (#631).
+	if (k == K_STRUCT && t.value != 0) || k == K_VARRAY || opt_value(t) != 0 {
+		// A value struct's or inline array's bytes (#631), or ?P's (#669).
 		return t.size
 	}
 	return 8
@@ -585,6 +600,11 @@ fn field_offset(t Ty, i i64) i64 {
 fn layout_struct(t Ty) {
 	let fs = t.fields
 	mut off = 0
+	mut fi = 0
+	for fi < len(fs) {
+		inline_size(cast(Ty, cast(Field, fs[fi]).ty))
+		fi = fi + 1
+	}
 	mut w = 16
 	for w >= 1 {
 		mut i = 0
@@ -600,9 +620,28 @@ fn layout_struct(t Ty) {
 	}
 	if t.value != 0 {
 		t.size = align_up(off + i64((off == 0)), type_align(t))
+		// An optional of it made before it was laid out takes its size now (#669).
+		mut oi = 0
+		for oi < len(ty_interned) {
+			if ty_interned[oi].kind == K_OPT && ty_interned[oi].elem == cast(i64, t) {
+				opt_value_size(ty_interned[oi])
+			}
+			oi = oi + 1
+		}
 		return
 	}
 	t.size = align_up(off + i64((off == 0)), 8)
+}
+
+// inline_size sets the size of an inline array or ?P whose element was laid out after it was
+// made (a value struct declared further on, #669).
+fn inline_size(t Ty) {
+	if kind_of(t) == K_VARRAY {
+		inline_size(cast(Ty, t.elem))
+		t.size = t.key * type_width(cast(Ty, t.elem))
+	} else if opt_value(t) != 0 {
+		opt_value_size(t)
+	}
 }
 
 // layout_class is the width a field is placed with: its own, or a value struct's alignment.
@@ -616,6 +655,11 @@ fn layout_class(t Ty) i64 {
 // is_value_struct reports a value struct (#631): its bytes are stored inline in fields,
 // elements and frames, and every store copies them.
 fn is_value_struct(t Ty) i64 {
+	if cast(i64, t) != 0 && t.kind == K_OPT {
+		// ?P is stored like P, with a tag word in front (#669).
+		let e = cast(Ty, t.elem)
+		return i64(cast(i64, e) != 0 && ((e.kind == K_STRUCT && e.value != 0) || e.kind == K_VARRAY))
+	}
 	return i64(cast(i64, t) != 0 && ((t.kind == K_STRUCT && t.value != 0) || t.kind == K_VARRAY))
 }
 
@@ -626,10 +670,11 @@ fn value_has_ref(t Ty) i64 {
 	if cast(i64, t) == 0 {
 		return 0
 	}
-	if t.kind == K_VARRAY {
+	if t.kind == K_VARRAY || opt_value(t) != 0 {
 		return value_has_ref(cast(Ty, t.elem))
 	}
-	if is_value_struct(t) == 0 {
+	if is_value_struct(t) == 0 || cast(i64, t.fields) == 0 {
+		// (fields not resolved yet: a value struct still being declared)
 		return 0
 	}
 	mut i = 0
@@ -650,10 +695,13 @@ fn type_align(t Ty) i64 {
 	if cast(i64, t) != 0 && t.kind == K_VARRAY {
 		return type_align(cast(Ty, t.elem))
 	}
+	if opt_value(t) != 0 {
+		return 8
+	}
 	if is_value_struct(t) != 0 {
 		mut a = 1
 		mut i = 0
-		for i < len(t.fields) {
+		for cast(i64, t.fields) != 0 && i < len(t.fields) {
 			let fa = type_align(cast(Ty, cast(Field, t.fields[i]).ty))
 			if fa > a {
 				a = fa

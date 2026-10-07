@@ -1072,13 +1072,23 @@ fn vd_expr(e i64) {
 	}
 }
 
-// vd_parts visits a call's callee and arguments.
+// vd_parts visits a call's callee and arguments. A value struct argument that is the constant 0
+// (nil for ?P, #669) becomes a zeroed frame area: the callee reads an address.
 fn vd_parts(e i64) {
 	vd_expr(cast(Call, e).callee)
 	let args = cast(Call, e).args
 	mut i = 0
 	for cast(i64, args) != 0 && i < len(args) {
-		vd_expr(args[i])
+		let a = args[i]
+		if cast(Node, a).kind == EX_INT && is_const(a) != 0 && const_val(a) == 0 && is_value_struct(cast(Ty, cast(Node, a).type_)) != 0 {
+			let pos = cast(Node, a).pos
+			let z = cast(Sym, ia_local_in(cast(Fn, vd_fn), cast(Node, a).type_))
+			mut zs = []i64{}
+			zs = append(zs, let_stmt(pos, z, mk_int(pos, 0, cast(Node, a).type_)))
+			args[i] = mk_seq(pos, cast(i64, zs), sym_ref_node(pos, z), cast(Node, a).type_)
+		} else {
+			vd_expr(a)
+		}
 		i = i + 1
 	}
 }

@@ -1,0 +1,37 @@
+package main
+
+import "constraints"
+
+// #669: a value struct field may hold a value struct declared further on, inline, in an inline
+// array, as ?P and through a generic value struct: it is laid out before its holder.
+
+type Outer value struct {
+	a     i64
+	pts   [2]Pt
+	maybe ?Pt
+	tag   u8
+	w     Wrap[Pt]
+}
+
+type Wrap[T constraints.Any] value struct {
+	v T
+	n i32
+}
+
+type Pt value struct {
+	x i32
+	y i32
+	z i64
+}
+
+fn main() {
+	mut o Outer
+	o.a = 1
+	o.pts[1] = Pt{x: 2, y: 3, z: 4}
+	o.maybe = Pt{x: 5, y: 6, z: 7}
+	o.tag = 9
+	o.w = Wrap[Pt]{v: Pt{x: 8, y: 8, z: 8}, n: 10}
+	let c = o
+	println(c)
+	println(c.tag, c.w.n, c.pts[1].z)
+}

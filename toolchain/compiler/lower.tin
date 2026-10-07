@@ -136,6 +136,44 @@ fn chk_kind(e i64, want i64) i64 {
 // becomes a hidden local holding the optional and an if:
 //   a reference (or a ?T result): $x = opt; if $x == nil { $x = fallback }; $x as the result
 //   an optional number (#632):    $x = opt; $r = 0; if $x == nil { $r = fallback } else { $r = payload($x) }
+// coalesce_value is x ?? fb for ?P (#669): the value after x's tag when the tag is set, else
+// fb (a P, or another ?P for a ?P result).
+fn coalesce_value(e i64, x i64, fb i64, xt Ty) i64 {
+	let pos = cast(Node, e).pos
+	let et = xt.elem
+	let ft = chk(cast(Node, fb), et)
+	mut rt = et
+	if ft == cast(i64, xt) {
+		rt = cast(i64, xt)
+	} else {
+		check_assignable(cast(Node, fb), ft, cast(Ty, et))
+	}
+	mut stmts = []i64{}
+	let tx = temp(pos, x, cast(i64, xt))
+	stmts = append(stmts, cast(i64, tx))
+	let ifs = cast(IfStmt, node_new(ST_IF, pos))
+	ifs.cond = mk_bin(pos, "!=", opt_tag(pos, sym_ref_node(pos, cast(Sym, tx.sym))), mk_int(pos, 0, ty_int), ty_bool)
+	ifs.then = empty_block(pos)
+	ifs.else_ = empty_block(pos)
+	if rt == cast(i64, xt) {
+		mut e1 = cast([]i64, cast(Block, ifs.else_).stmts)
+		e1 = append(e1, assign_stmt(pos, sym_ref_node(pos, cast(Sym, tx.sym)), fb))
+		cast(Block, ifs.else_).stmts = e1
+		stmts = append(stmts, cast(i64, ifs))
+		return set_seq(e, mk_seq(pos, cast(i64, stmts), sym_ref_node(pos, cast(Sym, tx.sym)), rt), rt)
+	}
+	let tr = temp(pos, mk_int(pos, 0, et), et)
+	stmts = append(stmts, cast(i64, tr))
+	mut t1 = cast([]i64, cast(Block, ifs.then).stmts)
+	t1 = append(t1, assign_stmt(pos, sym_ref_node(pos, cast(Sym, tr.sym)), opt_payload(pos, sym_ref_node(pos, cast(Sym, tx.sym)), et)))
+	cast(Block, ifs.then).stmts = t1
+	mut e2 = cast([]i64, cast(Block, ifs.else_).stmts)
+	e2 = append(e2, assign_stmt(pos, sym_ref_node(pos, cast(Sym, tr.sym)), fb))
+	cast(Block, ifs.else_).stmts = e2
+	stmts = append(stmts, cast(i64, ifs))
+	return set_seq(e, mk_seq(pos, cast(i64, stmts), sym_ref_node(pos, cast(Sym, tr.sym)), rt), rt)
+}
+
 fn chk_coalesce(e i64) i64 {
 	let pos = cast(Node, e).pos
 	let x = cast(Coalesce, e).x
@@ -149,6 +187,9 @@ fn chk_coalesce(e i64) i64 {
 	if cast(Node, fb).kind == EX_NIL {
 		err_code_at(cast(Node, fb).pos, "E422 COALESCE", "?? nil does nothing: the result is nil whenever the optional is")
 		return cast(i64, xt)
+	}
+	if opt_value(xt) != 0 {
+		return coalesce_value(e, x, fb, xt)
 	}
 	let scalar = opt_scalar(xt)
 	mut et = scalar
@@ -1028,6 +1069,19 @@ fn chk_binary(e i64, want i64) i64 {
 		}
 		if ordered == 0 && kind_of(t) == K_OPT && opt_scalar(t) != 0 && is_nil_lit(l) == 0 && is_nil_lit(r) == 0 {
 			return lower_optnum_eq(cast(Node, e), op, l, r, t)
+		}
+		if opt_value(t) != 0 {
+			// ?P against nil reads its tag word (#669); two of them do not compare (E237).
+			if ordered == 0 && (is_nil_lit(l) != 0 || is_nil_lit(r) != 0) {
+				mut x = l
+				if is_nil_lit(l) != 0 {
+					x = r
+				}
+				replace_node(e, mk_bin(pos, op, opt_tag(pos, x), mk_int(pos, 0, ty_int), ty_bool))
+				return ty_bool
+			}
+			err_code_type(pos, "E237 COMPARE", "cannot compare ", cast(i64, t), " values: compare their fields after narrowing (x != nil)")
+			return ty_bool
 		}
 		if kind_of(t) == K_STRING {
 			lower_str_cmp(cast(Node, e), op, l, r)
@@ -2565,7 +2619,7 @@ fn init_zero_field(pos i64, stmts []i64, obj i64, t Ty, fi i64) {
 	} else if is_value_struct(cast(Ty, ft)) != 0 {
 		// A value struct field starts as zeroed bytes, as the object does (#631); its str
 		// fields hold "" (#669).
-		if value_has_ref(cast(Ty, ft)) != 0 {
+		if value_has_ref(cast(Ty, ft)) != 0 && opt_value(cast(Ty, ft)) == 0 {
 			stmts = append(stmts, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, obj)), cast(i64, t), fi), value_zero(pos, cast(Ty, ft))))
 		}
 	} else if k == K_STRUCT || k == K_MAP || k == K_FUNC || k == K_DYN {
@@ -2586,6 +2640,10 @@ fn init_zero_field(pos i64, stmts []i64, obj i64, t Ty, fi i64) {
 // value_zero is the zero value of a value struct holding a str (#669): zeroed bytes, then "" in
 // each str field, built in a frame area like a literal.
 fn value_zero(pos i64, t Ty) i64 {
+	if opt_value(t) != 0 {
+		// ?P's zero is nil: zeroed bytes (#669).
+		return mk_int(pos, 0, cast(i64, t))
+	}
 	mut stmts = []i64{}
 	let obj = temp(pos, mk_int(pos, 0, cast(i64, t)), cast(i64, t))
 	stmts = append(stmts, cast(i64, obj))
@@ -5100,6 +5158,10 @@ fn argo_fn(pos i64, t Ty) i64 {
 	} else if k == K_OPT || k == K_ERROR {
 		let ifs = cast(IfStmt, node_new(ST_IF, pos))
 		ifs.cond = mk_bin(pos, "==", sym_ref_node(pos, x), mk_int(pos, 0, cast(i64, t)), ty_bool)
+		if opt_value(t) != 0 {
+			// ?P's tag word says nil (#669).
+			ifs.cond = mk_bin(pos, "==", opt_tag(pos, sym_ref_node(pos, x)), mk_int(pos, 0, ty_int), ty_bool)
+		}
 		ifs.then = empty_block(pos)
 		argo_raw(pos, cast(Block, ifs.then).stmts, cast(i64, b), "null")
 		let els = cast(Block, empty_block(pos))
@@ -5108,6 +5170,8 @@ fn argo_fn(pos i64, t Ty) i64 {
 			argo_emit(pos, els.stmts, cast(i64, b), mk_conv(pos, sym_ref_node(pos, x), CV_SAME, ty_string), cast(Ty, ty_string))
 		} else if opt_scalar(t) != 0 {
 			argo_emit(pos, els.stmts, cast(i64, b), opt_payload(pos, sym_ref_node(pos, x), opt_scalar(t)), cast(Ty, opt_scalar(t)))
+		} else if opt_value(t) != 0 {
+			argo_emit(pos, els.stmts, cast(i64, b), opt_payload(pos, sym_ref_node(pos, x), t.elem), cast(Ty, t.elem))
 		} else {
 			argo_emit(pos, els.stmts, cast(i64, b), mk_conv(pos, sym_ref_node(pos, x), CV_SAME, t.elem), cast(Ty, t.elem))
 		}
@@ -5439,6 +5503,23 @@ fn argo_value(pos i64, body []i64, p i64, t Ty) i64 {
 		}
 		mut vp3 = cast(Block, ifs.then).stmts
 		vp3 = append(vp3, assign_stmt(pos, sym_ref_node(pos, cast(Sym, out)), mk_conv(pos, to_bits(cast(Node, inner)), CV_OPT_SOME, cast(i64, t))))
+		body = append(body, cast(i64, ifs))
+		return sym_ref_node(pos, cast(Sym, out))
+	}
+	if opt_value(t) != 0 {
+		// ?P (#669): null is nil, else the value goes after a set tag.
+		let out = declare_local(pos, "$", cast(i64, t))
+		body = append(body, let_stmt(pos, cast(Sym, out), mk_int(pos, 0, cast(i64, t))))
+		let ifs = cast(IfStmt, node_new(ST_IF, pos))
+		ifs.cond = mk_unot(pos, argo_rd(pos, p, "argo.rnull", ty_bool))
+		ifs.then = empty_block(pos)
+		let inner = argo_value(pos, cast(Block, ifs.then).stmts, p, cast(Ty, t.elem))
+		if inner == 0 {
+			return 0
+		}
+		mut vv = cast(Block, ifs.then).stmts
+		vv = append(vv, assign_stmt(pos, opt_tag(pos, sym_ref_node(pos, cast(Sym, out))), mk_int(pos, 1, ty_int)))
+		vv = append(vv, assign_stmt(pos, opt_payload(pos, sym_ref_node(pos, cast(Sym, out)), t.elem), inner))
 		body = append(body, cast(i64, ifs))
 		return sym_ref_node(pos, cast(Sym, out))
 	}
@@ -5868,7 +5949,7 @@ fn argo_vval(pos i64, body []i64, p i64, t Ty) {
 		if opt_scalar(t) != 0 {
 			et = opt_scalar(t)
 		}
-		if is_ref(et) == 0 && opt_scalar(t) == 0 || kind_of(cast(Ty, et)) == K_FUNC {
+		if is_ref(et) == 0 && opt_scalar(t) == 0 && opt_value(t) == 0 || kind_of(cast(Ty, et)) == K_FUNC {
 			return
 		}
 		let ifs = cast(IfStmt, node_new(ST_IF, pos))
@@ -6130,13 +6211,13 @@ fn say_arg(a Node, prefix str) Node {
 			return cast(Node, say_enum_slice(a, t, prefix))
 		} else if ek == K_STRUCT {
 			return cast(Node, say_struct_slice(a, t, prefix))
-		} else if ek == K_SLICE || ek == K_MAP || ek == K_ERROR || (ek == K_OPT && kind_of(cast(Ty, cast(Ty, et).elem)) != K_STRUCT) {
+		} else if ek == K_SLICE || ek == K_MAP || ek == K_ERROR || (ek == K_OPT && kind_of(cast(Ty, cast(Ty, et).elem)) != K_STRUCT) || opt_value(cast(Ty, et)) != 0 {
 			// Element by element, each as its own type prints (#524).
 			return cast(Node, say_struct_slice(a, t, prefix))
 		} else {
 			suffix = "slp"
 		}
-	} else if k == K_OPT && (opt_scalar(t) != 0 || (kind_of(cast(Ty, t.elem)) != K_STRUCT && kind_of(cast(Ty, t.elem)) != K_DYN)) {
+	} else if k == K_OPT && (opt_scalar(t) != 0 || opt_value(t) != 0 || (kind_of(cast(Ty, t.elem)) != K_STRUCT && kind_of(cast(Ty, t.elem)) != K_DYN)) {
 		return cast(Node, say_opt(a, t, prefix))
 	} else if k == K_STRUCT || k == K_OPT {
 		mut st = t
@@ -6215,8 +6296,8 @@ fn say_opt(a Node, t Ty, prefix str) i64 {
 	let pos = a.pos
 	mut stmts = []i64{}
 	mut obj = cast(LetStmt, 0)
-	if opt_scalar(t) != 0 {
-		// An optional number keeps its two words: nil is tag 0 (#632).
+	if opt_scalar(t) != 0 || opt_value(t) != 0 {
+		// An optional number keeps its two words: nil is tag 0 (#632); ?P its tag and bytes (#669).
 		obj = temp(pos, cast(i64, a), cast(i64, t))
 	} else {
 		obj = temp(pos, mk_conv(pos, cast(i64, a), CV_SAME, ty_int), ty_int)
@@ -6224,6 +6305,9 @@ fn say_opt(a Node, t Ty, prefix str) i64 {
 	stmts = append(stmts, cast(i64, obj))
 	let ifs = cast(IfStmt, node_new(ST_IF, pos))
 	ifs.cond = mk_bin(pos, "==", sym_ref_node(pos, cast(Sym, obj.sym)), mk_int(pos, 0, ty_int), ty_bool)
+	if opt_value(t) != 0 {
+		ifs.cond = mk_bin(pos, "==", opt_tag(pos, sym_ref_node(pos, cast(Sym, obj.sym))), mk_int(pos, 0, ty_int), ty_bool)
+	}
 	ifs.then = empty_block(pos)
 	mut vs1 = cast(Block, ifs.then).stmts
 	vs1 = append(vs1, expr_stmt(cast(Node, rt_call(pos, prefix + "argsep", cast(i64, []i64{}), ty_void))))
@@ -6235,6 +6319,8 @@ fn say_opt(a Node, t Ty, prefix str) i64 {
 	mut vs4 = cast(Block, ifs.else_).stmts
 	if opt_scalar(t) != 0 {
 		vs4 = append(vs4, expr_stmt(say_arg(cast(Node, opt_payload(pos, sym_ref_node(pos, cast(Sym, obj.sym)), opt_scalar(t))), prefix)))
+	} else if opt_value(t) != 0 {
+		vs4 = append(vs4, expr_stmt(say_arg(cast(Node, opt_payload(pos, sym_ref_node(pos, cast(Sym, obj.sym)), t.elem)), prefix)))
 	} else {
 		vs4 = append(vs4, expr_stmt(say_arg(cast(Node, mk_conv(pos, sym_ref_node(pos, cast(Sym, obj.sym)), CV_SAME, t.elem)), prefix)))
 	}
@@ -6325,7 +6411,7 @@ fn say_struct_fn(t Ty, prefix str) Fn {
 			body = append(body, expr_stmt(call_fn(pos, say_enum_fn(ft, prefix), args1(fv), ty_void)))
 		} else if kind_of(ft) == K_STRUCT {
 			body = append(body, expr_stmt(call_fn(pos, say_struct_fn(ft, prefix), args1(fv), ty_void)))
-		} else if kind_of(ft) == K_OPT && (opt_scalar(ft) != 0 || (kind_of(cast(Ty, ft.elem)) != K_STRUCT && kind_of(cast(Ty, ft.elem)) != K_DYN)) {
+		} else if kind_of(ft) == K_OPT && (opt_scalar(ft) != 0 || opt_value(ft) != 0 || (kind_of(cast(Ty, ft.elem)) != K_STRUCT && kind_of(cast(Ty, ft.elem)) != K_DYN)) {
 			body = append(body, expr_stmt(cast(Node, say_opt(cast(Node, fv), ft, prefix))))
 		} else if kind_of(ft) == K_OPT {
 			body = append(body, expr_stmt(cast(Node, rt_call(pos, prefix + "p", args1(mk_conv(pos, fv, CV_SAME, ty_int)), ty_void))))

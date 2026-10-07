@@ -4,6 +4,5 @@ toolchain/tests/v2/value_structs_bad.tin:38:11: error E701 NOT_MUT: cannot modif
 toolchain/tests/v2/value_structs_bad.tin:39:2: error E701 NOT_MUT: cannot modify parameter 'p': declare it mut (a value struct parameter's bytes are its caller's)
 toolchain/tests/v2/value_structs_bad.tin:44:3: error E711 LET_ASSIGN: cannot change a: it is a value struct declared with let (declare it with mut to change it)
 toolchain/tests/v2/value_structs_bad.tin:45:2: error E711 LET_ASSIGN: cannot change a: it is a value struct declared with let (declare it with mut to change it)
-toolchain/tests/v2/value_structs_bad.tin:47:8: error E295 NOT_YET: value struct P cannot be optional yet (#669): add a bool field that says whether it is set
 toolchain/tests/v2/value_structs_bad.tin:48:21: error E295 NOT_YET: value struct P cannot be a dyn object yet (#669)
 toolchain/tests/v2/value_structs_bad.tin:49:6: error E217 BUILTIN_ARGS: same compares identity, and a value struct has none (every store copies it): compare with ==

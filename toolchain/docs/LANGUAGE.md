@@ -343,8 +343,14 @@ argument, a result), so two names never share a value. (`value` is a contextual 
   object) counts what its fields point at, so a replaced value gives them back; a kept closure
   that captured one keeps its fields, and an `arena` block's value has them copied out. A func
   or `dyn` field,
-  a reference in an inline array, an optional value struct, a channel element and a `dyn`
-  object of a value struct are E295 (#669, design/design_layouts.md).
+  a reference in an inline array, a channel element and a `dyn` object of a value struct are
+  E295 (#669, design/design_layouts.md).
+- `?P` of a value struct `P` is a value too (#669): a tag word and `P`'s bytes, stored inline
+  and copied like `P`, nil when zeroed, so `make([]?P, n)` holds n nils and a `?P` field
+  needs no initializer. It narrows like any optional (`if x != nil`, `if let p = x`, `x ?? d`);
+  two `?P` do not compare (E237). A value struct cannot hold itself inline, directly, through an
+  inline array or `?P`, or through another value struct (E205): hold it through a slice. A
+  field may hold a value struct declared further on in the file.
 - A map's value may be a value struct: each entry's bytes live in a cell of the map's own,
   `m[k] = v` copies them in and `m[k]` reads a copy (the zero value for a missing key). As in
   Go, a field of an entry cannot be changed in place (`m[k].x = 1` is E710): write

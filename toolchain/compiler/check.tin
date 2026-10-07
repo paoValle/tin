@@ -348,10 +348,6 @@ fn resolve_type(tx i64) i64 {
 	if k == TX_OPT {
 		let inner = resolve_type(cast(TypeExpr, tx).a)
 		let ik = kind_of(cast(Ty, inner))
-		if is_value_struct(cast(Ty, inner)) != 0 {
-			value_not_yet(cast(Node, tx).pos, inner, " cannot be optional yet (#669): add a bool field that says whether it is set")
-			return inner
-		}
 		if ik != K_STRUCT && ik != K_DYN && ik != K_STRING && ik != K_SLICE && ik != K_MAP && scalar_optionable(cast(Ty, inner)) == 0 {
 			err_code_type(cast(Node, tx).pos, "E420 OPTIONAL_TYPE", "only numbers, bool and references (str, slices, maps, structs, dyn) can be optional, not ", inner, "")
 			return inner
@@ -688,6 +684,10 @@ fn value_fill_strs(pos i64, made i64, t Ty) i64 {
 // value_no_zero is the type of a field of value struct t (nested ones too) that has no zero
 // value (a map or a struct, which cannot be nil), or 0 (#669).
 fn value_no_zero(t Ty) i64 {
+	if opt_value(t) != 0 {
+		// ?P's zero is nil.
+		return 0
+	}
 	mut i = 0
 	for i < len(t.fields) {
 		let ft = cast(Ty, cast(Field, t.fields[i]).ty)
@@ -706,6 +706,10 @@ fn value_no_zero(t Ty) i64 {
 // value_str_offsets adds the offsets of value struct t's str fields, nested ones too, at base,
 // and [offset, element size] of its slice fields.
 fn value_str_offsets(t Ty, base i64, offs []i64, slices []i64) {
+	if opt_value(t) != 0 {
+		// A nil ?P is zeroed bytes: nothing to fill (#669).
+		return
+	}
 	mut i = 0
 	for i < len(t.fields) {
 		let ft = cast(Ty, cast(Field, t.fields[i]).ty)
@@ -722,9 +726,68 @@ fn value_str_offsets(t Ty, base i64, offs []i64, slices []i64) {
 	}
 }
 
+// value_reaches reports whether the bytes of a value of type t include a target: t is target,
+// or holds it inline (a value struct's field, an inline array's element, ?P's value).
+fn value_reaches(t Ty, target Ty, seen []i64) i64 {
+	if cast(i64, t) == 0 {
+		return 0
+	}
+	if cast(i64, t) == cast(i64, target) {
+		return 1
+	}
+	if slice_has(seen, cast(i64, t)) != 0 {
+		return 0
+	}
+	seen = append(seen, cast(i64, t))
+	if t.kind == K_VARRAY || t.kind == K_OPT {
+		return value_reaches(cast(Ty, t.elem), target, seen)
+	}
+	if t.kind != K_STRUCT || t.value == 0 || cast(i64, t.fields) == 0 {
+		return 0
+	}
+	mut i = 0
+	for i < len(t.fields) {
+		if value_reaches(cast(Ty, cast(Field, t.fields[i]).ty), target, seen) != 0 {
+			return 1
+		}
+		i = i + 1
+	}
+	return 0
+}
+
+// value_resolving holds the value structs whose fields are being resolved (value_first).
+shared mut value_resolving []i64 = []i64{}
+
+// value_first resolves and lays out a value struct declared further on before a field holds its
+// bytes, so its size is known when the holder is laid out (#669). One still being resolved is
+// left as it is: its holder holds itself, which resolve_fields reports (E205).
+fn value_first(t Ty) {
+	mut b = t
+	for kind_of(b) == K_VARRAY || opt_value(b) != 0 {
+		b = cast(Ty, b.elem)
+	}
+	if kind_of(b) != K_STRUCT || b.value == 0 || cast(i64, b.fields) != 0 || slice_has(value_resolving, cast(i64, b)) != 0 {
+		return
+	}
+	let file = ck_file
+	mut i = 0
+	for i < len(prog_types) {
+		let d = prog_types[i]
+		if cast(i64, d.tparams) == 0 && cast(Node, d.type_).kind == TX_STRUCT && file_pkgs[d.file] == ck_pkg && qual(ck_pkg, d.name) == b.name {
+			set_file(d.file)
+			resolve_fields(b, cast(TypeExpr, d.type_))
+			layout_struct(b)
+			set_file(file)
+			return
+		}
+		i = i + 1
+	}
+}
+
 fn resolve_fields(st Ty, tx TypeExpr) {
 	mut fs = []i64{}
 	let src = cast([]i64, tx.a)
+	value_resolving = append(value_resolving, cast(i64, st))
 	mut i = 0
 	for i < len(src) {
 		let f = cast(ParsedField, src[i])
@@ -735,6 +798,9 @@ fn resolve_fields(st Ty, tx TypeExpr) {
 			rec.ty = value_array_type(f.ty)
 		} else {
 			rec.ty = resolve_type(f.ty)
+		}
+		if st.value != 0 {
+			value_first(cast(Ty, rec.ty))
 		}
 		if cast(Ty, f.ty).kind >= TX_NAME {
 			sb_forbid(cast(Node, f.ty).pos, rec.ty, "a struct or enum field cannot hold ")
@@ -752,6 +818,25 @@ fn resolve_fields(st Ty, tx TypeExpr) {
 	}
 	st.fields = cast([]i64, cast(i64, fs))
 	st.enum_ = cast([]EnumVariant, tx.b)
+	value_resolving = value_resolving[:len(value_resolving) - 1]
+	if st.value != 0 {
+		// Its bytes cannot hold itself, directly, in a value struct field, an inline array or an
+		// optional (#669): its size would never end.
+		i = 0
+		for i < len(fs) {
+			if value_reaches(cast(Ty, cast(Field, fs[i]).ty), st, []i64{}) != 0 {
+				let m = err_code(cast(Node, cast(ParsedField, src[i]).ty).pos, "E205 RECURSIVE_VALUE")
+				buf_str(m, "value struct ")
+				type_name(cast([]u8, m), st)
+				buf_str(m, " holds itself through field ")
+				buf_str(m, cast(Field, fs[i]).name)
+				buf_str(m, ", so its size would never end: hold it through a slice ([]T) or a reference struct")
+				err_end(cast([]u8, m))
+				cast(Field, fs[i]).ty = ty_int
+			}
+			i = i + 1
+		}
+	}
 	if st.value != 0 {
 		// A value struct holds numbers, bool, str, pointer optionals and other value structs;
 		// the other references come with #669, when the memory model counts what its bytes
@@ -916,6 +1001,8 @@ fn check() {
 		set_file(d.file)
 		let q = qual(ck_pkg, d.name)
 		if cast(i64, d.tparams) != 0 || is_builtin_name(d.name) {
+		} else if cast(Node, d.type_).kind == TX_STRUCT && cast(i64, cast(Ty, find_type(q)).fields) != 0 {
+			// (a value struct resolved early by value_first)
 		} else if cast(Node, d.type_).kind == TX_STRUCT {
 			resolve_fields(cast(Ty, find_type(q)), cast(TypeExpr, d.type_))
 			layout_struct(cast(Ty, find_type(q)))
@@ -7139,6 +7226,11 @@ fn check_assignable(e Node, from i64, to Ty) {
 	if bounded_value(cast(i64, e), cast(Ty, from), to) != 0 {
 		return
 	}
+	if opt_value(to) != 0 && kind_of(cast(Ty, from)) != K_OPT && kind_of(cast(Ty, from)) != K_NIL && assignable(cast(Ty, from), cast(Ty, to.elem)) != 0 {
+		// A value struct where ?P is wanted: tag 1 and its bytes (#669).
+		box_value(e, to)
+		return
+	}
 	if kind_of(to) == K_OPT && opt_scalar(to) != 0 && kind_of(cast(Ty, from)) != K_OPT && kind_of(cast(Ty, from)) != K_NIL && assignable(cast(Ty, from), cast(Ty, opt_scalar(to))) != 0 {
 		// A number or bool where ?number is wanted: put it in a box.
 		if is_untyped(from) != 0 {
@@ -7163,13 +7255,45 @@ fn check_assignable(e Node, from i64, to Ty) {
 // two-word value [1, bits] (#632), with no allocation.
 fn box_value(e Node, to Ty) {
 	let inner = cast(Node, expr_clone(cast(i64, e)))
+	if opt_value(to) != 0 {
+		// ?P (#669): a frame area with tag 1 and the value's bytes after it.
+		let pos = e.pos
+		mut stmts = []i64{}
+		let o = temp(pos, mk_int(pos, 0, cast(i64, to)), cast(i64, to))
+		stmts = append(stmts, cast(i64, o))
+		stmts = append(stmts, assign_stmt(pos, mk_mem(pos, sym_ref_node(pos, cast(Sym, o.sym)), 0, 0, 0, ty_int), mk_int(pos, 1, ty_int)))
+		stmts = append(stmts, assign_stmt(pos, mk_mem(pos, sym_ref_node(pos, cast(Sym, o.sym)), 0, 0, 8, to.elem), cast(i64, inner)))
+		replace_node(cast(i64, e), mk_seq(pos, cast(i64, stmts), sym_ref_node(pos, cast(Sym, o.sym)), cast(i64, to)))
+		return
+	}
 	replace_node(cast(i64, e), mk_conv(e.pos, to_bits(inner), CV_OPT_SOME, cast(i64, to)))
 }
 
 // opt_payload is the value inside the optional number x (two words, already known to be set)
 // as its number type t (#632).
 fn opt_payload(pos i64, x i64, t i64) i64 {
+	if is_value_struct(cast(Ty, t)) != 0 {
+		// ?P's value: its bytes after the tag word (#669).
+		return mk_mem(pos, x, 0, 0, 8, t)
+	}
 	return from_bits(cast(Node, mk_conv(pos, x, CV_DYN_TABLE_WORD, ty_int)), t)
+}
+
+// opt_tag_of is the ?P variable whose tag word e reads (opt_tag), or 0.
+fn opt_tag_of(e i64) i64 {
+	if cast(Node, e).kind != EX_MEM || cast(MemExpr, e).off != 0 || cast(MemExpr, e).index != 0 {
+		return 0
+	}
+	let b = cast(MemExpr, e).base
+	if cast(Node, b).kind != EX_IDENT || opt_value(cast(Ty, cast(Node, b).type_)) == 0 {
+		return 0
+	}
+	return b
+}
+
+// opt_tag is ?P's tag word (#669): 0 for nil, 1 for a value.
+fn opt_tag(pos i64, x i64) i64 {
+	return mk_mem(pos, x, 0, 0, 0, ty_int)
 }
 
 // cell_bytes is the size of the cell that holds a captured variable of type t: two words for a
@@ -10084,9 +10208,13 @@ fn narrow_begin(c i64, sense i64) Pair {
 	}
 	mut x = cast(Binary, c).l
 	mut other = cast(Binary, c).r
-	if cast(Node, x).kind != EX_IDENT {
+	if cast(Node, x).kind != EX_IDENT && opt_tag_of(x) == 0 {
 		x = cast(Binary, c).r
 		other = cast(Binary, c).l
+	}
+	if opt_tag_of(x) != 0 {
+		// ?P against nil, already reading its tag word (#669).
+		x = opt_tag_of(x)
 	}
 	if cast(Node, x).kind != EX_IDENT || cast(IdentExpr, x).ref == 0 || cast(Node, other).kind != EX_INT || cast(IntLit, other).val != 0 {
 		return cast(Pair, 0)
@@ -10100,6 +10228,16 @@ fn narrow_begin(c i64, sense i64) Pair {
 		return cast(Pair, 0)
 	}
 	let rec = cast(Pair, pair(cast(i64, s), s.type_))
+	if opt_value(cast(Ty, s.type_)) != 0 {
+		// ?P (#669): the variable keeps its tag and bytes; the narrowed name reads P after the tag.
+		if s.captured != 0 || s.cell != 0 {
+			return cast(Pair, 0)
+		}
+		s.type_ = cast(Ty, s.type_).elem
+		s.unbox = 1
+		narrow_track(rec)
+		return rec
+	}
 	if opt_scalar(cast(Ty, s.type_)) != 0 {
 		// The variable keeps holding the box; the narrowed name reads the number inside it.
 		if s.captured != 0 || s.cell != 0 {
@@ -10384,6 +10522,17 @@ fn keep_fn(t Ty) Fn {
 	} else if k == K_FUNC {
 		// A closure: its descriptor and captured variables, deep (rt_keep_closure, #170).
 		ret.value = rt_call(pos, "rt_keep_closure", args1(sym_ref_node(pos, x)), cast(i64, t))
+	} else if opt_value(t) != 0 {
+		// ?P (#669): a copy whose value, if it has one, is kept.
+		let out = temp(pos, sym_ref_node(pos, x), cast(i64, t))
+		body = append(body, cast(i64, out))
+		let ifs = cast(IfStmt, node_new(ST_IF, pos))
+		ifs.cond = mk_bin(pos, "!=", opt_tag(pos, sym_ref_node(pos, cast(Sym, out.sym))), mk_int(pos, 0, ty_int), ty_bool)
+		ifs.then = empty_block(pos)
+		mut vs6 = cast(Block, ifs.then).stmts
+		vs6 = append(vs6, assign_stmt(pos, opt_payload(pos, sym_ref_node(pos, cast(Sym, out.sym)), t.elem), keep_call(pos, keep_fn(cast(Ty, t.elem)), opt_payload(pos, sym_ref_node(pos, cast(Sym, out.sym)), t.elem), t.elem)))
+		body = append(body, cast(i64, ifs))
+		ret.value = sym_ref_node(pos, cast(Sym, out.sym))
 	} else if k == K_OPT && opt_scalar(t) == 0 {
 		let ifs = cast(IfStmt, node_new(ST_IF, pos))
 		ifs.cond = mk_bin(pos, "==", sym_ref_node(pos, x), mk_int(pos, 0, cast(i64, t)), ty_bool)
@@ -10747,6 +10896,17 @@ fn vinc_fn(t i64) i64 {
 	let x = cast([]i64, f.locals)[0]
 	mut body = cast(Block, f.body).stmts
 	let vt = cast(Ty, t)
+	if opt_value(vt) != 0 {
+		// ?P (#669): its value's fields, when the tag says it has one.
+		let ifs = cast(IfStmt, node_new(ST_IF, pos))
+		ifs.cond = mk_bin(pos, "!=", opt_tag(pos, sym_ref_node(pos, cast(Sym, x))), mk_int(pos, 0, ty_int), ty_bool)
+		ifs.then = empty_block(pos)
+		mut vi = cast(Block, ifs.then).stmts
+		vi = append(vi, expr_stmt(rc_inc_call(pos, opt_payload(pos, sym_ref_node(pos, cast(Sym, x)), vt.elem))))
+		body = append(body, cast(i64, ifs))
+		ck_fn = saved_fn
+		return cast(i64, f)
+	}
 	mut fi = 0
 	for fi < len(vt.fields) {
 		let ft = field_type(vt, fi)
@@ -10804,6 +10964,14 @@ fn rc_drop_body(pos i64, body []i64, x i64, t Ty) {
 			mark_reach(cast(Fn, rel.fn_))
 		}
 		body = append(body, expr_stmt(cast(Node, rel)))
+	} else if opt_value(t) != 0 {
+		// ?P (#669): its value's fields, when the tag says it has one.
+		let ifs = cast(IfStmt, node_new(ST_IF, pos))
+		ifs.cond = mk_bin(pos, "!=", opt_tag(pos, x), mk_int(pos, 0, ty_int), ty_bool)
+		ifs.then = empty_block(pos)
+		mut vs4 = cast(Block, ifs.then).stmts
+		vs4 = append(vs4, expr_stmt(rc_dec_call(pos, opt_payload(pos, x, t.elem), drop_fn(t.elem))))
+		body = append(body, cast(i64, ifs))
 	} else if k == K_OPT {
 		let ifs = cast(IfStmt, node_new(ST_IF, pos))
 		ifs.cond = mk_bin(pos, "!=", x, mk_int(pos, 0, cast(i64, t)), ty_bool)
@@ -10998,6 +11166,17 @@ fn arenacopy_fn(t Ty) Fn {
 		ret.value = rt_call(pos, "rt_arena_fault", args1(sym_ref_node(pos, x)), cast(i64, t))
 	} else if k == K_STRING {
 		ret.value = rt_call(pos, "rt_arena_str", args1(sym_ref_node(pos, x)), cast(i64, t))
+	} else if opt_value(t) != 0 {
+		// ?P (#669): a copy whose value, if it has one, is copied out.
+		let out = temp(pos, sym_ref_node(pos, x), cast(i64, t))
+		body = append(body, cast(i64, out))
+		let ifs = cast(IfStmt, node_new(ST_IF, pos))
+		ifs.cond = mk_bin(pos, "!=", opt_tag(pos, sym_ref_node(pos, cast(Sym, out.sym))), mk_int(pos, 0, ty_int), ty_bool)
+		ifs.then = empty_block(pos)
+		mut vs6 = cast(Block, ifs.then).stmts
+		vs6 = append(vs6, assign_stmt(pos, opt_payload(pos, sym_ref_node(pos, cast(Sym, out.sym)), t.elem), keep_call(pos, arenacopy_fn(cast(Ty, t.elem)), opt_payload(pos, sym_ref_node(pos, cast(Sym, out.sym)), t.elem), t.elem)))
+		body = append(body, cast(i64, ifs))
+		ret.value = sym_ref_node(pos, cast(Sym, out.sym))
 	} else if k == K_OPT && opt_scalar(t) == 0 {
 		let ifs = cast(IfStmt, node_new(ST_IF, pos))
 		ifs.cond = mk_bin(pos, "==", sym_ref_node(pos, x), mk_int(pos, 0, cast(i64, t)), ty_bool)
