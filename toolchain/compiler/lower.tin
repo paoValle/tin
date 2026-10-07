@@ -2260,7 +2260,7 @@ fn init_zero_field(pos i64, stmts []i64, obj i64, t Ty, fi i64) {
 		buf_str(m, " of type ")
 		type_name(cast([]u8, m), cast(Ty, ft))
 		if k == K_DYN {
-			buf_str(m, " must be set (a dyn value has no zero; the table comes with the next step, #141)")
+			buf_str(m, " must be set (a dyn value has no zero value)")
 		} else {
 			buf_str(m, " must be set (it cannot be nil; declare it ?T to allow that)")
 		}
@@ -5555,7 +5555,7 @@ fn say_arg(a Node, prefix str) Node {
 		let et = t.elem
 		let ek = kind_of(cast(Ty, et))
 		if say_type_has_dyn(et) != 0 {
-			err_code_at(pos, "E530 DYN_NOT_YET", "cannot format a slice of dyn values: give the shape a method that formats (#141)")
+			err_code_at(pos, "E530 DYN_NOT_YET", "cannot format a slice of dyn values: give the shape a method that formats (#569)")
 			return cast(Node, ty_void)
 		}
 		if ek == K_STRING {
@@ -5587,13 +5587,13 @@ fn say_arg(a Node, prefix str) Node {
 		mut st = t
 		if k == K_OPT {
 			if kind_of(cast(Ty, t.elem)) == K_DYN {
-				err_code_at(pos, "E530 DYN_NOT_YET", "cannot format a dyn value: give the shape a method that formats (#141)")
+				err_code_at(pos, "E530 DYN_NOT_YET", "cannot format a dyn value: give the shape a method that formats (#569)")
 				return cast(Node, ty_void)
 			}
 			st = cast(Ty, t.elem)
 		}
 		if say_type_has_dyn(cast(i64, st)) != 0 {
-			err_code_at(pos, "E530 DYN_NOT_YET", "cannot format a value holding a dyn value: give the shape a method that formats (#141)")
+			err_code_at(pos, "E530 DYN_NOT_YET", "cannot format a value holding a dyn value: give the shape a method that formats (#569)")
 			return cast(Node, ty_void)
 		}
 		return cast(Node, say_struct(a, st, prefix))
@@ -5602,7 +5602,7 @@ fn say_arg(a Node, prefix str) Node {
 	} else if k == K_MAP {
 		return cast(Node, say_map_sorted(a, t, prefix))
 	} else if k == K_DYN {
-		err_code_at(pos, "E530 DYN_NOT_YET", "cannot format a dyn value: give the shape a method that formats (#141)")
+		err_code_at(pos, "E530 DYN_NOT_YET", "cannot format a dyn value: give the shape a method that formats (#569)")
 		return cast(Node, ty_void)
 	} else if k != K_INT && k != K_UINT {
 		suffix = "p"

@@ -5,6 +5,8 @@ package hearth
 
 // Cores is the number of CPUs this program may use: the CPUs online, capped on Linux by the
 // affinity mask (cpuset) and the cgroup CPU quota (ceil of cpu.max quota/period); never 0.
+// It is how many cores to start (hearth.Run(hearth.Cores(), entry)), not how many run:
+// relay.Cores() is the number started, and only those read their relay inbox.
 fn Cores() i64 {
 	let n = rt_ncpus()
 	if n < 1 {

@@ -1671,7 +1671,7 @@ fn check_shape(pos i64, t Ty, sd Decl, bind_ []i64) {
 		if constraints_shape(sd, "Any") != 0 {
 			return
 		}
-		err_code_at(pos, "E514 DYN_WIDENING", "a dyn value satisfies its own shape only; dyn-to-dyn widening is the next step (#141)")
+		err_code_at(pos, "E514 DYN_WIDENING", "a dyn value satisfies its own shape only; dyn-to-dyn widening is not built yet")
 		return
 	}
 	if len(shape_checking) == 0 {

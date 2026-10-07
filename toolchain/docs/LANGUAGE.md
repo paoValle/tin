@@ -32,10 +32,9 @@ Contents: 1 Programs and packages · 2 Lexical elements · 3 Types · 4 Constant
 19 Attributes · 20 Standard-library-only features · 21 Grammar · 22 From edition 0 ·
 23 Differences from Go
 
-**Status.** A few edition 1 forms are read by the parser but not yet accepted by the
-checker, and are marked *not yet implemented* where they appear: `arena` blocks (#236) and
-variadic parameters (`xs ...i64`). The checker reports variadic parameters as E295 NOT_YET.
-The checker also does not yet reject reassigning a `let` name.
+**Status.** One edition 1 form is read by the parser but not yet accepted by the checker,
+and is marked *not yet implemented* where it appears: variadic parameters (`xs ...i64`),
+reported as E295 NOT_YET (#562).
 
 ---
 
@@ -725,7 +724,7 @@ fn main() {
 ```
 
 - Each parameter has a type (`a i64, b i64`; a shared type `a, b i64` is also accepted).
-  Up to 8 integer and 8 float parameters. A variadic last parameter `xs ...i64` is a `[]i64` inside, called
+  Up to 64 integer and 64 float parameters (#533). A variadic last parameter `xs ...i64` is a `[]i64` inside, called
   `sum(1, 2, 3)` or `sum(xs...)` (*not yet implemented in edition 1*).
 - Results: none, one (`i64`), a list (`(i64, str)`), or any of these marked as able to
   fail (`!i64`, `!(i64, str)`, `!`); up to 8. There are no named results.
@@ -1334,7 +1333,7 @@ say.Line(profile, page, summary)
 - **`parallel { }`**: each line of the block is a child task (section 11); the value is
   the tuple of their values, `let (user, orders) = try parallel { ... }`.
 - **`arena { }`**: the block's temporary allocations are dropped at its end and its value
-  is copied out (*not yet implemented*, #236).
+  is copied out (section 12, "Arenas").
 
 ```tin
 import "constraints"

@@ -234,7 +234,7 @@ ServeTLS (and Router.ServeTLS) serve HTTPS: TLS 1.3 with a PEM certificate chain
 
 Package hearth runs a program on every core: one thread per core, each with its own globals, request pool and ingot heap. Cores share nothing; relay carries messages.
 
-- `Cores() i64`: Cores is the number of CPUs this program may use: the CPUs online, capped on Linux by the affinity mask (cpuset) and the cgroup CPU quota (ceil of cpu.max quota/period); never 0.
+- `Cores() i64`: Cores is the number of CPUs this program may use: the CPUs online, capped on Linux by the affinity mask (cpuset) and the cgroup CPU quota (ceil of cpu.max quota/period); never 0. It is how many cores to start (hearth.Run(hearth.Cores(), entry)), not how many run: relay.Cores() is the number started, and only those read their relay inbox.
 - `MemLimit() i64`: MemLimit is the memory limit in bytes the container (cgroup) imposes: 0 when there is none.
 - `ID() i64`: ID is the current core's number: 0 for the main core.
 - `Run(n i64, entry fn(i64))`: Run starts entry(i) on cores 1..n-1, runs entry(0) here, then waits for every core. Before starting it sizes the request pools to the memory limit and decides whether cores pin themselves to CPUs (only when they map one-to-one onto the allowed CPUs, or TIN_PIN=1).
@@ -247,7 +247,7 @@ Package hearth runs a program on every core: one thread per core, each with its 
 
 ## relay
 
-Package relay carries messages between cores, which share no memory. A message is a str copied into the receiving core's inbox (a lock-free multi-producer queue); the receiver gets its own copy in its request pool. Encode structs with argo.Put/argo.Get.
+Package relay carries messages between cores, which share no memory. A message is a str copied into the receiving core's inbox (a lock-free multi-producer queue); the receiver gets its own copy in its request pool. Encode structs with argo.Put/argo.Get. Send only to cores below relay.Cores(), the cores the program started: hearth.Cores() is the CPUs it may use, and a message to a core that was never started waits forever.
 
 ```tin body
 relay.Send(2, "hello")              // from any core
@@ -255,9 +255,9 @@ let (from, msg) = relay.Recv()      // on core 2: blocks until a message arrives
 let (src, text) = try relay.Next()  // the same, but fails on a deadline or cancel
 ```
 
-- `Send(to i64, msg str)`: Send copies msg into core to's inbox; it never blocks.
+- `Send(to i64, msg str)`: Send copies msg into core to's inbox; it never blocks. A core that was never started (to >= Cores()) never reads it.
 - `Broadcast(msg str)`: Broadcast sends msg to every other running core.
-- `Cores() i64`: Cores is the number of cores the program started.
+- `Cores() i64`: Cores is the number of cores the program started (1 before hearth.Run), the cores whose inboxes are read. hearth.Cores() is a different number: the CPUs the program may use.
 - `TryRecv() (i64, str, bool)`: TryRecv returns the next message for this core, if there is one.
 - `Recv() (i64, str)`: Recv blocks until a message for this core arrives and returns its sender and text. It blocks the whole core and ignores deadlines and cancels; use Next in tasks and within blocks.
 - `Next() !(i64, str)`: Next waits until a message for this core arrives and returns its sender and text. Unlike Recv it waits through rt_task_wait: inside a task the core serves other tasks meanwhile, and a deadline (within, the request's) or a cancel ends the wait with that fault. Under anvil.OnRelay the event loop takes every message, so do not call Next there.

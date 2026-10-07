@@ -341,7 +341,7 @@ fn resolve_type(tx i64) i64 {
 		}
 		let mvt = resolve_type(cast(TypeExpr, tx).b)
 		if is_dyn_value(cast(Ty, mvt)) != 0 {
-			err_code_at(cast(Node, tx).pos, "E530 DYN_NOT_YET", "a map value of type dyn is the next step: the map stores 16-byte slots with the table (#141)")
+			err_code_at(cast(Node, tx).pos, "E530 DYN_NOT_YET", "a map value of type dyn is not built yet: the map stores 16-byte slots with the table (#567)")
 		}
 		return map_of(mkt, mvt)
 	}
@@ -961,7 +961,7 @@ fn declare_fn(f Fn) {
 		mut ri = 0
 		for ri < len(rtypes) {
 			if kind_of(cast(Ty, rtypes[ri])) == K_DYN {
-				err_code_at(f.pos, "E530 DYN_NOT_YET", "a !dyn result is the next step: fail would need the zero pair (#141)")
+				err_code_at(f.pos, "E530 DYN_NOT_YET", "a !dyn result is not built yet: fail would need the zero pair (#568)")
 			}
 			ri = ri + 1
 		}

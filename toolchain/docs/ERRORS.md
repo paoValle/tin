@@ -3059,7 +3059,7 @@ fn main() {
 ```
 
 ```text
-example.tin:17:6: error E514 DYN_WIDENING: a dyn value satisfies its own shape only; dyn-to-dyn widening is the next step (#141)
+example.tin:17:6: error E514 DYN_WIDENING: a dyn value satisfies its own shape only; dyn-to-dyn widening is not built yet
 ```
 
 Fix: pass the concrete value, or convert the concrete value to the `dyn` shape you need.
@@ -3260,8 +3260,8 @@ Fix: rename one of the methods, or make the signatures the same.
 
 ### E530 DYN_NOT_YET
 
-Some uses of `dyn` are planned but not built yet (#141): a `dyn` value in a map, a `!dyn`
-result, and formatting a `dyn` value.
+Some uses of `dyn` are planned but not built yet: a `dyn` value in a map (#567), a `!dyn`
+result (#568), and formatting a `dyn` value (#569).
 
 ```tin edition=1
 package main
@@ -3275,7 +3275,7 @@ fn main() {
 ```
 
 ```text
-example.tin:6:10: error E530 DYN_NOT_YET: a map value of type dyn is the next step: the map stores 16-byte slots with the table (#141)
+example.tin:6:10: error E530 DYN_NOT_YET: a map value of type dyn is not built yet: the map stores 16-byte slots with the table (#567)
 ```
 
 Fix: keep the values in a `[]dyn S` and map the keys to indexes, or use the concrete type

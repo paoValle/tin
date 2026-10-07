@@ -1,6 +1,8 @@
 // Package relay carries messages between cores, which share no memory. A message is a
 // str copied into the receiving core's inbox (a lock-free multi-producer queue); the
 // receiver gets its own copy in its request pool. Encode structs with argo.Put/argo.Get.
+// Send only to cores below relay.Cores(), the cores the program started: hearth.Cores() is
+// the CPUs it may use, and a message to a core that was never started waits forever.
 //
 //	relay.Send(2, "hello")              // from any core
 //	let (from, msg) = relay.Recv()      // on core 2: blocks until a message arrives
@@ -45,7 +47,8 @@ fn box(core i64) i64 {
 	return b
 }
 
-// Send copies msg into core to's inbox; it never blocks.
+// Send copies msg into core to's inbox; it never blocks. A core that was never started
+// (to >= Cores()) never reads it.
 fn Send(to i64, msg str) {
 	let b = box(to)
 	let n = len(msg)
@@ -74,7 +77,8 @@ fn Broadcast(msg str) {
 	}
 }
 
-// Cores is the number of cores the program started.
+// Cores is the number of cores the program started (1 before hearth.Run), the cores whose
+// inboxes are read. hearth.Cores() is a different number: the CPUs the program may use.
 fn Cores() i64 {
 	return __atomic_load(&rtCores)
 }
