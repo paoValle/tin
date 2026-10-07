@@ -10,5 +10,5 @@ fn main() {
 		defer say.Line(i)
 	}
 	defer f()
-	defer say.Line("x")
+	defer say.Fmt("x")
 }

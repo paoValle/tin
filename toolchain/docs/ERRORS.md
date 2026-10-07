@@ -551,7 +551,13 @@ Fix: use literal endpoints, or bind the value and test it in a guard.
 
 ### E055 DEFER_CALL
 
-`defer` takes a function call, which runs when the function returns.
+`defer` takes a function call, which runs when the function returns: a function or method
+call, or one of the calls the compiler builds in place that give nothing (`say.Line`,
+`say.Text`, `say.Out`, `say.To`, `say.LineTo`, `argo.Put`, `delete`, `copy`, `panic`,
+`print`, `println`). It refuses anything else, and a call whose value would be lost (`keep`,
+`append`, `len`, `cap`, `make`, `new`, `min`, `max`, `bound`, `cast`, `reveal`, `same`,
+`say.Fmt`, `say.Str`, `say.Fault`) with a message naming it: `defer cannot take keep: the value
+it gives would be lost`. A deferred `argo.Get` is E270, as its fault would be ignored.
 
 ```tin edition=1
 package main
@@ -566,7 +572,8 @@ fn main() {
 example.tin:5:2: error E055 DEFER_CALL: expected a function call
 ```
 
-Fix: defer a call (`defer f.Close()`); wrap anything else in a function and defer a call to it.
+Fix: defer a call (`defer f.Close()`, `defer say.Line("done")`); wrap anything else in a function
+and defer a call to it.
 
 ### E090 OLD_SYNTAX
 

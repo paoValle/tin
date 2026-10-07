@@ -1,0 +1,21 @@
+package main
+
+import "argo"
+import "say"
+
+// #645: a deferred call whose value or fault would be lost is still refused, by name.
+
+type P struct {
+	x i64
+}
+
+fn main() {
+	mut p = P{x: 1}
+	let xs = []i64{1}
+	defer say.Fmt("%d", 1)
+	defer argo.Get(`{"x":2}`, mut p)
+	defer keep(xs)
+	defer len(xs)
+	defer append(xs, 2)
+	say.Line(p.x)
+}

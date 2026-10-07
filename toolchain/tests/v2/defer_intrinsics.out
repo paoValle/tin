@@ -1,0 +1,19 @@
+body
+done
+t {"x":1,"tags":[]}
+record 99
+{"x":1,"tags":["a"]}
+inside 2
+after 1
+first
+[x y] 2
+x
+failing done 1
+2 true
+failing done 3
+fault too big
+7-out
+deferred println while unwinding
+caught panic: boom
+closure body
+closure defer 4

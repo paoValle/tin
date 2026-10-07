@@ -1,0 +1,83 @@
+package main
+
+import "argo"
+import "say"
+
+// #645: defer takes the calls the compiler builds in place (say.Line, say.Text, say.Out,
+// argo.Put, delete, print, ...): the arguments are evaluated at the defer, and the call runs
+// when the function returns, while a fault returns, or while a panic unwinds.
+
+type P struct {
+	x i64
+	tags []str
+}
+
+// The issue's three lines: body, then done, t, and the JSON in buf.
+fn issue(buf mut []u8) {
+	defer argo.Put(mut buf, P{x: 1, tags: []str{}})
+	defer say.Text("t")
+	defer say.Line("done")
+	say.Line("body")
+}
+
+fn record(buf mut []u8, p P) {
+	// The argument is read at the defer: the struct assigned after it is not the one encoded.
+	mut q = p
+	defer argo.Put(mut buf, q)
+	q = P{x: 99, tags: []str{}}
+	say.Line("record", q.x)
+}
+
+fn cleanup(m mut map[str]i64) {
+	defer delete(m, "tmp")
+	m["tmp"] = 1
+	say.Line("inside", len(m))
+}
+
+fn printed(parts []str) {
+	defer print(parts[0], "\n")
+	defer say.Line(parts, len(parts))
+	say.Line("first")
+}
+
+fn failing(n i64) !i64 {
+	defer say.Line("failing done", n)
+	if n > 2 {
+		fail "too big"
+	}
+	return n * 2
+}
+
+fn panics() {
+	defer println("deferred println while unwinding")
+	defer say.Out("%d-%s\n", 7, "out")
+	panic("boom")
+}
+
+fn main() {
+	mut first = []u8{}
+	issue(mut first)
+	say.Line("", str(first))
+	mut buf = []u8{}
+	record(mut buf, P{x: 1, tags: []str{"a"}})
+	say.Line(str(buf))
+	mut m = map[str]i64{"keep": 1}
+	cleanup(mut m)
+	say.Line("after", len(m))
+	printed([]str{"x", "y"})
+	let (v, e1) = failing(1)
+	say.Line(v, e1 == nil)
+	failing(3) catch err {
+		say.Line("fault", err)
+	}
+	guard {
+		panics()
+	} catch err {
+		say.Line("caught", err)
+	}
+	let f = fn(v i64) {
+		defer say.Line("closure defer", v)
+		say.Line("closure body")
+	}
+	f(4)
+}

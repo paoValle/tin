@@ -1235,7 +1235,11 @@ fn status(err fault) i64 {
   returns `try` makes. A defer inside a loop is rejected (it would run once per function,
   not per iteration: move the loop body into a function). Deferring a call that returns a
   fault is rejected (the fault would be lost: defer a function that handles it). Deferred
-  calls must be plain function or method calls.
+  calls are function or method calls, or the calls the compiler builds in place that give
+  nothing: `say.Line`, `say.Text`, `say.Out`, `say.To`, `say.LineTo`, `argo.Put`, `delete`,
+  `copy`, `panic`, `print` and `println` (#645), whose arguments are evaluated at the defer
+  like any other's. A builtin or `say` call that gives a value (`keep`, `append`, `len`,
+  `say.Fmt`, ...) is rejected, since the value would be lost.
 - Deferred calls also run when a panic unwinds through their function inside a request,
   a task or a `guard` block, innermost first, before the request's resource cleanups; a
   panic inside a deferred call during that unwinding ends the process.

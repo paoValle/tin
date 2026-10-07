@@ -5594,7 +5594,27 @@ fn lower_defer(s i64) {
 		err_code_at(pos, "E270 DEFER", "defer inside a loop would run once per function, not per iteration: move the loop body into a function")
 		return
 	}
-	let call = cast(GoStmt, s).call
+	mut call = cast(GoStmt, s).call
+	// A call the compiler builds in place is deferred as a closure that makes it (#645).
+	let wrap = defer_wrap(call)
+	if wrap == 2 {
+		err_code_at(pos, "E270 DEFER", "defer would ignore the fault this call returns: defer a function that handles it")
+		return
+	}
+	if wrap == 3 {
+		let u = err_code(pos, "E055 DEFER_CALL")
+		buf_str(u, "defer cannot take ")
+		buf_str(u, defer_call_name(call))
+		buf_str(u, ": the value it gives would be lost (defer a function that uses it)")
+		err_end(cast([]u8, u))
+		return
+	}
+	mut pre = []i64{}
+	if wrap == 1 {
+		call = defer_closure(pos, call, mut pre)
+		cast(GoStmt, s).call = call
+	}
+	let name = defer_call_name(call)
 	let t = chk(cast(Node, call), 0)
 	let tk = kind_of(cast(Ty, t))
 	if tk == K_ERROR || (tk == K_TUPLE && tuple_has_fault(cast(Ty, t)) != 0) {
@@ -5602,12 +5622,17 @@ fn lower_defer(s i64) {
 		return
 	}
 	if cast(Node, call).kind != EX_CALL || cast(Call, call).intrinsic != 0 {
-		err_code_at(pos, "E055 DEFER_CALL", "defer needs a plain function call (wrap anything else in a function)")
+		let u = err_code(pos, "E055 DEFER_CALL")
+		buf_str(u, "defer cannot take ")
+		buf_str(u, name)
+		buf_str(u, ": the compiler builds it in place and it gives a value (defer a function that calls it)")
+		err_end(cast([]u8, u))
 		return
 	}
 	sb_defer(pos, cast(Call, call))
 	let b = cast(Block, empty_block(pos))
 	b.flat = 1
+	b.stmts = pre
 	if cast(Call, call).callee != 0 {
 		let ct = temp(pos, cast(Call, call).callee, cast(Node, cast(Call, call).callee).type_)
 		b.stmts = append(b.stmts, cast(i64, ct))
@@ -5631,6 +5656,142 @@ fn lower_defer(s i64) {
 	mut vs3 = cast([]i64, ck_defers)
 	vs3 = append(vs3, pair(flag, call))
 	replace_node(s, cast(i64, b))
+}
+
+// defer_wrap says what lower_defer does with call, before it is checked (#645): 1 for a call the
+// compiler builds in place that gives nothing (say.Line, Text, Out, To and LineTo, argo.Put,
+// delete, panic, print, println, copy), deferred as a closure; 2 for argo.Get and GetStrict,
+// whose fault would be ignored (E270); 3 for say.Fmt, Str and Fault and the builtins that give
+// a value (keep, append, len, ...), whose value would be lost; 0 for any other call.
+fn defer_wrap(call i64) i64 {
+	if cast(Node, call).kind != EX_CALL {
+		return 0
+	}
+	let name = cast(Call, call).name
+	let callee = cast(Call, call).callee
+	if len(name) != 0 && callee == 0 {
+		if cast(i64, lookup_name(name)) != 0 {
+			return 0
+		}
+		if name == "delete" || name == "panic" || name == "print" || name == "println" || name == "copy" {
+			return 1
+		}
+		if name == "keep" || name == "append" || name == "len" || name == "cap" || name == "make" || name == "new" || name == "min" || name == "max" || name == "bound" || name == "cast" || name == "reveal" || name == "same" {
+			return 3
+		}
+		return 0
+	}
+	if callee == 0 || cast(Node, callee).kind != EX_SELECT {
+		return 0
+	}
+	let x = cast(SelectExpr, callee).x
+	let m = cast(SelectExpr, callee).name
+	if cast(Node, x).kind != EX_IDENT || lookup_name_local(cast(IdentExpr, x).name) != 0 || len(import_pkg(cast(IdentExpr, x).name)) == 0 {
+		return 0
+	}
+	let pkg = import_pkg(cast(IdentExpr, x).name)
+	if pkg == "say" && (m == "Line" || m == "Text" || m == "Out" || m == "To" || m == "LineTo") {
+		return 1
+	}
+	if pkg == "say" && is_say_func(m) != 0 {
+		return 3
+	}
+	if pkg == "argo" && m == "Put" {
+		return 1
+	}
+	if pkg == "argo" && (m == "Get" || m == "GetStrict") {
+		return 2
+	}
+	return 0
+}
+
+// defer_call_name names the unchecked call for E055: say.Fmt, keep, x.Close.
+fn defer_call_name(call i64) str {
+	if cast(Node, call).kind != EX_CALL {
+		return "this expression"
+	}
+	if len(cast(Call, call).name) != 0 {
+		return cast(Call, call).name
+	}
+	let callee = cast(Call, call).callee
+	if callee != 0 && cast(Node, callee).kind == EX_SELECT && cast(Node, cast(SelectExpr, callee).x).kind == EX_IDENT {
+		return cast(IdentExpr, cast(SelectExpr, callee).x).name + "." + cast(SelectExpr, callee).name
+	}
+	return "this call"
+}
+
+shared mut defer_seq i64 // numbers the cells of deferred calls' arguments
+
+// defer_closure turns `defer say.Line(a, b)` into `defer (fn() { say.Line($d0, $d1) })()`
+// (#645): each argument is evaluated now, as a deferred call's are, into a cell the closure
+// captures; a `mut x` argument passes the value of x now (a slice, map or struct, so the call
+// changes the same object), and `xs...` spreads the cell. pre gets the statements that fill
+// the cells.
+fn defer_closure(pos i64, call i64, pre mut []i64) i64 {
+	let args = cast(Call, call).args
+	mut nargs = []i64{}
+	mut i = 0
+	for i < len(args) {
+		let a = cast(Node, args[i])
+		mut inner = cast(i64, a)
+		mut marked = 0
+		mut spread = 0
+		if a.kind == EX_MUTARG {
+			inner = cast(MutArg, a).x
+			marked = 1
+		} else if a.kind == EX_UNARY && cast(Unary, a).op == "..." {
+			inner = cast(Unary, a).x
+			spread = 1
+		}
+		mut t = chk(cast(Node, inner), 0)
+		if is_untyped(t) != 0 {
+			t = reconvert(cast(Node, inner), default_type(t))
+		}
+		defer_seq = defer_seq + 1
+		let nb = buf_new()
+		buf_str(nb, "$defer")
+		buf_int(nb, defer_seq)
+		let name = str(nb)
+		let sym = cast(Sym, declare_local(pos, name, t))
+		give_cell(sym, pos, name)
+		let csym = cast(Sym, sym.cell_sym)
+		pre = append(pre, let_stmt(pos, csym, rt_call(pos, "rt_alloc", args1(mk_int(pos, 8 + 8 * is_dyn_value(cast(Ty, t)), ty_int)), ty_int)))
+		pre = append(pre, assign_stmt(pos, mk_mem(pos, sym_ref_node(pos, csym), 0, 0, 0, t), inner))
+		let id = cast(IdentExpr, node_new(EX_IDENT, pos))
+		id.name = name
+		mut na = cast(i64, id)
+		if marked != 0 {
+			let ma = cast(MutArg, node_new(EX_MUTARG, pos))
+			ma.x = na
+			na = cast(i64, ma)
+		} else if spread != 0 {
+			let sp = cast(Unary, node_new(EX_UNARY, pos))
+			sp.op = "..."
+			sp.x = na
+			na = cast(i64, sp)
+		}
+		nargs = append(nargs, na)
+		i = i + 1
+	}
+	let made = cast(Call, node_new(EX_CALL, cast(Node, call).pos))
+	made.name = cast(Call, call).name
+	made.callee = cast(Call, call).callee
+	made.args = cast([]i64, nargs)
+	let f = fn_new(pos, "func")
+	f.file = ck_fn.file
+	let body = cast(Block, empty_block(pos))
+	let es = cast(ExprStmt, node_new(ST_EXPR, pos))
+	es.x = cast(i64, made)
+	body.stmts = append(body.stmts, cast(i64, es))
+	f.body = cast(i64, body)
+	let lit = cast(FuncLit, node_new(EX_FUNCLIT, pos))
+	lit.fn_ = cast(i64, f)
+	lit.escape = 1
+	let outer = cast(Call, node_new(EX_CALL, pos))
+	outer.name = ""
+	outer.callee = cast(i64, lit)
+	outer.args = cast([]i64, []i64{})
+	return cast(i64, outer)
 }
 
 // defer_record stores call's callee and arguments (already in temps) in a chain record and

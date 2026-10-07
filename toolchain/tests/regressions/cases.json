@@ -999,5 +999,15 @@
       "stdout": "2 pos pos true\n",
       "stderr": ""
     }
+  },
+  {
+    "source": "defer-intrinsic.tin",
+    "issue": 645,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "body\ndone\nt",
+      "stderr": ""
+    }
   }
 ]

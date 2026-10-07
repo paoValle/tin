@@ -1,0 +1,5 @@
+toolchain/tests/v2/defer_intrinsics_bad.tin:15:2: error E055 DEFER_CALL: defer cannot take say.Fmt: the value it gives would be lost (defer a function that uses it)
+toolchain/tests/v2/defer_intrinsics_bad.tin:16:2: error E270 DEFER: defer would ignore the fault this call returns: defer a function that handles it
+toolchain/tests/v2/defer_intrinsics_bad.tin:17:2: error E055 DEFER_CALL: defer cannot take keep: the value it gives would be lost (defer a function that uses it)
+toolchain/tests/v2/defer_intrinsics_bad.tin:18:2: error E055 DEFER_CALL: defer cannot take len: the value it gives would be lost (defer a function that uses it)
+toolchain/tests/v2/defer_intrinsics_bad.tin:19:2: error E055 DEFER_CALL: defer cannot take append: the value it gives would be lost (defer a function that uses it)
