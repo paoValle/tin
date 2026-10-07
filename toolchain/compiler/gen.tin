@@ -952,8 +952,7 @@ fn gen_dyn_pair(e i64, obj i64, tab i64, d i64) {
 				emit3(I_LDR, tab, a, 8)
 			}
 		} else if s.tls != 0 {
-			emit3(I_LDR, obj, 28, tls_off(s))
-			emit3(I_LDR, tab, 28, tls_off(s) + 8)
+			ctx_pair(I_LDR, obj, tab, tls_off(s))
 		} else {
 			let first = sym_ref(SK_VAR, s.index)
 			let second = sym_ref(SK_VAR, s.words)
@@ -1069,9 +1068,9 @@ fn gen_ident(e IdentExpr, dst i64) {
 		}
 	} else if k == SYM_GLOBAL && s.tls != 0 {
 		if is_fp(dst) != 0 {
-			emit3(I_LDRD, dst, 28, tls_off(s))
+			ctx_mem(I_LDRD, dst, tls_off(s))
 		} else {
-			emit3(I_LDR, dst, 28, tls_off(s))
+			ctx_mem(I_LDR, dst, tls_off(s))
 		}
 	} else if k == SYM_GLOBAL {
 		let sym = sym_ref(SK_VAR, s.index)
@@ -1718,6 +1717,50 @@ fn slot_mem(op i64, rt i64, off i64) {
 	}
 	fp_offset(t, off)
 	emit3(op, rt, t, 0)
+}
+
+// ctx_addr builds a = x28 + off, for a per-core global's home outside the 32760 bytes a
+// scaled imm12 reaches. Past the 16 MiB the shifted immediate itself reaches (about 2.1
+// million globals) it does not fit either, and encode refuses the link instead of truncating.
+fn ctx_addr(a i64, off i64) {
+	emit3(I_ADDISH, a, 28, off >> 12)
+	if off & 4095 != 0 {
+		emit3(I_ADDI, a, a, off & 4095)
+	}
+}
+
+// ctx_mem loads or stores rt at [x28 + off], where tls_off puts a per-core global. The
+// scaled imm12 of ldr/str reaches 32760 bytes; past that the address is built in a scratch
+// register (the register pools start at x9, so x16/x17 hold no temporary and the one rt does
+// not use is free here). encode refuses an offset that does not fit, so nothing truncates.
+fn ctx_mem(op i64, rt i64, off i64) {
+	if off <= 32760 {
+		emit3(op, rt, 28, off)
+		return
+	}
+	mut t = X16
+	if rt == X16 {
+		t = X17
+	}
+	ctx_addr(t, off)
+	emit3(op, rt, t, 0)
+}
+
+// ctx_pair loads or stores the two words of a per-core dyn global from one computed address:
+// the second offset is what has to fit, so the pair is guarded at 32752.
+fn ctx_pair(op i64, first i64, second i64, off i64) {
+	if off <= 32752 {
+		emit3(op, first, 28, off)
+		emit3(op, second, 28, off + 8)
+		return
+	}
+	mut a = X16
+	if first == X16 {
+		a = X17
+	}
+	ctx_addr(a, off)
+	emit3(op, first, a, 0)
+	emit3(op, second, a, 8)
 }
 
 // out_slot_mem is slot_mem for the prologue and the epilogue, whose instructions go to the
@@ -3370,8 +3413,7 @@ fn gen_assign(s AssignStmt) {
 		let r1 = treg(1)
 		gen_dyn_pair(v, r0, r1, 0)
 		if sym.tls != 0 {
-			emit3(I_STR, r0, 28, tls_off(sym))
-			emit3(I_STR, r1, 28, tls_off(sym) + 8)
+			ctx_pair(I_STR, r0, r1, tls_off(sym))
 		} else {
 			let first = sym_ref(SK_VAR, sym.index)
 			let second = sym_ref(SK_VAR, sym.words)
@@ -3385,9 +3427,9 @@ fn gen_assign(s AssignStmt) {
 	mut r = gen_val(v, 0)
 	if sym.tls != 0 {
 		if is_fp(r) != 0 {
-			emit3(I_STRD, r, 28, tls_off(sym))
+			ctx_mem(I_STRD, r, tls_off(sym))
 		} else {
-			emit3(I_STR, r, 28, tls_off(sym))
+			ctx_mem(I_STR, r, tls_off(sym))
 		}
 		return
 	}

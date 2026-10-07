@@ -816,6 +816,30 @@ fn encode(ins i64, pc i64) i64 {
 	let y = ins[2]
 	let z = ins[3]
 	let w = ins[4]
+	// A scaled immediate that does not fit its field is an encoding error, not something to
+	// truncate into the other bits: the load/store and shifted-address forms name the range
+	// their field holds, the way enc_branch19 refuses a branch (#602).
+	if op == I_LDR || op == I_STR || op == I_LDRD || op == I_STRD {
+		if z < 0 || z > 32760 || z % 8 != 0 {
+			link_fail("load/store offset out of range")
+		}
+	}
+	if op == I_LDRB || op == I_STRB {
+		if z < 0 || z > 4095 {
+			link_fail("load/store offset out of range")
+		}
+	}
+	if op == I_LD || op == I_ST {
+		let scale = 1 << (w & 3)
+		if z < 0 || z % scale != 0 || z > 4095 * scale {
+			link_fail("load/store offset out of range")
+		}
+	}
+	if op == I_ADDISH || op == I_SUBISH {
+		if z < 0 || z > 4095 {
+			link_fail("address offset out of range")
+		}
+	}
 	if op == I_RAW {
 		return x & 0xffffffff
 	}
