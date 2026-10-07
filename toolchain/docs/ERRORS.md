@@ -1128,7 +1128,9 @@ parameter variadic (`xs ...T`) or pass a slice.
 ### E211 VARIADIC_ARG
 
 `xs...` passes a slice as the variadic parameter, so it is the last argument of a call to a
-function that has one (`append`; variadic parameters of your own functions are E295 until #562).
+function that has one (`append`, or a function with `xs ...T`, #562). Declaring a variadic
+parameter that is not the last, that is `mut`, or that shares its type with other names is
+the same error (`only the last parameter can be variadic`).
 
 ```tin edition=1
 package main
@@ -2163,26 +2165,25 @@ Fix: end each block arm with its value, or leave from it.
 
 ### E295 NOT_YET
 
-A few edition 1 forms are read by the parser but not built yet: a variadic parameter
-`xs ...T` in a function that is not `extern` (#562) and a generic tuple alias. Until they
-are, write the form out another way.
+A form the parser reads but the checker does not build yet: a generic tuple alias. Until it is,
+write the result list out.
 
 ```tin edition=1
 package main
 
-fn sum(xs ...i64) i64 {
-	return 0
-}
+import "constraints"
+
+type Pair[A constraints.Any] = (A, A)
 
 fn main() {
 }
 ```
 
 ```text
-example.tin:3:1: error E295 NOT_YET: a variadic parameter is not implemented yet (#562): take a []T parameter and pass a slice
+example.tin:5:6: error E295 NOT_YET: a generic tuple alias is not implemented yet: write the result list out
 ```
 
-Fix: take a `[]T` parameter and pass a slice.
+Fix: write `(A, A)` where the results go, in each generic function that returns them.
 
 ## E3xx Memory and regions
 

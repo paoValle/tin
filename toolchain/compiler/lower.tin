@@ -3389,17 +3389,48 @@ fn with_adapter(pos i64, w Fn, ct i64, bt Ty, tt i64, vt i64) i64 {
 fn chk_args(e i64, ptypes []i64, variadic i64, mask i64) {
 	let args = cast(Call, e).args
 	if variadic == 2 {
-		// A user function's variadic parameter, already reported as E295 (#558): check the
-		// arguments alone.
-		mut vi = 0
-		for vi < len(args) {
-			mut a = args[vi]
-			if cast(Node, a).kind == EX_UNARY && cast(Unary, a).op == "..." {
-				a = cast(Unary, a).x
+		// The last parameter is variadic (#562): the arguments past the others become one
+		// []T, made here as a slice literal, unless the call ends in s... (passed as it is).
+		let n = len(ptypes)
+		let fixed = n - 1
+		mut va = cast([]i64, cast(Call, e).args)
+		let last = n - 1
+		if len(va) == n && cast(Node, va[last]).kind == EX_UNARY && cast(Unary, va[last]).op == "..." {
+			va[last] = cast(Unary, va[last]).x
+		} else if len(va) >= fixed {
+			let lit = cast(Composite, node_new(EX_COMPOSITE, cast(Node, e).pos))
+			lit.type_ = node_new(EX_TYPE, cast(Node, e).pos)
+			lit.elems = []i64{}
+			lit.keys = []i64{}
+			mut ai = fixed
+			for ai < len(va) {
+				lit.elems = append(lit.elems, va[ai])
+				lit.keys = append(lit.keys, 0)
+				ai = ai + 1
 			}
-			chk(cast(Node, a), 0)
-			vi = vi + 1
+			mut packed = []i64{}
+			ai = 0
+			for ai < fixed {
+				packed = append(packed, va[ai])
+				ai = ai + 1
+			}
+			packed = append(packed, cast(i64, lit))
+			cast(Call, e).args = cast([]i64, packed)
+		} else {
+			let am = err_code(cast(Node, e).pos, "E210 ARG_COUNT")
+			if len(cast(Call, e).name) != 0 {
+				buf_str(cast([]u8, am), cast(Call, e).name)
+			} else {
+				buf_str(cast([]u8, am), "function")
+			}
+			buf_str(cast([]u8, am), " expects at least ")
+			buf_int(cast([]u8, am), fixed)
+			buf_str(cast([]u8, am), " arguments, got ")
+			buf_int(cast([]u8, am), len(va))
+			err_end(cast([]u8, am))
+			return
 		}
+		chk_args(e, ptypes, 0, mask)
 		return
 	}
 	let n = len(ptypes)
@@ -3829,7 +3860,7 @@ fn indirect_call(e i64) i64 {
 		return ty_int
 	}
 	cast(Call, e).fn_ = 0
-	chk_args(e, ft.fields, 0, ft.key)
+	chk_args(e, ft.fields, ft.variadic, ft.key)
 	return func_result(ft)
 }
 

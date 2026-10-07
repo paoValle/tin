@@ -1,0 +1,13 @@
+closure 3
+dyn 25 10
+func type 5 3 0
+generic 3 0 3 1 2
+hundred 4950
+join a, b, c  0
+method [info: started ok warn: ]
+shape 13
+shares true false
+spread 9
+sum 6 0 7
+untyped 202
+value 2 0

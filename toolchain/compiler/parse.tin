@@ -842,7 +842,8 @@ fn parse_type_base() i64 {
 		let ft = cast(TypeExpr, node_new(TX_FUNC, pos))
 		ptl_muts = 0
 		ft.a = cast(i64, parse_type_list())
-		ft.args = cast(i64, cast([]i64, ptl_muts))
+		// Bit 62 of the mut mask marks a variadic last parameter (#562).
+		ft.args = cast(i64, cast([]i64, ptl_muts | (ptl_variadic << 62)))
 		ft.b = cast(i64, parse_results())
 		return cast(i64, ft)
 	}
@@ -1181,9 +1182,11 @@ shared mut ptl_muts i64 // parse_type_list: bit i set when parameter i was writt
 fn parse_type_list() []i64 {
 	mut types = []i64{}
 	p_expect("(")
+	ptl_variadic = 0
 	for p_is(")") == 0 {
+		mut dots = 0
 		if p_is("...") != 0 {
-			p_next()
+			dots = cast(Token, p_next()).pos
 		}
 		let t2 = p_peek2()
 		// A name before a type is skipped (fn(a i64)), but dyn S is a type, not a name (#568).
@@ -1194,15 +1197,28 @@ fn parse_type_list() []i64 {
 			p_next()
 			ptl_muts = ptl_muts | (1 << len(types))
 		}
-		types = append(types, parse_type())
+		mut pt = parse_type()
+		if dots != 0 {
+			// fn(...T): the last parameter is variadic, a []T (#562).
+			let st = cast(TypeExpr, node_new(TX_SLICE, dots))
+			st.a = pt
+			pt = cast(i64, st)
+			ptl_variadic = 1
+		}
+		types = append(types, pt)
 		if p_is(",") == 0 {
 			break
 		}
 		p_next()
+		if dots != 0 {
+			p_fail_code(dots, "E211 VARIADIC_ARG", "only the last parameter can be variadic")
+		}
 	}
 	p_expect(")")
 	return cast([]i64, types)
 }
+
+shared mut ptl_variadic i64 // parse_type_list: the last parameter was written ...T
 
 // parse_results reads a func's result types: none, T, or (T1, T2) with optional names.
 fn parse_results() []i64 {
@@ -1319,14 +1335,21 @@ fn parse_params(f Fn) {
 		f.muts = append(f.muts, 0)
 		pending = pending + 1
 		if p_is(",") == 0 && p_is(")") == 0 {
+			mut dots = 0
 			if p_is("...") != 0 {
-				p_next()
+				dots = cast(Token, p_next()).pos
 				f.variadic = 1
+				if pending > 1 {
+					p_fail_code(dots, "E211 VARIADIC_ARG", "one parameter is variadic: write xs ...T after the others")
+				}
 			}
 			mut ismut = 0
 			if p_is("mut") != 0 {
 				p_next()
 				ismut = 1
+				if dots != 0 {
+					p_fail_code(dots, "E211 VARIADIC_ARG", "a variadic parameter cannot be mut")
+				}
 			}
 			let ty = parse_type()
 			mut i = len(f.ptypes) - pending
@@ -1336,6 +1359,9 @@ fn parse_params(f Fn) {
 				i = i + 1
 			}
 			pending = 0
+			if dots != 0 && p_is(")") == 0 {
+				p_fail_code(dots, "E211 VARIADIC_ARG", "only the last parameter can be variadic")
+			}
 		}
 		if p_is(",") == 0 {
 			break

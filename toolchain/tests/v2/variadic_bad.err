@@ -1,0 +1,4 @@
+toolchain/tests/v2/variadic_bad.tin:17:14: error E211 VARIADIC_ARG: ... is only allowed on the last argument of a call
+toolchain/tests/v2/variadic_bad.tin:18:13: error E230 TYPE_MISMATCH: cannot use str as i64
+toolchain/tests/v2/variadic_bad.tin:19:6: error E210 ARG_COUNT: join expects at least 1 arguments, got 0
+toolchain/tests/v2/variadic_bad.tin:20:24: error E230 TYPE_MISMATCH: cannot use func(...i64) i64 as func([]i64) i64

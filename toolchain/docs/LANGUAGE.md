@@ -32,9 +32,8 @@ Contents: 1 Programs and packages · 2 Lexical elements · 3 Types · 4 Constant
 19 Attributes · 20 Standard-library-only features · 21 Grammar · 22 From edition 0 ·
 23 Differences from Go
 
-**Status.** One edition 1 form is read by the parser but not yet accepted by the checker,
-and is marked *not yet implemented* where it appears: variadic parameters (`xs ...i64`),
-reported as E295 NOT_YET (#562).
+**Status.** Every edition 1 form the parser reads is accepted by the checker except a
+generic tuple alias (`type Pair[A] = (A, A)`), reported as E295 NOT_YET.
 
 ---
 
@@ -724,8 +723,15 @@ fn main() {
 ```
 
 - Each parameter has a type (`a i64, b i64`; a shared type `a, b i64` is also accepted).
-  Up to 64 integer and 64 float parameters (#533). A variadic last parameter `xs ...i64` is a `[]i64` inside, called
-  `sum(1, 2, 3)` or `sum(xs...)` (*not yet implemented in edition 1*).
+  Up to 64 integer and 64 float parameters (#533).
+- A variadic last parameter `xs ...T` is a `[]T` inside (#562). A call passes zero or more
+  `T` values after the other arguments, which become a new slice (`sum()` gets an empty
+  one), or exactly one `s...` with `s` a `[]T`, which is passed as it is (the callee sees
+  the same slice: `same(s, xs)` is true). `f(1, s...)` gives the fixed parameters their values
+  and `s` to the variadic one; values and a spread are not mixed for it (E211). Only the
+  last parameter can be variadic, and it cannot be `mut` (E211). Methods, closures, shape
+  methods and generic functions (`fn count[T](xs ...T)`, inferring `T` from the values) can
+  be variadic; the function type is written `fn(...T) R`, which is not `fn([]T) R`.
 - Results: none, one (`i64`), a list (`(i64, str)`), or any of these marked as able to
   fail (`!i64`, `!(i64, str)`, `!`); up to 8. There are no named results.
 - A function with results ends every path in `return` (functions do not have tail values;

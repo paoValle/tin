@@ -1,19 +1,11 @@
 package main
 
-import "say"
+import "constraints"
 
 // Forms the parser reads and the checker does not build yet are E295, once each, instead of
-// E990 INTERNAL or an error about something else (#558).
+// E990 INTERNAL or an error about something else (#558): a generic tuple alias.
 
-fn sum(xs ...i64) i64 {
-	mut t = 0
-	for x in xs {
-		t += x
-	}
-	return t
-}
+type Pair[A constraints.Any] = (A, A)
 
 fn main() {
-	let s = []i64{1, 2}
-	say.Line(sum(1, 2, 3), sum(s...))
 }

@@ -428,7 +428,16 @@ fn tunify(g Fn, binds []i64, tx i64, t Ty, untyped_ok i64) {
 
 // generic_call checks call e of template g: arguments first, then the inferred instance.
 fn generic_call(e i64, g Fn) i64 {
-	let args = cast(Call, e).args
+	mut args = cast(Call, e).args
+	// A variadic template (#562): its last parameter T takes the trailing arguments, each
+	// inferring T, packed into a []T once the instance exists; a final s... passes s.
+	let gnp = len(g.ptypes)
+	let gv = i64(g.variadic == 1 && g.extern_ == 0 && gnp > 0)
+	mut spread = 0
+	if gv != 0 && len(args) == gnp && cast(Node, args[gnp - 1]).kind == EX_UNARY && cast(Unary, args[gnp - 1]).op == "..." {
+		args[gnp - 1] = cast(Unary, args[gnp - 1]).x
+		spread = 1
+	}
 	mut atypes = []Ty{}
 	mut i = 0
 	for i < len(args) {
@@ -443,11 +452,16 @@ fn generic_call(e i64, g Fn) i64 {
 		i = i + 1
 	}
 	let np = len(g.ptypes)
-	if len(args) != np {
+	if (gv == 0 || spread != 0) && len(args) != np || gv != 0 && spread == 0 && len(args) < np - 1 {
 		let m = err_code(cast(Node, e).pos, "E210 ARG_COUNT")
 		buf_str(m, g.name)
 		buf_str(m, " expects ")
-		buf_int(m, np)
+		if gv != 0 {
+			buf_str(m, "at least ")
+			buf_int(m, np - 1)
+		} else {
+			buf_int(m, np)
+		}
 		buf_str(m, " arguments, got ")
 		buf_int(m, len(args))
 		err_end(cast([]u8, m))
@@ -457,8 +471,16 @@ fn generic_call(e i64, g Fn) i64 {
 	mut pass = 0
 	for pass < 2 {
 		i = 0
-		for i < np {
-			tunify(g, cast([]i64, binds), g.ptypes[i], atypes[i], pass)
+		for i < len(args) {
+			mut pi = i
+			mut at = atypes[i]
+			if gv != 0 && i >= np - 1 {
+				pi = np - 1
+				if spread != 0 && kind_of(at) == K_SLICE {
+					at = cast(Ty, at.elem)
+				}
+			}
+			tunify(g, cast([]i64, binds), g.ptypes[pi], at, pass)
 			i = i + 1
 		}
 		pass = pass + 1
@@ -493,6 +515,40 @@ fn generic_call(e i64, g Fn) i64 {
 	cast(Call, e).name = inst.qname
 	let ptypes = inst.ptypes
 	let mask = mut_mask(inst.muts)
+	if gv != 0 && spread == 0 {
+		// The trailing arguments, checked already, become the instance's []T.
+		let pos = cast(Node, e).pos
+		let st = cast(Ty, ptypes[np - 1])
+		let et = st.elem
+		let n = len(args) - (np - 1)
+		mut stmts = []i64{}
+		let sl = temp(pos, rt_call(pos, "rt_slice_make", args3(mk_int(pos, n, ty_int), mk_int(pos, n, ty_int), mk_int(pos, elem_size(st), ty_int)), cast(i64, st)), cast(i64, st))
+		stmts = append(stmts, cast(i64, sl))
+		let data = temp(pos, mk_hdr(pos, sym_ref_node(pos, cast(Sym, sl.sym)), 2), ty_int)
+		stmts = append(stmts, cast(i64, data))
+		mut packed = []i64{}
+		mut ptys = []Ty{}
+		i = 0
+		for i < len(args) {
+			let a = args[i]
+			if i < np - 1 {
+				packed = append(packed, a)
+				ptys = append(ptys, atypes[i])
+			} else {
+				check_assignable(cast(Node, a), cast(i64, atypes[i]), cast(Ty, et))
+				if is_untyped(cast(i64, atypes[i])) != 0 {
+					reconvert(cast(Node, a), et)
+				}
+				stmts = append(stmts, assign_stmt(pos, mk_mem(pos, sym_ref_node(pos, cast(Sym, data.sym)), 0, 0, (i - (np - 1)) * type_width(cast(Ty, et)), et), a))
+			}
+			i = i + 1
+		}
+		packed = append(packed, mk_seq(pos, cast(i64, stmts), sym_ref_node(pos, cast(Sym, sl.sym)), cast(i64, st)))
+		ptys = append(ptys, st)
+		args = cast([]i64, packed)
+		atypes = ptys
+		cast(Call, e).args = args
+	}
 	i = 0
 	for i < len(args) {
 		mut a = args[i]
@@ -1521,9 +1577,18 @@ fn shape_sig_of(f Fn, declared i64, bind_ []i64) ShapeSig {
 	if declared != 0 {
 		i = 1
 	}
+	// A shape method's variadic parameter is a []T, as a declared method's is after
+	// declare_fn (#562).
+	let wrap = i64(f.variadic == 1 && f.extern_ == 0 && len(f.ptypes) > 0)
 	for i < len(f.ptypes) {
 		ns = append(ns, f.params[i])
-		ps = append(ps, shape_sig_type(cast(Node, f.ptypes[i]), bind_))
+		mut px = f.ptypes[i]
+		if wrap != 0 && i == len(f.ptypes) - 1 && cast(Node, px).kind >= 40 {
+			let st = cast(TypeExpr, node_new(TX_SLICE, cast(Node, px).pos))
+			st.a = px
+			px = cast(i64, st)
+		}
+		ps = append(ps, shape_sig_type(cast(Node, px), bind_))
 		ms = append(ms, f.muts[i])
 		i = i + 1
 	}
@@ -1540,6 +1605,9 @@ fn shape_sig_of(f Fn, declared i64, bind_ []i64) ShapeSig {
 	sig.muts = ms
 	sig.results = rs
 	sig.variadic = f.variadic
+	if wrap != 0 {
+		sig.variadic = 2
+	}
 	sig.mutres = f.mutres
 	sig.bang = f.bang
 	return sig
@@ -1596,6 +1664,12 @@ fn shape_sig_str(b []u8, name str, sig ShapeSig) {
 		}
 		if variadic != 0 && i == len(ps) - 1 {
 			buf_str(b, "...")
+			if variadic == 2 && kind_of(cast(Ty, ps[i])) == K_SLICE {
+				// A user function's variadic parameter is its []T (#562): show the T.
+				type_name(b, cast(Ty, cast(Ty, ps[i]).elem))
+				i = i + 1
+				continue
+			}
 		} else if ms[i] != 0 {
 			buf_str(b, "mut ")
 		}

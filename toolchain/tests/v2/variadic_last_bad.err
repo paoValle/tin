@@ -1,0 +1,1 @@
+toolchain/tests/v2/variadic_last_bad.tin:5:9: error E211 VARIADIC_ARG: only the last parameter can be variadic

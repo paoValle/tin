@@ -364,7 +364,13 @@ fn resolve_type(tx i64) i64 {
 		return chan_of(resolve_type(cast(TypeExpr, tx).a))
 	}
 	if k == TX_FUNC {
-		return func_of_m(resolve_types(cast([]i64, cast(TypeExpr, tx).a)), resolve_types(expand_results(cast([]i64, cast(TypeExpr, tx).b))), 0, cast(TypeExpr, tx).args)
+		// Bit 62 of the mut mask marks a variadic last parameter, fn(...T) (#562).
+		let fa = cast(TypeExpr, tx).args
+		mut fv = 0
+		if ((fa >> 62) & 1) != 0 {
+			fv = 2
+		}
+		return func_of_m(resolve_types(cast([]i64, cast(TypeExpr, tx).a)), resolve_types(expand_results(cast([]i64, cast(TypeExpr, tx).b))), fv, fa & ~(1 << 62))
 	}
 	if k == TX_STRUCT {
 		let st = ty_new(K_STRUCT, "struct")
@@ -935,9 +941,8 @@ fn declare_fn(f Fn) {
 	}
 	let np = len(f.params)
 	if f.variadic == 1 && f.extern_ == 0 && np > 0 {
-		// Only externs take variadic arguments so far (#558, #562). Inside, the parameter
-		// is the slice it will be, so its uses report nothing more.
-		err_code_at(f.pos, "E295 NOT_YET", "a variadic parameter is not implemented yet (#562): take a []T parameter and pass a slice")
+		// A variadic parameter xs ...T is a []T inside (#562); calls pack their trailing
+		// arguments into one (chk_args). Externs keep C's variadic arguments (1).
 		let st = cast(TypeExpr, node_new(TX_SLICE, f.pos))
 		st.a = f.ptypes[np - 1]
 		f.ptypes[np - 1] = cast(i64, st)

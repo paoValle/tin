@@ -1,0 +1,22 @@
+package main
+
+// Variadic calls (#562): a spread s... is the whole variadic argument, so it cannot follow
+// other values for it; the values must be the element type; a function with fixed
+// parameters needs at least those.
+
+fn sum(xs ...i64) i64 {
+	return len(xs)
+}
+
+fn join(sep str, parts ...str) str {
+	return sep
+}
+
+fn main() {
+	let s = []i64{1, 2}
+	_ = sum(1, s...)
+	_ = sum(1, "two")
+	_ = join()
+	let f fn([]i64) i64 = sum
+	_ = f
+}

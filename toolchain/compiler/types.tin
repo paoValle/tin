@@ -545,10 +545,16 @@ fn type_name(b []u8, t Ty) {
 			if i > 0 {
 				buf_str(b, ", ")
 			}
-			if k == K_FUNC && i < 63 && (t.key & (1 << i)) != 0 {
+			if k == K_FUNC && i < 62 && (t.key & (1 << i)) != 0 {
 				buf_str(b, "mut ")
 			}
-			type_name(b, cast(Ty, ps[i]))
+			if k == K_FUNC && t.variadic == 2 && i == len(ps) - 1 && kind_of(cast(Ty, ps[i])) == K_SLICE {
+				// A variadic parameter is a []T inside; the type is written ...T (#562).
+				buf_str(b, "...")
+				type_name(b, cast(Ty, cast(Ty, ps[i]).elem))
+			} else {
+				type_name(b, cast(Ty, ps[i]))
+			}
 			i = i + 1
 		}
 		buf_byte(b, ')')

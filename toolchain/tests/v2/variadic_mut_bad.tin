@@ -1,0 +1,9 @@
+package main
+
+// A variadic parameter is a new slice or the caller's s..., never a mut parameter (#562).
+
+fn f(xs ...mut []i64) {
+}
+
+fn main() {
+}

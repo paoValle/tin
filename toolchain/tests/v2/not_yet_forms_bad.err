@@ -1,1 +1,1 @@
-toolchain/tests/v2/not_yet_forms_bad.tin:8:1: error E295 NOT_YET: a variadic parameter is not implemented yet (#562): take a []T parameter and pass a slice
+toolchain/tests/v2/not_yet_forms_bad.tin:8:6: error E295 NOT_YET: a generic tuple alias is not implemented yet: write the result list out

@@ -1,0 +1,1 @@
+toolchain/tests/v2/variadic_mut_bad.tin:5:9: error E211 VARIADIC_ARG: a variadic parameter cannot be mut

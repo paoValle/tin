@@ -1,0 +1,9 @@
+package main
+
+// Only the last parameter can be variadic (#562).
+
+fn f(xs ...i64, y i64) {
+}
+
+fn main() {
+}
