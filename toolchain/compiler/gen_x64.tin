@@ -3522,7 +3522,7 @@ fn x_finish_fn(f Fn, nslots i64) {
 		x_out4(X_PUSH, RBP, 0, 0, 0)
 		x_out4(X_MOV_RR, RBP, RSP, 0, 0)
 		if frame > 0 {
-			x_out4(X_SUBI, RSP, frame, 0, 0)
+			x_grow_stack(frame)
 		}
 		mut j = 0
 		for j < len(saved) {
@@ -3570,6 +3570,19 @@ fn x_finish_fn(f Fn, nslots i64) {
 		}
 		i = i + 1
 	}
+}
+
+// x_grow_stack lowers rsp by frame bytes. Past a page it goes one page at a time and reads
+// each, so a stack overflow meets the guard page below the stack before anything else and is
+// reported as one, however large the frame (#570).
+fn x_grow_stack(frame i64) {
+	mut rest = frame
+	for rest > STACK_PAGE {
+		x_out4(X_SUBI, RSP, STACK_PAGE, 0, 0)
+		x_out4(X_TESTM, RSP, x_mem1(RSP, 0), 0, 0)
+		rest = rest - STACK_PAGE
+	}
+	x_out4(X_SUBI, RSP, rest, 0, 0)
 }
 
 fn generate_x64() {

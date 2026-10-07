@@ -4055,7 +4055,9 @@ stack arguments, which sit above the frame. The message names the frame the func
 No example: it takes a function with tens of thousands of local variables.
 
 Fix: split the function, or keep the values in a slice or a struct instead of separate
-locals. A frame larger than the stack guard page can step over it; stack probes are #570.
+locals. A frame larger than a page touches each page on the way down (on arm64 and x86-64),
+so a deep recursion through it still meets the stack's guard and is reported as a stack
+overflow.
 
 ### E906 FIX_USAGE
 

@@ -906,5 +906,15 @@
       "stdout": "899\n",
       "stderr": ""
     }
+  },
+  {
+    "source": "large-frame-task-overflow.tin",
+    "issue": 570,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "caught\n",
+      "stderr_contains": "panic: stack overflow (a task's stack"
+    }
   }
 ]
