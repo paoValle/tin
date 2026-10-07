@@ -1384,7 +1384,15 @@ fn map_set_dyn(pos i64, m i64, k i64, v i64, ck i64) i64 {
 	stmts = append(stmts, cast(i64, saved))
 	let object = mk_conv(pos, sym_ref_node(pos, cast(Sym, saved.sym)), CV_DYN_OBJECT, ty_int)
 	let table = mk_conv(pos, sym_ref_node(pos, cast(Sym, saved.sym)), CV_DYN_TABLE_WORD, ty_int)
-	let call = rt_call(pos, "rt_map_set_dyn", args5(m, sym_ref_node(pos, cast(Sym, key.sym)), object, table, mk_int(pos, ck, ty_int)), ty_void)
+	mut args = []i64{}
+	args = append(args, m)
+	args = append(args, sym_ref_node(pos, cast(Sym, key.sym)))
+	args = append(args, object)
+	args = append(args, table)
+	args = append(args, mk_int(pos, ck, ty_int))
+	// The cell keeps the table entry of the object's drop (#618).
+	args = append(args, mk_int(pos, dyn_drop_index(cast(Node, v).type_), ty_int))
+	let call = rt_call(pos, "rt_map_set_dyn", cast(i64, args), ty_void)
 	return mk_seq(pos, cast(i64, stmts), call, ty_void)
 }
 
@@ -4133,7 +4141,12 @@ fn chk_builtin(e i64, name str, want i64) i64 {
 						// The elements' new slots own them (#176): a long-lived slice counts them.
 						appendn = "rt_slice_appendn_rc"
 					}
-					acc = rt_call(pos, appendn, args3(acc, cast(Unary, a).x, mk_int(pos, elem_size(st), ty_int)), cast(i64, st))
+					if is_dyn_value(cast(Ty, et)) != 0 {
+						// Their objects, for dyn elements (#618).
+						acc = rt_call(pos, "rt_slice_appendn_dyn", args2(acc, cast(Unary, a).x), cast(i64, st))
+					} else {
+						acc = rt_call(pos, appendn, args3(acc, cast(Unary, a).x, mk_int(pos, elem_size(st), ty_int)), cast(i64, st))
+					}
 				}
 			} else {
 				let vt = chk(cast(Node, a), et)
@@ -4285,6 +4298,9 @@ fn chk_builtin(e i64, name str, want i64) i64 {
 		}
 		if kind_of(st) == K_STRING {
 			replace_node(e, rt_call(pos, "rt_copy_str", args2(arg0(cast(Call, e)), args[1]), ty_int))
+		} else if kind_of(dt) == K_SLICE && is_dyn_value(cast(Ty, dt.elem)) != 0 {
+			// The objects of dyn elements, released through their tables (#618).
+			replace_node(e, rt_call(pos, "rt_slice_copy_dyn", args3(arg0(cast(Call, e)), args[1], mk_int(pos, dyn_drop_index(dt.elem), ty_int)), ty_int))
 		} else if kind_of(dt) == K_SLICE && rc_counted(cast(Ty, dt.elem)) != 0 {
 			// Copied values gain their slots' counts and replaced ones lose theirs (#176).
 			mut cargs = cast([]i64, args3(arg0(cast(Call, e)), args[1], mk_int(pos, elem_size(dt), ty_int)))

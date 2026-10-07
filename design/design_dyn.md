@@ -31,14 +31,17 @@ nothing new; it inherits design_foundations section 2 (`interface`, `any`, type 
   require a struct receiver; that is also what makes `object == 0` a safe nil test. If
   methods ever move to other types, this encoding is revisited.
 - `table` is the address of a static table for the pair (concrete type, shape). The table is
-  `[keep, method0, method1, ...]`: entry 0 is the concrete type's deep-copy routine, so
+  `[keep, method0, method1, ..., fmt, drop]`: entry 0 is the concrete type's deep-copy routine, so
   `keep(dyn)` can copy the object without runtime type information, and the methods follow in
   the shape's flatten order (`shape_collect`'s: listed shapes first, then the shape's own
   methods), deduplicated by name by the table build (the flattening itself keeps identical
   duplicates from different listed shapes). Entries are **function descriptor addresses**, so
   a call reuses the existing indirect-call convention (load the code word from the descriptor,
   pass it in the environment register). Building a table marks every method and the keep entry
-  reachable, so their descriptors are initialized like any called function's.
+  reachable, so their descriptors are initialized like any called function's. After the
+  methods come the concrete type's formatter (#569, `dyn_format_fns`), which `say` calls, and
+  its drop (#618, `dyn_drop_fns`), which a long-lived slot calls through
+  `rt_rc_dec_dyn` when it lets go of the value: entry `methods + 2`.
 - A `dyn S` is never nil; `?dyn S` is the same two words with `object == 0` meaning absent.
   `== nil` on a `?dyn` tests the object word only. `==` between two `dyn` values is rejected
   (a shape's identity is a method on the shape, as design_foundations section 2 requires);

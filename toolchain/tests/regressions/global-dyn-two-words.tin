@@ -1,0 +1,25 @@
+package main
+
+import "say"
+
+// A per-core dyn global is two words (#618). It had one slot: its table word landed on the
+// next global (here xs) or past the per-core area, so a method call on it crashed or hung.
+shape Namer {
+	Name() str
+}
+
+type Cat struct {
+	lives i64
+}
+
+fn (c Cat) Name() str {
+	return "cat {c.lives}"
+}
+
+mut g dyn Namer = Cat{lives: 1}
+mut xs = []dyn Namer{}
+
+fn main() {
+	xs = append(xs, keep(Cat{lives: 2}))
+	say.Line(g.Name(), len(xs), xs[0].Name())
+}

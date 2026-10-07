@@ -1,0 +1,81 @@
+package main
+
+import "hearth"
+import "mint"
+import "quarry"
+import "say"
+import "twine"
+
+// The dyn memory check's program (#618): long-lived slots holding dyn values are replaced
+// in a loop. Each replaced object must be released, so the peak stays flat.
+
+shape Namer {
+	Name() str
+}
+
+type Cat struct {
+	lives i64
+	tag str
+}
+
+fn (c Cat) Name() str {
+	return "cat {c.lives} {c.tag}"
+}
+
+type Holder struct {
+	v dyn Namer
+	o ?dyn Namer
+}
+
+mut holder = Holder{v: Cat{lives: 0, tag: "h"}, o: nil}
+mut g dyn Namer = Cat{lives: 0, tag: "g"}
+mut xs = []dyn Namer{}
+mut ys = []dyn Namer{}
+mut reg = map[str]dyn Namer{}
+
+fn main() {
+	let args = quarry.Args()
+	let what = keep(args[1])
+	let n = mint.Atoi(args[2]) catch _ { 0 }
+	for k in 0..4 {
+		xs = append(xs, keep(Cat{lives: k, tag: "x"}))
+		ys = append(ys, keep(Cat{lives: k, tag: "y"}))
+	}
+	for i in 0..n {
+		if what == "field" {
+			holder.v = keep(Cat{lives: i, tag: "f"})
+		} else if what == "opt" {
+			holder.o = keep(Cat{lives: i, tag: "o"})
+			if i % 3 == 0 {
+				holder.o = nil
+			}
+		} else if what == "global" {
+			g = keep(Cat{lives: i, tag: "g"})
+		} else if what == "slice" {
+			xs[i % 4] = keep(Cat{lives: i, tag: "s"})
+		} else if what == "copy" {
+			ys[i % 4] = keep(Cat{lives: i, tag: "c"})
+			copy(xs, ys)
+		} else if what == "map" {
+			reg["k"] = keep(Cat{lives: i, tag: "m"})
+			reg["t"] = keep(Cat{lives: i, tag: "t"})
+			delete(reg, "t")
+		}
+		if i % 1000 == 0 {
+			hearth.Reset()
+		}
+	}
+	say.Line(holder.v.Name(), g.Name(), xs[0].Name(), len(reg))
+	quarry.Eprintln(peak())
+}
+
+// peak is the process's peak resident memory in KiB (VmHWM), read on Linux.
+fn peak() str {
+	let st = quarry.ReadFile("/proc/self/status") catch _ { "" }
+	for line in twine.Split(st, "\n") {
+		if twine.HasPrefix(line, "VmHWM:") {
+			return twine.TrimSpace(twine.TrimSuffix(twine.TrimPrefix(line, "VmHWM:"), "kB"))
+		}
+	}
+	return "0"
+}

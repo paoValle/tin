@@ -130,6 +130,9 @@ jobs:
       - name: Format memory (say.Line and interpolation in a plain program run in constant memory)
         if: runner.os == 'Linux'
         run: python3 tools/ci/format_memory_check.py
+      - name: Dyn memory (a dyn value replaced in long-lived memory is released)
+        if: runner.os == 'Linux'
+        run: python3 tools/ci/dyn_memory_check.py
       - name: File I/O through io_uring (Linux) and helper threads (concurrent reads, contents, FIFO deadlines, helper thread count)
         env:
           TIN_REQUIRE_IO_URING: ${{ runner.os == 'Linux' && '1' || '' }}

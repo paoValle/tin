@@ -1,0 +1,2 @@
+toolchain/tests/v2/dyn_rc_escape_bad.tin:24:7: error E310 REQUEST_ESCAPE: request memory stored into long-lived memory (it may be reachable from a global): wrap the value in keep()
+toolchain/tests/v2/dyn_rc_escape_bad.tin:31:2: error E310 REQUEST_ESCAPE: request memory stored into global 'g', which outlives the request: wrap the value in keep()

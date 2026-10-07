@@ -916,5 +916,14 @@
       "stdout": "caught\n",
       "stderr_contains": "panic: stack overflow (a task's stack"
     }
+  },
+  {
+    "source": "global-dyn-two-words.tin",
+    "issue": 618,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "cat 1 1 cat 2\n"
+    }
   }
 ]

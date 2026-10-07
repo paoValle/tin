@@ -1,0 +1,104 @@
+package main
+
+import "hearth"
+import "say"
+
+// dyn values in long-lived memory are counted (#618): a slot that lets go of a dyn value
+// releases its object through the table's drop entry. Values stay right through
+// replacements and pool resets, and a value read before its slot is replaced stays valid
+// until the reader's next quiescent point. A per-core dyn global takes two words.
+
+shape Namer {
+	Name() str
+}
+
+type Cat struct {
+	lives i64
+	tags []str
+}
+
+fn (c Cat) Name() str {
+	return "cat {c.lives} {c.tags}"
+}
+
+type Dog struct {
+	name str
+}
+
+fn (d Dog) Name() str {
+	return "dog {d.name}"
+}
+
+type Holder struct {
+	v dyn Namer
+	o ?dyn Namer
+}
+
+fn first() dyn Namer {
+	return Dog{name: "first"}
+}
+
+mut holder = Holder{v: Cat{lives: 0, tags: []str{}}, o: nil}
+mut g dyn Namer = Dog{name: "g"}
+mut inferred = first()
+mut after dyn Namer = Cat{lives: 9, tags: []str{"after"}}
+mut xs = []dyn Namer{}
+mut ys = []dyn Namer{}
+mut reg = map[str]dyn Namer{}
+
+fn main() {
+	// Per-core dyn globals: declared, inferred, and one declared after another dyn global.
+	say.Line("a", g.Name(), inferred.Name(), after.Name())
+
+	// A value read from a global before the global is replaced stays valid.
+	let before = g
+	g = keep(Cat{lives: 1, tags: []str{"new"}})
+	say.Line("b", before.Name(), g.Name())
+	hearth.Reset()
+	say.Line("c", g.Name())
+
+	// Fields, a ?dyn field set to nil and back, slices, copies and maps, with resets.
+	for i in 0..3000 {
+		holder.v = keep(Cat{lives: i, tags: []str{"f"}})
+		holder.o = keep(Dog{name: "o{i}"})
+		if i % 2 == 0 {
+			holder.o = nil
+		}
+		g = keep(Dog{name: "g{i}"})
+		if len(xs) < 3 {
+			xs = append(xs, keep(Cat{lives: i, tags: []str{"x"}}))
+			ys = append(ys, keep(Dog{name: "y{i}"}))
+		} else {
+			xs[i % 3] = keep(Cat{lives: i, tags: []str{"x"}})
+			ys[i % 3] = keep(Dog{name: "y{i}"})
+		}
+		if i % 10 == 0 {
+			copy(xs, ys)
+		}
+		reg["k"] = keep(Cat{lives: i, tags: []str{"m"}})
+		reg["t"] = keep(Dog{name: "t{i}"})
+		delete(reg, "t")
+		if i % 1000 == 0 {
+			hearth.Reset()
+		}
+	}
+	let o = holder.o
+	mut on = "nil"
+	if o != nil {
+		on = o.Name()
+	}
+	say.Line("d", holder.v.Name(), on, g.Name())
+	for j, x in xs {
+		say.Line("e", j, x.Name(), ys[j].Name())
+	}
+	say.Line("f", len(reg), reg["k"].Name())
+
+	// A kept struct holding a dyn value, and a kept slice of them.
+	let h = keep(Holder{v: Dog{name: "held"}, o: Cat{lives: 4, tags: []str{"o"}}})
+	let hs = keep([]dyn Namer{Dog{name: "s0"}, Cat{lives: 5, tags: []str{}}})
+	hearth.Reset()
+	let ho = h.o
+	if ho != nil {
+		say.Line("g", h.v.Name(), ho.Name(), hs[0].Name(), hs[1].Name())
+	}
+}

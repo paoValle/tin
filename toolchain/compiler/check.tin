@@ -832,6 +832,7 @@ fn check() {
 		i = i + 1
 	}
 	dyn_format_fns()
+	dyn_drop_fns()
 	mut m = cast(Sym, 0)
 	if len(entry_name) != 0 {
 		m = lookup_global(entry_name)
@@ -1930,6 +1931,12 @@ fn check_var(v Decl) {
 	if s.type_ == 0 {
 		s.type_ = default_type(t)
 		sb_forbid(v.pos, s.type_, "a global cannot hold ")
+	}
+	if s.tls != 0 && is_dyn_value(cast(Ty, s.type_)) != 0 {
+		// A dyn value is two words: the per-core global takes two fresh slots, its object
+		// at tls_off and its table after it (#618).
+		tls_count = tls_count + 2
+		s.tls = tls_count - 1
 	}
 	check_assignable(cast(Node, init), t, cast(Ty, s.type_))
 	if is_untyped(t) != 0 {
@@ -9197,6 +9204,30 @@ fn dyn_format_fns() {
 	}
 }
 
+// dyn_drop_fns gives every dyn table one more entry, after the formatter: the drop of its
+// concrete type (#618). A long-lived slot that lets go of a dyn value releases the object
+// through it (rt_rc_dec_dyn), since the slot's type does not name the object's.
+fn dyn_drop_fns() {
+	mut i = 0
+	for i < len(dyn_tables) {
+		let rec = cast(DynTable, dyn_tables[i])
+		mut fns = rec.fns
+		mut d = rc_none()
+		if rc_counted(cast(Ty, rec.ty)) != 0 {
+			d = drop_fn(rec.ty)
+		}
+		fns = append(fns, d)
+		rec.fns = fns
+		i = i + 1
+	}
+}
+
+// dyn_drop_index is the table entry of the drop of a dyn (or ?dyn) value of type t
+// (dyn_drop_fns): keep, the shape's methods, the formatter, then the drop.
+fn dyn_drop_index(t i64) i64 {
+	return dyn_method_count(cast(Ty, dyn_type(cast(Ty, t)))) + 2
+}
+
 // format_fn is fmt$N(x i64): it prints the object x as a value of type t into the open
 // format frame. One per type, shared by every table that holds the type.
 fn format_fn(t Ty) Fn {
@@ -9441,6 +9472,10 @@ fn rc_counted(t Ty) i64 {
 	if k == K_STRING || k == K_SLICE || k == K_MAP || k == K_STRUCT {
 		return 1
 	}
+	if k == K_DYN {
+		// The object is counted; its drop comes from the table (#618).
+		return 1
+	}
 	if k == K_OPT {
 		return rc_counted(cast(Ty, t.elem))
 	}
@@ -9459,8 +9494,11 @@ fn fn_ref_node(pos i64, f Fn) i64 {
 	return n
 }
 
-// rc_inc_call emits rt_rc_inc(v).
+// rc_inc_call emits rt_rc_inc(v); a dyn value counts its object (#618).
 fn rc_inc_call(pos i64, v i64) Node {
+	if is_dyn_value(cast(Ty, cast(Node, v).type_)) != 0 {
+		v = mk_conv(pos, v, CV_DYN_OBJECT, ty_int)
+	}
 	let c = cast(Call, rt_call(pos, "rt_rc_inc", args1(v), ty_void))
 	if rc_reach_ok != 0 {
 		mark_reach(cast(Fn, c.fn_))
@@ -9468,8 +9506,22 @@ fn rc_inc_call(pos i64, v i64) Node {
 	return cast(Node, c)
 }
 
-// rc_dec_call emits rt_rc_dec(v, drop).
+// rc_dec_call emits rt_rc_dec(v, drop). A dyn value's drop is in its table, so it takes
+// rt_rc_dec_dyn instead (#618; drop is unused).
 fn rc_dec_call(pos i64, v i64, drop i64) Node {
+	let vt = cast(Node, v).type_
+	if is_dyn_value(cast(Ty, vt)) != 0 {
+		let held = temp(pos, v, vt)
+		let object = mk_conv(pos, sym_ref_node(pos, cast(Sym, held.sym)), CV_DYN_OBJECT, ty_int)
+		let table = mk_conv(pos, sym_ref_node(pos, cast(Sym, held.sym)), CV_DYN_TABLE_WORD, ty_int)
+		let dc = cast(Call, rt_call(pos, "rt_rc_dec_dyn", args3(object, table, mk_int(pos, dyn_drop_index(vt), ty_int)), ty_void))
+		if rc_reach_ok != 0 {
+			mark_reach(cast(Fn, dc.fn_))
+		}
+		mut stmts = []i64{}
+		stmts = append(stmts, cast(i64, held))
+		return cast(Node, mk_seq(pos, cast(i64, stmts), cast(i64, dc), ty_void))
+	}
 	let c = cast(Call, rt_call(pos, "rt_rc_dec", args2(v, fn_ref_node(pos, cast(Fn, drop))), ty_void))
 	if rc_reach_ok != 0 {
 		mark_reach(cast(Fn, c.fn_))
@@ -9502,6 +9554,10 @@ fn rc_map_bits(t Ty) i64 {
 // rc_map_drop is the value side's drop of a map type (the runtime's no-op when that
 // side is not counted).
 fn rc_map_drop(t Ty) i64 {
+	if is_dyn_value(cast(Ty, t.elem)) != 0 {
+		// A cell releases its object (#618).
+		return cast(i64, find_fn("rt_map_cell_drop"))
+	}
 	if rc_counted(cast(Ty, t.elem)) != 0 {
 		return drop_fn(t.elem)
 	}
@@ -9519,6 +9575,10 @@ shared mut arrdrop_fns []i64
 // no-op drop serves and map[str]str lifts no function at all.
 fn drop_fn(t i64) i64 {
 	if kind_of(cast(Ty, t)) == K_STRING {
+		return rc_none()
+	}
+	if is_dyn_value(cast(Ty, t)) != 0 {
+		// rc_dec_call takes a dyn value's drop from its table (#618).
 		return rc_none()
 	}
 	if cast(i64, drop_types) == 0 {
@@ -9577,13 +9637,13 @@ fn rc_drop_body(pos i64, body []i64, x i64, t Ty) {
 			mut vs1 = cast(Block, live.then).stmts
 			vs1 = append(vs1, expr_stmt(rc_dec_call(pos, from_bits(cast(Node, rt_call(pos, "rt_map_key", args2(x, sym_ref_node(pos, cast(Sym, j))), ty_int)), kt), rc_none())))
 		}
-		if rc_counted(cast(Ty, t.elem)) != 0 {
+		if is_dyn_value(cast(Ty, t.elem)) != 0 {
+			// The entry's dyn cell (#567), which releases its object (#618).
+			mut vs12 = cast(Block, live.then).stmts
+			vs12 = append(vs12, expr_stmt(rc_dec_call(pos, rt_call(pos, "rt_map_val", args2(x, sym_ref_node(pos, cast(Sym, j))), ty_int), rc_map_drop(t))))
+		} else if rc_counted(cast(Ty, t.elem)) != 0 {
 			mut vs2 = cast(Block, live.then).stmts
 			vs2 = append(vs2, expr_stmt(rc_dec_call(pos, from_bits(cast(Node, rt_call(pos, "rt_map_val", args2(x, sym_ref_node(pos, cast(Sym, j))), ty_int)), t.elem), drop_fn(t.elem))))
-		} else if is_dyn_value(cast(Ty, t.elem)) != 0 {
-			// The entry's dyn cell (#567).
-			mut vs12 = cast(Block, live.then).stmts
-			vs12 = append(vs12, expr_stmt(rc_dec_call(pos, rt_call(pos, "rt_map_val", args2(x, sym_ref_node(pos, cast(Sym, j))), ty_int), rc_none())))
 		}
 		wb.stmts = append(wb.stmts, cast(i64, live))
 		body = append(body, cast(i64, w))

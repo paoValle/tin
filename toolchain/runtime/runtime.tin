@@ -1038,6 +1038,15 @@ fn rt_rc_dec(p i64, drop fn(i64)) {
 	rt_rc_queue(p, drop)
 }
 
+// rt_rc_dec_dyn is rt_rc_dec for a dyn value (object, table) (#618): the object's drop is
+// entry di of its table, after the formatter (dyn_drop_fns). A nil ?dyn holds nothing.
+fn rt_rc_dec_dyn(object i64, table i64, di i64) {
+	if object == 0 || table == 0 {
+		return
+	}
+	rt_rc_dec(object, cast(fn(i64), table[di]))
+}
+
 // rt_rc_unqueue takes p, queued but stored again, out of the limbo (rare: a borrowed
 // value that a long-lived slot takes over).
 fn rt_rc_unqueue(p i64) {
@@ -1758,6 +1767,10 @@ fn rt_append_dyn(s i64, object i64, table i64) i64 {
 	p[0] = object
 	p[1] = table
 	s[0] = n + 1
+	if s[3] != 0 {
+		// A long-lived slice's element owns its object (#618).
+		rt_rc_inc(object)
+	}
 	return s
 }
 
@@ -1784,6 +1797,19 @@ fn rt_slice_appendn_rc(s i64, t i64, esz i64) i64 {
 	if s[3] != 0 {
 		for i in n..s[0] {
 			rt_rc_inc(s[2][i])
+		}
+	}
+	return s
+}
+
+// rt_slice_appendn_dyn is append(s, t...) for dyn elements (#618): each object that lands in
+// a long-lived array gains its slot's count.
+fn rt_slice_appendn_dyn(s i64, t i64) i64 {
+	let n = s[0]
+	s = rt_slice_appendn(s, t, 16)
+	if s[3] != 0 {
+		for i in n..s[0] {
+			rt_rc_inc((s[2] + i*16)[0])
 		}
 	}
 	return s
@@ -1851,6 +1877,26 @@ fn rt_slice_copy_rc(dst i64, src i64, esz i64, drop fn(i64)) i64 {
 		}
 	}
 	memmove(dst[2], src[2], n*esz)
+	return n
+}
+
+// rt_slice_copy_dyn is rt_slice_copy_rc for dyn elements (#618): the objects are counted,
+// and di is the table entry of their drop.
+fn rt_slice_copy_dyn(dst i64, src i64, di i64) i64 {
+	mut n = dst[0]
+	if src[0] < n {
+		n = src[0]
+	}
+	if dst[3] != 0 {
+		for i in 0..n {
+			rt_rc_inc((src[2] + i*16)[0])
+		}
+		for i in 0..n {
+			let p = dst[2] + i*16
+			rt_rc_dec_dyn(p[0], p[1], di)
+		}
+	}
+	memmove(dst[2], src[2], n*16)
 	return n
 }
 
@@ -2236,20 +2282,28 @@ fn rt_map_setk(m i64, k str, v i64) {
 // ---- maps of dyn values (#567) ----
 //
 // A dyn value is two words (object, table) and a map's value slot is one, so a map of dyn
-// or ?dyn values keeps each value in a 16-byte cell of the map's own memory and stores the
-// cell's address. Writing a key that is present overwrites its cell in place. A long-lived
-// map counts its cells like other values (with no children to drop), so the cell of a
-// deleted entry is freed with the slot.
+// or ?dyn values keeps each value in a cell of the map's own memory (object, table, and the
+// table entry of the object's drop) and stores the cell's address. Writing a key that is
+// present overwrites its cell in place. A long-lived map counts its cells like other values,
+// and each cell counts its object (#618): a deleted entry's cell and object are released
+// with the slot.
 
 // rt_map_set_dyn stores the dyn value (object, table) under k; ck says k is an encoded
-// struct or enum key (rt_map_setk).
-fn rt_map_set_dyn(m i64, k i64, object i64, table i64, ck i64) {
+// struct or enum key (rt_map_setk). The cell's third word is the table entry of the
+// object's drop (di, #618): a long-lived map counts the objects its cells hold.
+fn rt_map_set_dyn(m i64, k i64, object i64, table i64, ck i64, di i64) {
 	if m == 0 {
 		rt_panic("assignment to entry in nil map")
 	}
 	mut c = rt_map_get(m, k)
+	if m[9] != 0 {
+		rt_rc_inc(object)
+	}
 	if c == 0 {
-		c = rt_region_alloc(m[9], 16)
+		c = rt_region_alloc(m[9], 24)
+		c[2] = di
+	} else if m[9] != 0 {
+		rt_rc_dec_dyn(c[0], c[1], di)
 	}
 	c[0] = object
 	c[1] = table
@@ -2272,6 +2326,12 @@ fn rt_map_get_dyn(m i64, k i64, must i64) (i64, i64) {
 		return 0, 0
 	}
 	return c[0], c[1]
+}
+
+// rt_map_cell_drop is the value drop of a long-lived map of dyn values (#618): a released
+// cell lets go of its object.
+fn rt_map_cell_drop(c i64) {
+	rt_rc_dec_dyn(c[0], c[1], c[2])
 }
 
 // rt_map_val_dyn is the dyn value of entry i (see rt_map_val).

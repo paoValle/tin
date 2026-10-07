@@ -1,0 +1,33 @@
+package main
+
+import "say"
+
+// Appending a kept dyn value to a global []dyn works (#618); an unkept one, made in the
+// request's pool, is still rejected, as is storing one into a global dyn.
+
+shape Namer {
+	Name() str
+}
+
+type Dog struct {
+	name str
+}
+
+fn (d Dog) Name() str {
+	return d.name
+}
+
+mut xs = []dyn Namer{}
+mut g dyn Namer = Dog{name: "g"}
+
+fn add(n dyn Namer) {
+	xs = append(xs, n)
+}
+
+fn main() {
+	xs = append(xs, keep(Dog{name: "kept"}))
+	add(Dog{name: "fresh"})
+	let d dyn Namer = Dog{name: "fresh"}
+	g = d
+	say.Line(len(xs), g.Name())
+}

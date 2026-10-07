@@ -259,11 +259,19 @@ fn rg_stmt(s i64) {
 // rg_regrow reports whether x appends onto the slot target t names: append grows the
 // header in place and returns it, so storing the result back changes nothing.
 fn rg_regrow(t i64, x_in i64) i64 {
-	mut x = x_in
-	for cast(Node, x).kind == EX_CALL && len(cast(Call, x).name) != 0 && (cast(Call, x).name == "rt_append" || cast(Call, x).name == "rt_append_rc" || cast(Call, x).name == "rt_slice_appendn" || cast(Call, x).name == "rt_slice_appendn_rc" || cast(Call, x).name == "rt_append_str") {
-		x = cast(Call, x).args[0]
+	mut x = rg_unseq(x_in)
+	for cast(Node, x).kind == EX_CALL && len(cast(Call, x).name) != 0 && (cast(Call, x).name == "rt_append" || cast(Call, x).name == "rt_append_rc" || cast(Call, x).name == "rt_slice_appendn" || cast(Call, x).name == "rt_slice_appendn_rc" || cast(Call, x).name == "rt_append_str" || cast(Call, x).name == "rt_append_dyn" || cast(Call, x).name == "rt_slice_appendn_dyn") {
+		x = rg_unseq(cast(Call, x).args[0])
 	}
 	return rg_same(t, x)
+}
+
+// rg_unseq is the call inside a dyn append, which binds its value first (lower_append_dyn).
+fn rg_unseq(x i64) i64 {
+	if cast(Node, x).kind == EX_SEQ && cast(Node, cast(SeqExpr, x).value).kind == EX_CALL && cast(Call, cast(SeqExpr, x).value).name == "rt_append_dyn" {
+		return cast(SeqExpr, x).value
+	}
+	return x
 }
 
 // rg_same reports whether two expressions name the same slot: one variable, or the same
@@ -688,6 +696,10 @@ fn rg_expr(e i64) i64 {
 		if cast(Node, e).region == R_OWNED {
 			return RG_INGOT
 		}
+		if rg_unseq(e) != e {
+			// A dyn append is its call: the slice it grows (#618).
+			return v
+		}
 		if has_ptr(cast(Ty, cast(Node, e).type_)) != 0 {
 			return v | RG_FRESH | RG_EMB
 		}
@@ -853,7 +865,7 @@ fn rg_arena_cell_store(i i64, v i64, t i64, pos i64) i64 {
 }
 
 fn rg_grows_op(name str) i64 {
-	return i64(name == "rt_append" || name == "rt_append_rc" || name == "rt_append_dyn" || name == "rt_slice_appendn" || name == "rt_slice_appendn_rc" || name == "rt_append_str" || name == "rt_map_set" || name == "rt_map_setk" || name == "rt_map_set_dyn")
+	return i64(name == "rt_append" || name == "rt_append_rc" || name == "rt_append_dyn" || name == "rt_slice_appendn" || name == "rt_slice_appendn_rc" || name == "rt_append_str" || name == "rt_map_set" || name == "rt_map_setk" || name == "rt_map_set_dyn" || name == "rt_slice_appendn_dyn")
 }
 
 // rg_grow notes that the running function may grow the slice or map with bits b.
@@ -1472,7 +1484,7 @@ fn rg_runtime_call(e i64, name str, b []i64, pos i64) i64 {
 		rg_store(b0, co, ct, b[1], et, pos, "")
 		return b0
 	}
-	if name == "rt_slice_appendn" || name == "rt_slice_copy" || name == "rt_slice_appendn_rc" || name == "rt_slice_copy_rc" {
+	if name == "rt_slice_appendn" || name == "rt_slice_copy" || name == "rt_slice_appendn_rc" || name == "rt_slice_copy_rc" || name == "rt_slice_appendn_dyn" || name == "rt_slice_copy_dyn" {
 		mut et = 0
 		let a1 = cast(Node, args[1])
 		if kind_of(cast(Ty, a1.type_)) == K_SLICE {
@@ -1900,6 +1912,18 @@ fn rc_wrap(s i64, stmts []i64, i i64, oldRead i64, t i64, pre0 []i64) i64 {
 // rc_pin_value pins the value assignment s stores, in place: rt_rc_pinned returns its
 // argument, so the evaluation order of the store does not change.
 fn rc_pin_value(s i64, t i64) {
+	if is_dyn_value(cast(Ty, t)) != 0 {
+		// A dyn value pins its object (#618); the value itself is two words.
+		let pos = cast(Node, s).pos
+		let held = temp(pos, cast(AssignStmt, s).value, t)
+		let pin = cast(Call, rt_call(pos, "rt_rc_pin", args1(mk_conv(pos, sym_ref_node(pos, cast(Sym, held.sym)), CV_DYN_OBJECT, ty_int)), ty_void))
+		mark_reach(cast(Fn, pin.fn_))
+		mut stmts = []i64{}
+		stmts = append(stmts, cast(i64, held))
+		stmts = append(stmts, expr_stmt(cast(Node, pin)))
+		cast(AssignStmt, s).value = mk_seq(pos, cast(i64, stmts), sym_ref_node(pos, cast(Sym, held.sym)), t)
+		return
+	}
 	let c = cast(Call, rt_call(cast(Node, s).pos, "rt_rc_pinned", args1(cast(AssignStmt, s).value), t))
 	mark_reach(cast(Fn, c.fn_))
 	cast(AssignStmt, s).value = cast(i64, c)

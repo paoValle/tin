@@ -142,7 +142,8 @@ ingot heap.
 **Reclaiming long-lived memory (#176, design/interface_mem.md).** Each block of a core's
 heap counts the long-lived references to it in its size word. `keep$N` counts what its
 copy holds; stores into globals and provably long-lived containers count the new value and
-drop the old one; maps and long-lived slices count their own entries and elements. A
+drop the old one; maps and long-lived slices count their own entries and elements. A dyn
+value counts its object, and its table's last entry is the object's drop (#618). A
 block whose count falls to 0 waits in the core's limbo until everything that could have
 borrowed it is past: every task alive when it was dropped has ended, and the core's own
 stack has reset its pool (the end of a request or tick, `hearth.Reset()`). Then its

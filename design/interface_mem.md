@@ -47,9 +47,12 @@ rt_rc_stats() (blocks, bytes, limbo)  // per-core diagnostics (roadmap 14.1), he
   counted reference inside x (struct and enum-variant fields, slice elements via
   `arrdrop$N(p i64)`, map entries via `rt_map_slots`, then `rt_map_release` frees the
   map's tables), and an opt drop narrows nil first.
-- Counted kinds are str, slice, map, struct (enums are structs) and opt of those. Func
-  values (code pointers and kept closures), faults and dyn objects are not counted: a
-  block they hold is never freed by this machinery (leak, never corruption).
+- Counted kinds are str, slice, map, struct (enums are structs), dyn values and opt of
+  those. A dyn value counts its object; since the slot's type does not name the object's,
+  its release is `rt_rc_dec_dyn(object, table, di)`, which calls the drop in entry `di` of
+  the table (#618, design/design_dyn.md §1). Func values (code pointers and kept closures)
+  and faults are not counted: a block they hold is never freed by this machinery (leak,
+  never corruption).
 
 **Pinning.** A block is pinned when a reference to it cannot be counted:
 - blocks made while a core initializes its globals (`rt_ingot_alloc` while `ctxIngot` is
@@ -99,7 +102,11 @@ rt_rc_stats() (blocks, bytes, limbo)  // per-core diagnostics (roadmap 14.1), he
   array or a view of one gains its slot's count: `rt_append_rc(s, v, esz)`,
   `rt_slice_appendn_rc(s, t, esz)`, and `rt_slice_copy_rc(dst, src, esz, drop)`, which also
   decs the values it replaces. The compiler lowers counted element types to these, and
-  inlines `rt_append_rc`'s fast path like `rt_append`'s.
+  inlines `rt_append_rc`'s fast path like `rt_append`'s. Dyn elements (16 bytes) use
+  `rt_append_dyn`, `rt_slice_appendn_dyn(s, t)` and `rt_slice_copy_dyn(dst, src, di)`,
+  which count the objects. A map of dyn values keeps each value in a cell
+  (object, table, di): a long-lived map counts its cells and each cell its object, and the
+  map's value drop is `rt_map_cell_drop`.
 
 ## Compiler side
 
