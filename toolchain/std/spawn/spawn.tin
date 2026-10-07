@@ -1,7 +1,8 @@
 // Package spawn starts child processes, like Go's os/exec: Run a program and collect its output,
 // or Start it, talk to it through pipes, signal it or kill it. A program is never run through a
-// shell: write []str{"sh", "-c", script} for one. Linux is the target; macOS is the last part
-// of #576.
+// shell: write []str{"sh", "-c", script} for one. Linux is the target and is complete (#576);
+// macOS is not implemented yet, so the package fails clearly there instead of compiling to
+// something that cannot work.
 package spawn
 
 import "fault"

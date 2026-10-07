@@ -2,19 +2,19 @@ package spawn
 
 import "say"
 
-// The macOS part of #576 is its last PR; until then the package fails clearly instead of
+// macOS is not implemented yet (a follow-up to #576): the package fails clearly instead of
 // compiling to something that cannot work.
 
 fn spawnStart(c Cmd) !Process {
-	fail say.Fault("spawn: macOS support is the last part of #576")
+	fail say.Fault("spawn: macOS is not supported yet")
 }
 
 fn spawnWait(p mut Process) !i64 {
-	fail say.Fault("spawn: macOS support is the last part of #576")
+	fail say.Fault("spawn: macOS is not supported yet")
 }
 
 fn spawnSignal(pid i64, sig i64) ! {
-	fail say.Fault("spawn: macOS support is the last part of #576")
+	fail say.Fault("spawn: macOS is not supported yet")
 }
 
 fn spawnExecutable(path str) bool {
