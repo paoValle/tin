@@ -113,6 +113,17 @@ fn chk_kind(e i64, want i64) i64 {
 		err_code_at(cast(Node, e).pos, "E705 MUT_ARG", "mut here does nothing: only an argument for a mut parameter takes mut")
 		return chk(cast(Node, cast(MutArg, e).x), want)
 	}
+	if k == EX_COALESCE {
+		// The parser reads opt ?? fallback; the checker does not have it yet (#558, #561).
+		err_code_at(cast(Node, e).pos, "E295 NOT_YET", "opt ?? fallback is not implemented yet (#561): test it with if let v = opt and an else branch (LANGUAGE.md section 9)")
+		let ct = cast(Ty, chk(cast(Node, cast(Coalesce, e).x), 0))
+		mut et = ty_int
+		if kind_of(ct) == K_OPT {
+			et = ct.elem
+		}
+		chk(cast(Node, cast(Coalesce, e).fallback), et)
+		return et
+	}
 	err_code_at(cast(Node, e).pos, "E990 INTERNAL", "unexpected expression")
 	return ty_int
 }
@@ -3110,6 +3121,20 @@ fn with_adapter(pos i64, w Fn, ct i64, bt Ty, tt i64, vt i64) i64 {
 // (a method's receiver, argument 0 of a CALL_METHOD call, is exempt).
 fn chk_args(e i64, ptypes []i64, variadic i64, mask i64) {
 	let args = cast(Call, e).args
+	if variadic == 2 {
+		// A user function's variadic parameter, already reported as E295 (#558): check the
+		// arguments alone.
+		mut vi = 0
+		for vi < len(args) {
+			mut a = args[vi]
+			if cast(Node, a).kind == EX_UNARY && cast(Unary, a).op == "..." {
+				a = cast(Unary, a).x
+			}
+			chk(cast(Node, a), 0)
+			vi = vi + 1
+		}
+		return
+	}
 	let n = len(ptypes)
 	if len(args) != n && !(variadic != 0 && len(args) >= n) {
 		let a = err_code(cast(Node, e).pos, "E210 ARG_COUNT")
@@ -3142,6 +3167,11 @@ fn chk_args(e i64, ptypes []i64, variadic i64, mask i64) {
 		}
 		let adesc = secret_desc(a)
 		let at = chk(cast(Node, a), want)
+		if cast(Node, a).kind == EX_UNARY && cast(Unary, a).op == "..." {
+			// E211 said it already: a spread slice is no argument of the parameter's type.
+			i = i + 1
+			continue
+		}
 		if i < n {
 			secret_arg(cast(Call, e), i, adesc, at, want)
 			check_assignable(cast(Node, a), at, cast(Ty, want))
