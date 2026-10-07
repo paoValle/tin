@@ -10,7 +10,10 @@ const CTX_WORDS = 32 // runtime context words before the per-core globals (toolc
 // x16/x17 and d31 are scratch.
 const REG_SLOT = -1
 const REG_DEAD = -2
-const MAX_FRAME = 4095
+// The frame and the caller's stack arguments above it have to fit one sub plus one sub, lsl
+// #12 (4095 << 12 | 4095 bytes). The arguments are at most 64 parameters of each kind, under
+// 2 KiB, so the frame stops 8 KiB below that reach and leaves 4095 bytes for them (#570).
+const MAX_FRAME = 16769024
 const FPR = 64 // d0 is register 64
 const FSCR = 95 // d31, float scratch
 
@@ -41,7 +44,7 @@ shared mut mm_index i64
 shared mut mm_off i64
 shared mut trap_label i64 // the current function's bounds-failure stub, once used
 shared mut trap_sites []i64 // per failed-check site
-shared mut incoming_stack_loads []i64 // pairs: instruction index in cg, incoming argument byte offset
+shared mut param_loads i64 // stack argument loads of the current function, expanded by finish_fn
 
 fn emit4(op i64, a i64, b i64, c i64, d i64) {
 	cg = append(cg, op)
@@ -931,8 +934,22 @@ fn gen_dyn_pair(e i64, obj i64, tab i64, d i64) {
 	if k == EX_IDENT {
 		let s = cast(Sym, cast(IdentExpr, e).ref)
 		if s.kind == SYM_LOCAL {
-			emit3(I_LDR, obj, FP, s.off)
-			emit3(I_LDR, tab, FP, s.off + 8)
+			// Two loads share the address, so both offsets must fit the scaled imm12.
+			if s.off <= 32752 {
+				emit3(I_LDR, obj, FP, s.off)
+				emit3(I_LDR, tab, FP, s.off + 8)
+			} else {
+				// Both words share one address, and obj may be the scratch register itself:
+				// then tab's (x17) is free, and the second load reads the address before
+				// overwriting it.
+				mut a = X16
+				if obj == X16 {
+					a = X17
+				}
+				fp_offset(a, s.off)
+				emit3(I_LDR, obj, a, 0)
+				emit3(I_LDR, tab, a, 8)
+			}
 		} else if s.tls != 0 {
 			emit3(I_LDR, obj, 28, tls_off(s))
 			emit3(I_LDR, tab, 28, tls_off(s) + 8)
@@ -1045,9 +1062,9 @@ fn gen_ident(e IdentExpr, dst i64) {
 		if s.reg >= 0 {
 			mov(dst, s.reg)
 		} else if is_fp(dst) != 0 {
-			emit3(I_LDRD, dst, FP, s.off)
+			slot_mem(I_LDRD, dst, s.off)
 		} else {
-			emit3(I_LDR, dst, FP, s.off)
+			slot_mem(I_LDR, dst, s.off)
 		}
 	} else if k == SYM_GLOBAL && s.tls != 0 {
 		if is_fp(dst) != 0 {
@@ -1113,7 +1130,7 @@ fn gen_unary(e Unary, dst i64, d i64) {
 	if op == "&" {
 		let s = cast(Sym, cast(IdentExpr, e.x).ref)
 		if s.kind == SYM_LOCAL {
-			emit3(I_ADDI, dst, FP, s.off)
+			fp_offset(dst, s.off)
 		} else if s.tls != 0 {
 			load_imm(X17, tls_off(s))
 			emit3(I_ADD, dst, 28, X17)
@@ -1669,6 +1686,91 @@ fn add_imm(dst i64, l i64, c i64) {
 		load_imm(X17, c)
 		emit4(I_ADD, dst, l, X17, 0)
 	}
+}
+
+// fp_offset builds dst = fp + off. One add reaches 4095 bytes; past that the high twelve
+// bits go through a second add shifted by 12, up to the frame bound of MAX_FRAME.
+fn fp_offset(dst i64, off i64) {
+	if off <= 4095 {
+		emit3(I_ADDI, dst, FP, off)
+		return
+	}
+	emit3(I_ADDISH, dst, FP, off >> 12)
+	if off & 4095 != 0 {
+		emit3(I_ADDI, dst, dst, off & 4095)
+	}
+}
+
+// slot_mem loads or stores rt at [fp + off]. The scaled imm12 of ldr/str reaches 32760
+// bytes; past that the address is built in a scratch register. The register pools start at
+// x9, so x16/x17 hold no temporary and the one rt does not use is free here: the two-word
+// sites pick their register themselves, and a closure's descriptor is stored before any
+// slot access (gen_fn).
+fn slot_mem(op i64, rt i64, off i64) {
+	if off <= 32760 {
+		emit3(op, rt, FP, off)
+		return
+	}
+	mut t = X16
+	if rt == X16 {
+		t = X17
+	}
+	fp_offset(t, off)
+	emit3(op, rt, t, 0)
+}
+
+// out_slot_mem is slot_mem for the prologue and the epilogue, whose instructions go to the
+// output while the body is still being scanned: rt is always callee-saved there, so t is a
+// scratch the caller of save_regs owns. x16 is the one to pass: at function entry x17 holds
+// a closure's descriptor, which the body stores once it starts (#533).
+fn out_slot_mem(op i64, rt i64, off i64, t i64) {
+	if off <= 32760 {
+		out4(op, rt, FP, off, 0)
+		return
+	}
+	out4(I_ADDISH, t, FP, off >> 12, 0)
+	if off & 4095 != 0 {
+		out4(I_ADDI, t, t, off & 4095, 0)
+	}
+	out4(op, rt, t, 0, 0)
+}
+
+// out_frame moves sp by frame: one immediate reaches 4095 bytes, a larger frame spends one
+// more instruction on the bits above twelve (#570).
+fn out_frame(frame i64, up i64) {
+	if up != 0 {
+		if frame <= 4095 {
+			out4(I_ADDI, SP, SP, frame, 0)
+			return
+		}
+		out4(I_ADDISH, SP, SP, frame >> 12, 0)
+		if frame & 4095 != 0 {
+			out4(I_ADDI, SP, SP, frame & 4095, 0)
+		}
+		return
+	}
+	if frame <= 4095 {
+		out4(I_SUBI, SP, SP, frame, 0)
+		return
+	}
+	out4(I_SUBISH, SP, SP, frame >> 12, 0)
+	if frame & 4095 != 0 {
+		out4(I_SUBI, SP, SP, frame & 4095, 0)
+	}
+}
+
+// out_param_load emits the load of the caller's stack argument at incoming_off, which sits
+// above the frame: dst holds the address on the way in, so it must be x16 (every caller
+// passes x16). finish_fn is where the frame size is known.
+fn out_param_load(dst i64, incoming_off i64, frame i64) {
+	let off = frame + incoming_off
+	if off <= 32760 {
+		out4(I_LDR, dst, FP, off, 0)
+		return
+	}
+	out4(I_ADDISH, dst, FP, off >> 12, 0)
+	out4(I_ADDI, dst, dst, off & 4095, 0)
+	out4(I_LDR, dst, dst, 0, 0)
 }
 
 // round_bias leaves l + (2^k - 1 if l < 0) in x17, so an arithmetic shift by k
@@ -3023,8 +3125,8 @@ fn assign_local(s Sym, v i64) {
 		let r1 = treg(1)
 		gen_dyn_pair(v, r0, r1, 0)
 		if s.reg == REG_SLOT {
-			emit3(I_STR, r0, FP, s.off)
-			emit3(I_STR, r1, FP, s.off + 8)
+			slot_mem(I_STR, r0, s.off)
+			slot_mem(I_STR, r1, s.off + 8)
 		} else {
 			err_code_at(s.pos, "E990 INTERNAL", "dyn local is not in a two-word frame slot")
 		}
@@ -3035,9 +3137,9 @@ fn assign_local(s Sym, v i64) {
 	} else if s.reg == REG_SLOT {
 		let r = gen_val(v, 0)
 		if is_fp(r) != 0 {
-			emit3(I_STRD, r, FP, s.off)
+			slot_mem(I_STRD, r, s.off)
 		} else {
-			emit3(I_STR, r, FP, s.off)
+			slot_mem(I_STR, r, s.off)
 		}
 	} else {
 		gen_effect(v)
@@ -3390,7 +3492,7 @@ fn gen_word_pair(s1 i64, s2 i64) i64 {
 		}
 		emit3(I_MUL, rl, a, b)
 		if lo.reg < 0 {
-			emit3(I_STR, rl, FP, lo.off)
+			slot_mem(I_STR, rl, lo.off)
 		}
 		mut rh = hi.reg
 		if rh < 0 {
@@ -3398,7 +3500,7 @@ fn gen_word_pair(s1 i64, s2 i64) i64 {
 		}
 		emit3(I_UMULH, rh, a, b)
 		if hi.reg < 0 {
-			emit3(I_STR, rh, FP, hi.off)
+			slot_mem(I_STR, rh, hi.off)
 		}
 		return 1
 	}
@@ -3421,13 +3523,13 @@ fn gen_word_pair(s1 i64, s2 i64) i64 {
 	}
 	// Stores and loads keep the carry flag until cinc reads it.
 	if s.reg < 0 {
-		emit3(I_STR, dst, FP, s.off)
+		slot_mem(I_STR, dst, s.off)
 	}
 	let k = cast(Sym, cast(IdentExpr, mw_k).ref)
 	mut rk = k.reg
 	if rk < 0 {
 		rk = X17
-		emit3(I_LDR, rk, FP, k.off)
+		slot_mem(I_LDR, rk, k.off)
 	}
 	mut rh = h.reg
 	if rh < 0 {
@@ -3435,7 +3537,7 @@ fn gen_word_pair(s1 i64, s2 i64) i64 {
 	}
 	emit3(I_CINC, rh, rk, C_HS)
 	if h.reg < 0 {
-		emit3(I_STR, rh, FP, h.off)
+		slot_mem(I_STR, rh, h.off)
 	}
 	return 1
 }
@@ -3500,7 +3602,7 @@ fn gen_stmt(s i64) {
 			if sym.reg >= 0 {
 				mov(sym.reg, i)
 			} else if sym.reg == REG_SLOT {
-				emit3(I_STR, i, FP, sym.off)
+				slot_mem(I_STR, i, sym.off)
 			}
 			i = i + 1
 		}
@@ -4283,13 +4385,11 @@ fn hex_word(s str, off i64) i64 {
 	return v
 }
 
-// Stack parameters are below the callee's frame. finish_fn patches the byte offset once
-// it knows the complete frame size, which includes locals and saved registers.
+// Stack parameters are below the callee's frame: the load carries the incoming byte offset
+// and finish_fn turns it into the fp-relative one, which includes the frame size.
 fn gen_stack_param_load(dst i64, incoming_off i64) {
-	let instruction = len(cg) / 5
-	emit3(I_LDR, dst, FP, 0)
-	incoming_stack_loads = append(incoming_stack_loads, instruction)
-	incoming_stack_loads = append(incoming_stack_loads, incoming_off)
+	param_loads = param_loads + 1
+	emit3(I_FPARG, dst, incoming_off, 0)
 }
 
 // The bulk memory loops preserve every callee-saved register and the core context.
@@ -4500,7 +4600,7 @@ fn gen_fn(f Fn) {
 	slice_truncate(g_loop_labels, 0)
 	let nslots = assign_homes(f)
 	cg = []i64{}
-	incoming_stack_loads = []i64{}
+	param_loads = 0
 	mut early = 0
 	if fn_polls(f) == 0 {
 		early = early_exit(cast(i64, f))
@@ -4511,6 +4611,16 @@ fn gen_fn(f Fn) {
 	mut ni = 0
 	mut nf = 0
 	mut stack_words = 0
+	// A closure's descriptor arrives in x17 and the parameter stores below need both scratch
+	// registers once a frame is past the imm12 reach, so it goes to its home first (#570).
+	if f.env_sym != 0 {
+		let es = cast(Sym, f.env_sym)
+		if es.reg >= 0 {
+			mov(es.reg, X17)
+		} else if es.reg == REG_SLOT {
+			slot_mem(I_STR, X17, es.off)
+		}
+	}
 	mut i = 0
 	for i < len(f.params) {
 		let s = cast(Sym, locals[i])
@@ -4529,13 +4639,13 @@ fn gen_fn(f Fn) {
 				if stack != 0 {
 					// Both words through x16: x17 holds a closure's descriptor until the end (#533).
 					gen_stack_param_load(X16, 8 * stack_words)
-					emit3(I_STR, X16, FP, s.off)
+					slot_mem(I_STR, X16, s.off)
 					gen_stack_param_load(X16, 8 * stack_words + 8)
-					emit3(I_STR, X16, FP, s.off + 8)
+					slot_mem(I_STR, X16, s.off + 8)
 					stack_words = stack_words + 2
 				} else {
-					emit3(I_STR, src, FP, s.off)
-					emit3(I_STR, src + 1, FP, s.off + 8)
+					slot_mem(I_STR, src, s.off)
+					slot_mem(I_STR, src + 1, s.off + 8)
 				}
 			} else {
 				err_code_at(s.pos, "E990 INTERNAL", "dyn parameter is not in a two-word frame slot")
@@ -4566,20 +4676,12 @@ fn gen_fn(f Fn) {
 			mov(cast(Sym, s).reg, src)
 		} else if cast(Sym, s).reg == REG_SLOT {
 			if is_fp(src) != 0 {
-				emit3(I_STRD, src, FP, s.off)
+				slot_mem(I_STRD, src, s.off)
 			} else {
-				emit3(I_STR, src, FP, s.off)
+				slot_mem(I_STR, src, s.off)
 			}
 		}
 		i = i + 1
-	}
-	if f.env_sym != 0 {
-		let es = cast(Sym, f.env_sym)
-		if es.reg >= 0 {
-			mov(es.reg, X17)
-		} else if es.reg == REG_SLOT {
-			emit3(I_STR, X17, FP, es.off)
-		}
 	}
 	let stmts = cast(Block, f.body).stmts
 	if cast(i64, cast(Fn, f)) == cast(i64, entry_fn()) {
@@ -4688,7 +4790,7 @@ fn save_regs(saved []i64, base i64, load i64) {
 			} else if load != 0 {
 				op1 = I_LDR
 			}
-			out4(op1, r, FP, off, 0)
+			out_slot_mem(op1, r, off, X16)
 			i = i + 1
 		}
 	}
@@ -4767,19 +4869,18 @@ fn finish_fn(f Fn, nslots i64, pre []i64) {
 	}
 	let slot_bytes = align_up(8 * nslots, 16)
 	let frame = 16 + slot_bytes + align_up(8 * len(cast([]i64, saved)), 16)
-	mut j = 0
-	for j < len(incoming_stack_loads) {
-		let instruction = incoming_stack_loads[j]
-		let incoming_off = incoming_stack_loads[j + 1]
-		cg[5 * instruction + 3] = frame + incoming_off
-		j = j + 2
-	}
-	let frameless = i64(f.leaf != 0 && nslots == 0 && len(cast([]i64, saved)) == 0 && len(incoming_stack_loads) == 0)
+	let frameless = i64(f.leaf != 0 && nslots == 0 && len(cast([]i64, saved)) == 0 && param_loads == 0)
 	if frame > MAX_FRAME {
-		err_code_quoted(f.pos, "E905 TOO_MANY_LOCALS", "function ", f.name, " has too many local variables")
+		mut mb = buf_new()
+		buf_str(mb, " needs a ")
+		buf_int(mb, frame)
+		buf_str(mb, "-byte stack frame; the limit is ")
+		buf_int(mb, MAX_FRAME)
+		buf_str(mb, " bytes")
+		err_code_quoted(f.pos, "E905 TOO_MANY_LOCALS", "function ", f.name, str(mb))
 	}
 	out4(I_FUNC, cast(i64, f), 0, 0, 0)
-	j = 0
+	mut j = 0
 	for j < len(pre) {
 		out4(pre[j], pre[j + 1], pre[j + 2], pre[j + 3], pre[j + 4])
 		j = j + 5
@@ -4788,7 +4889,7 @@ fn finish_fn(f Fn, nslots i64, pre []i64) {
 		if frame <= 504 {
 			out4(I_STPPRE, FP, LR, -frame, 0)
 		} else {
-			out4(I_SUBI, SP, SP, frame, 0)
+			out_frame(frame, 0)
 			out4(I_STP, FP, LR, SP, 0)
 		}
 		out4(I_ADDI, FP, SP, 0, 0)
@@ -4820,16 +4921,20 @@ fn finish_fn(f Fn, nslots i64, pre []i64) {
 					out4(I_LDPPOST, FP, LR, frame, 0)
 				} else {
 					out4(I_LDP, FP, LR, SP, 0)
-					out4(I_ADDI, SP, SP, frame, 0)
+					out_frame(frame, 1)
 				}
 			}
 			out4(I_RETX, 0, 0, 0, 0)
 			dead = 1
 		} else {
 			let k = 5 * i
-			out4(op, cg[k + 1], cg[k + 2], cg[k + 3], cg[k + 4])
-			if op == I_B {
-				dead = 1
+			if op == I_FPARG {
+				out_param_load(cg[k + 1], cg[k + 2], frame)
+			} else {
+				out4(op, cg[k + 1], cg[k + 2], cg[k + 3], cg[k + 4])
+				if op == I_B {
+					dead = 1
+				}
 			}
 		}
 		i = i + 1

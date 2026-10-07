@@ -120,6 +120,9 @@ const I_SUBSI = 115 // a=rd b=rn c=imm12: subs
 const I_SMULH = 116 // a=rd b=rn c=rm: the high 64 bits of the signed 128-bit product
 const I_UMULH = 117 // a=rd b=rn c=rm: the high 64 bits of the unsigned product
 const I_EXTR = 118 // a=rd b=rn c=rm d=lsb: 64 bits of rn:rm from bit lsb; ror rd, rn, #s is extr rd, rn, rn, #s (#488)
+const I_ADDISH = 119 // a=rd b=rn c=imm12: add rd, rn, #imm12, lsl #12
+const I_SUBISH = 120 // sub rd, rn, #imm12, lsl #12
+const I_FPARG = 121 // a=rt b=incoming byte offset: the caller's stack argument, expanded once the frame is known
 const MK_SIGNED = 4
 const MK_FLOAT = 8
 const MK_SCALED = 16
@@ -336,6 +339,14 @@ fn print_ins(b []u8, ins i64) {
 	} else if op == I_SUBI {
 		pr_regs(b, "sub", cast(i64, x), y, -1)
 		pr_imm(b, z)
+	} else if op == I_ADDISH {
+		pr_regs(b, "add", cast(i64, x), y, -1)
+		pr_imm(b, z)
+		buf_str(b, ", lsl #12")
+	} else if op == I_SUBISH {
+		pr_regs(b, "sub", cast(i64, x), y, -1)
+		pr_imm(b, z)
+		buf_str(b, ", lsl #12")
 	} else if op >= I_ADD && op <= I_EOR {
 		let names = []str{"add", "sub", "and", "orr", "eor"}
 		pr_regs(b, names[op - I_ADD], cast(i64, x), y, z)
@@ -820,6 +831,12 @@ fn encode(ins i64, pc i64) i64 {
 	}
 	if op == I_SUBI {
 		return 0xD1000000 | (z << 10) | (rn(y) << 5) | rn(x)
+	}
+	if op == I_ADDISH {
+		return 0x91400000 | (z << 10) | (rn(y) << 5) | rn(x)
+	}
+	if op == I_SUBISH {
+		return 0xD1400000 | (z << 10) | (rn(y) << 5) | rn(x)
 	}
 	if op == I_ADD {
 		return enc_shift(0x8B000000, x, y, z, w)

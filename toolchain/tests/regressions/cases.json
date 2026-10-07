@@ -896,5 +896,15 @@
       "stdout": "2000000000 1000000\n",
       "stderr": ""
     }
+  },
+  {
+    "source": "large-frame.tin",
+    "issue": 570,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "899\n",
+      "stderr": ""
+    }
   }
 ]
