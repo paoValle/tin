@@ -335,9 +335,11 @@ argument, a result), so two names never share a value. (`value` is a contextual 
 - A value struct holds numbers, `bool`, inline arrays of those, `str`, pointer optionals
   (`?str`, `?Node`) and other value structs (#669). A `str` field starts as `""`, and copying
   the value copies the field's word, so the string is shared as `str` values always are.
-  A value struct with a `str` or optional field cannot be kept, held by a global, captured by a
-  function literal or returned from an `arena` block yet, since long-lived memory does not
-  count its fields yet. A slice, map, reference-struct or `dyn` field, a `str` in an inline
+  Stored into long-lived memory it follows the rule for its `str` fields: `keep` it first (E310
+  otherwise), and each long-lived slot that holds it (a global, a global slice's element, a
+  field of a kept object) counts what its fields point at, so a replaced value gives its
+  strings back. A function literal cannot capture one and an `arena` block cannot return one
+  yet. A slice, map, reference-struct or `dyn` field, a `str` in an inline
   array, a map value, an optional value struct, a channel element and a `dyn` object of a
   value struct are E295 too (#669, design/design_layouts.md).
 

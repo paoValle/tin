@@ -1,0 +1,4 @@
+0 0 true
+set 0 0 note 0 [s0:4 y0:2 s0:4] pa0 pc0 h0 moved 0
+set 101 101 note 101 [s101:4 y101:2 s101:4] pa101 pc101 h101 moved 101
+counted blocks steady: true

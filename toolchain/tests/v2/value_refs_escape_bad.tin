@@ -1,0 +1,30 @@
+package main
+
+// #669: a value struct with a str field follows the rule for its strs. Stored into long-lived
+// memory without keep (a global, a global slice's elements, a str field read out of it, a mut
+// parameter written in a callee), request memory in it is E310 or E312, as the str itself would
+// be; with keep it is fine (value_refs_kept).
+
+type Entry value struct {
+	key str
+	n   i64
+}
+
+mut saved Entry
+
+mut all = []Entry{}
+
+mut first str = ""
+
+fn fill(e mut Entry, n i64) {
+	e.key = "filled {n}"
+}
+
+fn main() {
+	let e = Entry{key: "a{len(all)}", n: 1}
+	saved = e
+	all = append(all, e)
+	first = e.key
+	fill(mut saved, 3)
+	all[0].key = "b{len(all)}"
+}

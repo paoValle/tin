@@ -1,0 +1,5 @@
+toolchain/tests/v2/value_refs_escape_bad.tin:25:2: error E310 REQUEST_ESCAPE: request memory stored into global 'saved', which outlives the request: wrap the value in keep()
+toolchain/tests/v2/value_refs_escape_bad.tin:26:8: error E310 REQUEST_ESCAPE: request memory stored into long-lived memory (it may be reachable from a global): wrap the value in keep()
+toolchain/tests/v2/value_refs_escape_bad.tin:27:2: error E310 REQUEST_ESCAPE: request memory stored into global 'first', which outlives the request: wrap the value in keep()
+toolchain/tests/v2/value_refs_escape_bad.tin:28:2: error E312 ARG_ESCAPE: fill stores request memory into its mut parameter 'e', but this argument may be long-lived: keep() the stored values inside fill
+toolchain/tests/v2/value_refs_escape_bad.tin:29:8: error E310 REQUEST_ESCAPE: request memory stored into long-lived memory (it may be reachable from a global): wrap the value in keep()

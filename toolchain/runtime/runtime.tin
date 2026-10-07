@@ -1880,6 +1880,47 @@ fn rt_append_mem(s i64, p i64, esz i64) i64 {
 	return s
 }
 
+// rt_append_mem_rc is rt_append_mem for a value struct with counted fields (#669): in a
+// long-lived slice the new element's fields gain the count of their slot (inc counts them).
+fn rt_append_mem_rc(s i64, p i64, esz i64, inc fn(i64)) i64 {
+	s = rt_append_mem(s, p, esz)
+	if s[3] != 0 {
+		inc(s[2] + (s[0]-1)*esz)
+	}
+	return s
+}
+
+// rt_slice_appendn_vrc is append(s, t...) for such value structs (#669).
+fn rt_slice_appendn_vrc(s i64, t i64, esz i64, inc fn(i64)) i64 {
+	let n = s[0]
+	s = rt_slice_appendn(s, t, esz)
+	if s[3] != 0 {
+		for i in n..s[0] {
+			inc(s[2] + i*esz)
+		}
+	}
+	return s
+}
+
+// rt_slice_copy_vrc is copy(dst, src) for such value structs (#669): copied values gain their
+// slots' counts and replaced ones lose theirs, field by field.
+fn rt_slice_copy_vrc(dst i64, src i64, esz i64, inc fn(i64), drop fn(i64)) i64 {
+	mut n = dst[0]
+	if src[0] < n {
+		n = src[0]
+	}
+	if dst[3] != 0 {
+		for i in 0..n {
+			inc(src[2] + i*esz)
+		}
+		for i in 0..n {
+			drop(dst[2] + i*esz)
+		}
+	}
+	memmove(dst[2], src[2], n*esz)
+	return n
+}
+
 // rt_vdup copies the n bytes of a value struct at p into the pool (#631): what a function returns
 // must outlive its frame.
 fn rt_vdup(p i64, n i64) i64 {

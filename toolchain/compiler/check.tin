@@ -662,9 +662,7 @@ fn array_make(pos i64, t Ty, n i64) i64 {
 // global_value_ref reports a global of a type holding a value struct with a reference field,
 // which long-lived memory cannot count yet (#669).
 fn global_value_ref(pos i64, t i64) {
-	if holds_value_ref(cast(Ty, t), []i64{}) != 0 {
-		err_code_type(pos, "E295 NOT_YET", "a global of type ", t, " is not built yet (#669): it holds a value struct with a str or optional field")
-	}
+	// Built (#669 step 2): long-lived slots count a value struct's str fields.
 }
 
 // value_fill_strs gives each element of the new slice made (of type t) "" in its str fields, when
@@ -2084,6 +2082,15 @@ fn check_var(v Decl) {
 	ck_fn = cast(Fn, start_fn)
 	if s.tls != 0 {
 		ck_fn = core_fn
+	}
+	if cast(Node, init).kind == EX_INT && is_value_struct(cast(Ty, s.type_)) != 0 && value_has_ref(cast(Ty, s.type_)) != 0 {
+		// Its str fields hold "" (#669): the empty literal, checked in the initializer's function.
+		// A type node with no type expression: the literal takes the global's type.
+		let tn = node_new(EX_TYPE, v.pos)
+		init = node_new(EX_COMPOSITE, v.pos)
+		cast(Composite, init).type_ = tn
+		cast(Composite, init).elems = []i64{}
+		cast(Composite, init).keys = []i64{}
 	}
 	ck_sentinel = init
 	let t = chk(cast(Node, init), s.type_)
@@ -10359,7 +10366,7 @@ fn keep_fn(t Ty) Fn {
 		let et = t.elem
 		let out = temp(pos, rt_call(pos, "rt_keep_slice", args2(sym_ref_node(pos, x), mk_int(pos, type_width(cast(Ty, et)), ty_int)), cast(i64, t)), cast(i64, t))
 		body = append(body, cast(i64, out))
-		if is_ref(et) != 0 || is_dyn_value(cast(Ty, et)) != 0 {
+		if is_ref(et) != 0 || is_dyn_value(cast(Ty, et)) != 0 || value_has_ref(cast(Ty, et)) != 0 {
 			keep_each(pos, body, out.sym, et)
 		}
 		ret.value = sym_ref_node(pos, cast(Sym, out.sym))
@@ -10378,7 +10385,7 @@ fn keep_fn(t Ty) Fn {
 			for kk < v.count {
 				mut fi = v.first + kk
 				let ft = field_type(t, fi)
-				if is_ref(ft) != 0 || is_dyn_value(cast(Ty, ft)) != 0 {
+				if is_ref(ft) != 0 || is_dyn_value(cast(Ty, ft)) != 0 || value_has_ref(cast(Ty, ft)) != 0 {
 					let src = mk_mem(pos, sym_ref_node(pos, cast(Sym, out.sym)), 0, 0, field_offset(t, fi), ft)
 					mut vs7 = cast(Block, ifs.then).stmts
 					vs7 = append(vs7, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, out.sym)), cast(i64, t), fi), keep_call(pos, keep_fn(cast(Ty, ft)), src, ft)))
@@ -10394,13 +10401,28 @@ fn keep_fn(t Ty) Fn {
 			vi = vi + 1
 		}
 		ret.value = sym_ref_node(pos, cast(Sym, out.sym))
+	} else if is_value_struct(t) != 0 {
+		// A value struct with str fields (#669): a copy whose strs are kept. It is a value, not a
+		// slot: whoever stores it in long-lived memory counts its fields.
+		let out = temp(pos, sym_ref_node(pos, x), cast(i64, t))
+		body = append(body, cast(i64, out))
+		mut fi = 0
+		for fi < len(t.fields) {
+			let ft = field_type(t, fi)
+			if is_ref(ft) != 0 || value_has_ref(cast(Ty, ft)) != 0 {
+				let src = mk_mem(pos, sym_ref_node(pos, cast(Sym, out.sym)), 0, 0, field_offset(t, fi), ft)
+				body = append(body, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, out.sym)), cast(i64, t), fi), keep_call(pos, keep_fn(cast(Ty, ft)), src, ft)))
+			}
+			fi = fi + 1
+		}
+		ret.value = sym_ref_node(pos, cast(Sym, out.sym))
 	} else if k == K_STRUCT {
 		let out = temp(pos, rt_call(pos, "rt_keep_raw", args2(sym_ref_node(pos, x), mk_int(pos, t.size, ty_int)), cast(i64, t)), cast(i64, t))
 		body = append(body, cast(i64, out))
 		mut fi = 0
 		for fi < len(t.fields) {
 			let ft = field_type(t, fi)
-			if is_ref(ft) != 0 || is_dyn_value(cast(Ty, ft)) != 0 {
+			if is_ref(ft) != 0 || is_dyn_value(cast(Ty, ft)) != 0 || value_has_ref(cast(Ty, ft)) != 0 {
 				let src = mk_mem(pos, sym_ref_node(pos, cast(Sym, out.sym)), 0, 0, field_offset(t, fi), ft)
 				body = append(body, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, out.sym)), cast(i64, t), fi), keep_call(pos, keep_fn(cast(Ty, ft)), src, ft)))
 				// The kept copy's slot owns what it holds (#176).
@@ -10485,8 +10507,9 @@ fn keep_call(pos i64, f Fn, arg i64, t i64) i64 {
 fn rc_counted(t Ty) i64 {
 	let k = kind_of(t)
 	if is_value_struct(t) != 0 {
-		// Its bytes are copied into each slot; nothing to count (#631).
-		return 0
+		// Its bytes are copied into each slot: a slot counts what its str fields point at, if
+		// it has any (#669), and nothing else (#631).
+		return value_has_ref(t)
 	}
 	if k == K_STRING || k == K_SLICE || k == K_MAP || k == K_STRUCT {
 		return 1
@@ -10515,6 +10538,14 @@ fn fn_ref_node(pos i64, f Fn) i64 {
 
 // rc_inc_call emits rt_rc_inc(v); a dyn value counts its object (#618).
 fn rc_inc_call(pos i64, v i64) Node {
+	if is_value_struct(cast(Ty, cast(Node, v).type_)) != 0 {
+		// A value struct is not a block: each counted field gains a count (#669).
+		let vf = cast(Fn, vinc_fn(cast(Node, v).type_))
+		if rc_reach_ok != 0 {
+			mark_reach(vf)
+		}
+		return call_fn(pos, vf, args1(v), ty_void)
+	}
 	if is_shape_value(cast(Ty, cast(Node, v).type_)) != 0 {
 		v = mk_conv(pos, v, CV_DYN_OBJECT, ty_int)
 	}
@@ -10529,6 +10560,14 @@ fn rc_inc_call(pos i64, v i64) Node {
 // rt_rc_dec_dyn instead (#618; drop is unused).
 fn rc_dec_call(pos i64, v i64, drop i64) Node {
 	let vt = cast(Node, v).type_
+	if is_value_struct(cast(Ty, vt)) != 0 {
+		// A value struct is not a block: its drop releases each counted field (#669).
+		let df = cast(Fn, drop_fn(vt))
+		if rc_reach_ok != 0 {
+			mark_reach(df)
+		}
+		return call_fn(pos, df, args1(v), ty_void)
+	}
 	if is_shape_value(cast(Ty, vt)) != 0 {
 		let held = temp(pos, v, vt)
 		let object = mk_conv(pos, sym_ref_node(pos, cast(Sym, held.sym)), CV_DYN_OBJECT, ty_int)
@@ -10638,6 +10677,49 @@ fn rc_remark(f Fn) {
 		f.reach = 0
 		mark_reach(f)
 	}
+}
+
+shared mut vinc_types []i64
+shared mut vinc_fns []i64
+
+// vinc_fn returns (generating on first use) vinc$N(x T) for value struct T with counted fields
+// (#669): each of them gains the count of the slot x's bytes were just stored in.
+fn vinc_fn(t i64) i64 {
+	if cast(i64, vinc_types) == 0 {
+		vinc_types = []i64{}
+		vinc_fns = []i64{}
+	}
+	mut i = 0
+	for i < len(vinc_types) {
+		if cast([]i64, vinc_types)[i] == t {
+			return vinc_fns[i]
+		}
+		i = i + 1
+	}
+	mut names = []str{}
+	names = append(names, "x")
+	mut types = []i64{}
+	types = append(types, t)
+	let f = lifted_fn("vinc", names, cast([]i64, types), cast(i64, []i64{}))
+	mut vs1 = cast([]i64, vinc_types)
+	vs1 = append(vs1, t)
+	vinc_fns = append(vinc_fns, cast(i64, f))
+	let saved_fn = ck_fn
+	ck_fn = cast(Fn, f)
+	let pos = 0
+	let x = cast([]i64, f.locals)[0]
+	mut body = cast(Block, f.body).stmts
+	let vt = cast(Ty, t)
+	mut fi = 0
+	for fi < len(vt.fields) {
+		let ft = field_type(vt, fi)
+		if rc_counted(cast(Ty, ft)) != 0 {
+			body = append(body, expr_stmt(rc_inc_call(pos, mk_mem(pos, sym_ref_node(pos, cast(Sym, x)), 0, 0, field_offset(vt, fi), ft))))
+		}
+		fi = fi + 1
+	}
+	ck_fn = saved_fn
+	return cast(i64, f)
 }
 
 // rc_drop_body appends the releases of x's children to body: what one long-lived
@@ -11008,7 +11090,9 @@ fn arenacopy_fn(t Ty) Fn {
 // out is the body's first let, the copy the function returns.
 fn copy_memo_wrap(pos i64, body []i64, x Sym, t Ty) {
 	let k = kind_of(t)
-	if !(k == K_STRUCT || k == K_SLICE || k == K_MAP) {
+	if !(k == K_STRUCT || k == K_SLICE || k == K_MAP) || is_value_struct(t) != 0 {
+		// A value struct has no identity to share: its copy is a value, in the copier's
+		// frame, never an object a second path could reach (#669).
 		return
 	}
 	let opens = type_cycle(t, cast([]Ty, []i64{}))

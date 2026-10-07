@@ -4438,6 +4438,11 @@ fn chk_builtin(e i64, name str, want i64) i64 {
 					if is_shape_value(cast(Ty, et)) != 0 {
 						// Their objects, for dyn elements (#618).
 						acc = rt_call(pos, "rt_slice_appendn_dyn", args2(acc, cast(Unary, a).x), cast(i64, st))
+					} else if value_has_ref(cast(Ty, et)) != 0 {
+						// Value structs: each one's fields, in a long-lived slice (#669).
+						mut nargs = cast([]i64, args3(acc, cast(Unary, a).x, mk_int(pos, elem_size(st), ty_int)))
+						nargs = append(nargs, fn_ref_node(pos, cast(Fn, vinc_fn(et))))
+						acc = rt_call(pos, "rt_slice_appendn_vrc", cast(i64, nargs), cast(i64, st))
 					} else {
 						acc = rt_call(pos, appendn, args3(acc, cast(Unary, a).x, mk_int(pos, elem_size(st), ty_int)), cast(i64, st))
 					}
@@ -4450,6 +4455,11 @@ fn chk_builtin(e i64, name str, want i64) i64 {
 				}
 				if is_dyn_value(cast(Ty, et)) != 0 {
 					acc = lower_append_dyn(pos, acc, a, st)
+				} else if value_has_ref(cast(Ty, et)) != 0 {
+					// Its bytes, copied in, and in a long-lived slice its fields' counts (#669).
+					mut margs = cast([]i64, args3(acc, a, mk_int(pos, elem_size(st), ty_int)))
+					margs = append(margs, fn_ref_node(pos, cast(Fn, vinc_fn(et))))
+					acc = rt_call(pos, "rt_append_mem_rc", cast(i64, margs), cast(i64, st))
 				} else if is_value_struct(cast(Ty, et)) != 0 {
 					// A value struct's bytes, copied in (#631).
 					acc = rt_call(pos, "rt_append_mem", args3(acc, a, mk_int(pos, elem_size(st), ty_int)), cast(i64, st))
@@ -4602,6 +4612,12 @@ fn chk_builtin(e i64, name str, want i64) i64 {
 		} else if kind_of(dt) == K_SLICE && is_shape_value(cast(Ty, dt.elem)) != 0 {
 			// The objects of dyn elements, released through their tables (#618).
 			replace_node(e, rt_call(pos, "rt_slice_copy_dyn", args3(arg0(cast(Call, e)), args[1], mk_int(pos, dyn_drop_index(dt.elem), ty_int)), ty_int))
+		} else if kind_of(dt) == K_SLICE && value_has_ref(cast(Ty, dt.elem)) != 0 {
+			// Value structs: their fields, element by element (#669).
+			mut vargs = cast([]i64, args3(arg0(cast(Call, e)), args[1], mk_int(pos, elem_size(dt), ty_int)))
+			vargs = append(vargs, fn_ref_node(pos, cast(Fn, vinc_fn(dt.elem))))
+			vargs = append(vargs, fn_ref_node(pos, cast(Fn, drop_fn(dt.elem))))
+			replace_node(e, rt_call(pos, "rt_slice_copy_vrc", cast(i64, vargs), ty_int))
 		} else if kind_of(dt) == K_SLICE && rc_counted(cast(Ty, dt.elem)) != 0 {
 			// Copied values gain their slots' counts and replaced ones lose theirs (#176).
 			mut cargs = cast([]i64, args3(arg0(cast(Call, e)), args[1], mk_int(pos, elem_size(dt), ty_int)))
@@ -4795,10 +4811,6 @@ fn lower_keep(e Node, want i64) i64 {
 	if is_untyped(t) != 0 {
 		t = reconvert(cast(Node, x), default_type(t))
 	}
-	if holds_value_ref(cast(Ty, t), []i64{}) != 0 {
-		err_code_type(pos, "E295 NOT_YET", "keep of ", t, " is not built yet (#669): it holds a value struct with a str or optional field")
-		return t
-	}
 	if kind_of(cast(Ty, t)) == K_DYN || type_has_dyn(cast(Ty, t), 0) != 0 {
 		let f = keep_fn(cast(Ty, t))
 		let c = node_new(EX_CALL, pos)
@@ -4816,7 +4828,7 @@ fn lower_keep(e Node, want i64) i64 {
 		replace_node(cast(i64, e), c)
 		return t
 	}
-	if is_ref(t) == 0 {
+	if is_ref(t) == 0 && value_has_ref(cast(Ty, t)) == 0 {
 		replace_node(cast(i64, e), x)
 		return t
 	}

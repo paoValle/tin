@@ -1,0 +1,21 @@
+package main
+
+import "say"
+
+// Appending a value struct of numbers to a global slice was E310 REQUEST_ESCAPE (#669): the region
+// pass did not know rt_append_mem, so the result looked like fresh request memory. Its bytes
+// hold no reference, so nothing escapes.
+
+type P value struct {
+	x i64
+	y i64
+}
+
+mut gs = []P{}
+
+fn main() {
+	for i in 0..3 {
+		gs = append(gs, P{x: i, y: i * i})
+	}
+	say.Line(gs)
+}

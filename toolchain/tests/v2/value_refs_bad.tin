@@ -2,10 +2,9 @@ package main
 
 import "say"
 
-// #669 step 1: a value struct with a str or pointer-optional field cannot reach long-lived
-// memory yet, since nothing counts what its bytes point at: keep, a global, a capture by a
-// function literal (a cell a kept closure would copy) and an arena block's value are E295. A
-// slice field and a str in an inline array are E295 too, and an optional field still has no ==.
+// #669: what a value struct with a str field cannot do yet. A capture by a function literal and an
+// arena block's value are E295 (the region rules for a kept one are in value_refs_escape_bad),
+// a slice field and a str in an inline array are E295 too, and an optional field has no ==.
 
 type Entry value struct {
 	key  str
@@ -20,18 +19,13 @@ type Codes value struct {
 	tags [2]str
 }
 
-mut saved Entry
-
-mut all = []Entry{}
-
 fn main() {
 	let e = Entry{key: "a"}
-	let k = keep(e)
 	let f = fn() str {
 		return e.key
 	}
 	let v = arena {
 		Entry{key: "b"}
 	}
-	say.Line(k.key, f(), v.key, e == e)
+	say.Line(f(), v.key, e == e)
 }

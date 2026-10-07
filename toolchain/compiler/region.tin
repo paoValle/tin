@@ -33,7 +33,6 @@ shared mut rs_active i64 // the use-after-reset walk is running (rs_walk)
 shared mut rs_dead []i64 // locals that may hold request memory from before a hearth.Reset()
 shared mut rs_said []i64 // locals already reported
 shared mut rs_cur []i64 // [local, bits] of each local's latest assignment on the walk (else Sym.region)
-shared mut rg_vref_node i64 // the value struct expression rg_expr is computing the plain bits of (#669)
 
 fn has_ptr(t Ty) i64 {
 	let k = kind_of(t)
@@ -267,7 +266,7 @@ fn rg_stmt(s i64) {
 // header in place and returns it, so storing the result back changes nothing.
 fn rg_regrow(t i64, x_in i64) i64 {
 	mut x = rg_unseq(x_in)
-	for cast(Node, x).kind == EX_CALL && len(cast(Call, x).name) != 0 && (cast(Call, x).name == "rt_append" || cast(Call, x).name == "rt_append_rc" || cast(Call, x).name == "rt_slice_appendn" || cast(Call, x).name == "rt_slice_appendn_rc" || cast(Call, x).name == "rt_append_str" || cast(Call, x).name == "rt_append_dyn" || cast(Call, x).name == "rt_slice_appendn_dyn") {
+	for cast(Node, x).kind == EX_CALL && len(cast(Call, x).name) != 0 && (cast(Call, x).name == "rt_append" || cast(Call, x).name == "rt_append_rc" || cast(Call, x).name == "rt_slice_appendn" || cast(Call, x).name == "rt_slice_appendn_rc" || cast(Call, x).name == "rt_append_str" || cast(Call, x).name == "rt_append_dyn" || cast(Call, x).name == "rt_slice_appendn_dyn" || cast(Call, x).name == "rt_append_mem" || cast(Call, x).name == "rt_append_mem_rc" || cast(Call, x).name == "rt_slice_appendn_vrc") {
 		x = rg_unseq(cast(Call, x).args[0])
 	}
 	return rg_same(t, x)
@@ -535,6 +534,21 @@ fn rg_store(c i64, co i64, ct i64, v i64, t i64, pos i64, gname str) {
 	}
 }
 
+// rg_value_arg notes that a callee may have written request memory into the value struct
+// argument a, passed as mut (#669): a local holds it now, a value inside a container stores it.
+fn rg_value_arg(a i64, pos i64) {
+	if cast(Node, a).kind == EX_IDENT {
+		let s = cast(Sym, cast(IdentExpr, a).ref)
+		if cast(i64, s) != 0 && s.kind == SYM_LOCAL {
+			rg_local(s, RG_EMB)
+			return
+		}
+	}
+	if cast(Node, a).kind == EX_MEM || cast(Node, a).kind == EX_ELEM {
+		rg_value_store(a, RG_EMB, pos)
+	}
+}
+
 // rg_value_field reports a store target inside a value struct with a reference field (#669).
 fn rg_value_field(t i64) i64 {
 	let k = cast(Node, t).kind
@@ -578,6 +592,14 @@ fn rg_value_store(t i64, v i64, pos i64) {
 		let s = cast(Sym, cast(IdentExpr, x).ref)
 		if cast(i64, s) != 0 && s.kind == SYM_GLOBAL {
 			rg_store(RG_INGOT, 0, 0, v, cast(Node, x).type_, pos, s.name)
+		} else if cast(i64, s) != 0 && s.kind == SYM_LOCAL {
+			// The local now holds what its field was given too; a mut parameter's bytes are
+			// its caller's, which the summary records like any store into a parameter.
+			rg_local(s, v)
+			let pi = slice_index(cast([]i64, cast(Fn, rg_fn).locals), cast(i64, s))
+			if pi >= 0 && pi < rg_nparams {
+				rg_store(s.region | (RG_P0 << pi), 0, 0, v, cast(Node, x).type_, pos, "")
+			}
 		}
 		return
 	}
@@ -660,16 +682,18 @@ fn rg_cell_store(i i64, v_in i64, t i64, pos i64) {
 }
 
 fn rg_expr(e i64) i64 {
-	if e != rg_vref_node && value_has_ref(cast(Ty, cast(Node, e).type_)) != 0 {
-		// A value struct with a reference field may hold anything its fields were given, in
-		// bytes copied from place to place: request memory of unknown origin (#669).
-		let saved = rg_vref_node
-		rg_vref_node = e
-		let b = rg_expr(e)
-		rg_vref_node = saved
-		return b | RG_EMB | RG_UNK
-	}
 	let k = cast(Node, e).kind
+	if k == EX_MEM && value_has_ref(cast(Ty, cast(Node, cast(MemExpr, e).base).type_)) != 0 {
+		// A field of such a value holds what the value holds (#669).
+		if cast(MemExpr, e).index != 0 {
+			rg_expr(cast(MemExpr, e).index)
+		}
+		let vb = rg_expr(cast(MemExpr, e).base)
+		if has_ptr(cast(Ty, cast(Node, e).type_)) == 0 {
+			return 0
+		}
+		return vb
+	}
 	if k == EX_IDENT {
 		let s = cast(Sym, cast(IdentExpr, e).ref)
 		if cast(i64, s) == 0 {
@@ -934,7 +958,7 @@ fn rg_arena_cell_store(i i64, v i64, t i64, pos i64) i64 {
 }
 
 fn rg_grows_op(name str) i64 {
-	return i64(name == "rt_append" || name == "rt_append_rc" || name == "rt_append_dyn" || name == "rt_slice_appendn" || name == "rt_slice_appendn_rc" || name == "rt_append_str" || name == "rt_map_set" || name == "rt_map_setk" || name == "rt_map_set_dyn" || name == "rt_slice_appendn_dyn")
+	return i64(name == "rt_append" || name == "rt_append_rc" || name == "rt_append_dyn" || name == "rt_slice_appendn" || name == "rt_slice_appendn_rc" || name == "rt_append_str" || name == "rt_map_set" || name == "rt_map_setk" || name == "rt_map_set_dyn" || name == "rt_slice_appendn_dyn" || name == "rt_append_mem" || name == "rt_append_mem_rc" || name == "rt_slice_appendn_vrc")
 }
 
 // rg_grow notes that the running function may grow the slice or map with bits b.
@@ -1331,6 +1355,9 @@ fn rg_call(e i64) i64 {
 				rg_store(b[i], rg_owner(cast(i64, a)), rg_key(a.type_), RG_EMB, 0, pos, "")
 				rg_pass(cast([]i64, rg_fnsum[10]), i, cast([]Node, args), b, RG_EMB, pos)
 				rg_pass(cast([]i64, rg_fnsum[11]), i, cast([]Node, args), b, 0, pos)
+				if value_has_ref(cast(Ty, a.type_)) != 0 {
+					rg_value_arg(cast(i64, a), pos)
+				}
 				rg_report = saved
 			}
 			i = i + 1
@@ -1370,6 +1397,15 @@ fn rg_call(e i64) i64 {
 		sum = f.regsum
 	}
 	if sum == 0 {
+		// A function with no summary (generated: argo's decoders) may write request memory into
+		// a value struct it is given as mut (#669).
+		i = 0
+		for cast(i64, f) != 0 && i < n {
+			if cast(i64, f.muts) != 0 && i < len(f.muts) && f.muts[i] != 0 && value_has_ref(cast(Ty, cast(Node, args[i]).type_)) != 0 {
+				rg_value_arg(args[i], pos)
+			}
+			i = i + 1
+		}
 		if has_ptr(cast(Ty, cast(Node, e).type_)) != 0 {
 			return RG_UNK | RG_EMB
 		}
@@ -1397,6 +1433,10 @@ fn rg_call(e i64) i64 {
 			}
 			rg_pass(cast([]i64, sum[10]), i, cast([]Node, args), b, RG_EMB, pos)
 			rg_report = saved
+			if value_has_ref(cast(Ty, cast(Node, args[i]).type_)) != 0 {
+				// The callee wrote request memory into the bytes of a value struct (#669).
+				rg_value_arg(args[i], pos)
+			}
 		} else if mutp != 0 {
 			let a = cast(Node, args[i])
 			rg_store(b[i], rg_owner(cast(i64, a)), rg_key(a.type_), 0, 0, pos, "")
@@ -1575,7 +1615,8 @@ fn rg_runtime_call(e i64, name str, b []i64, pos i64) i64 {
 		rg_store(b0, co, ct, b[2], cast(Ty, cast(Node, args[0]).type_).elem, pos, "")
 		return 0
 	}
-	if name == "rt_append" || name == "rt_append_rc" {
+	if name == "rt_append" || name == "rt_append_rc" || name == "rt_append_mem" || name == "rt_append_mem_rc" {
+		// A value struct's bytes are copied in: what its fields hold is stored (#631, #669).
 		rg_store(b0, co, ct, b[1], cast(Node, args[1]).type_, pos, "")
 		return b0
 	}
@@ -1584,7 +1625,7 @@ fn rg_runtime_call(e i64, name str, b []i64, pos i64) i64 {
 		rg_store(b0, co, ct, b[1], et, pos, "")
 		return b0
 	}
-	if name == "rt_slice_appendn" || name == "rt_slice_copy" || name == "rt_slice_appendn_rc" || name == "rt_slice_copy_rc" || name == "rt_slice_appendn_dyn" || name == "rt_slice_copy_dyn" {
+	if name == "rt_slice_appendn" || name == "rt_slice_copy" || name == "rt_slice_appendn_rc" || name == "rt_slice_copy_rc" || name == "rt_slice_appendn_dyn" || name == "rt_slice_copy_dyn" || name == "rt_slice_appendn_vrc" || name == "rt_slice_copy_vrc" {
 		mut et = 0
 		let a1 = cast(Node, args[1])
 		if kind_of(cast(Ty, a1.type_)) == K_SLICE {
@@ -1935,6 +1976,28 @@ fn rc_assign(s i64, stmts []i64, i i64) i64 {
 		return 0
 	}
 	let k = cast(Node, target).kind
+	if (k == EX_MEM || k == EX_ELEM) && rc_value_inner(target) != 0 {
+		// A field or element inside a value struct (#669): the slot is the container that holds
+		// the value. Its indexes are bound to temporaries so the old value is read from the
+		// very same place.
+		mut pre0 = []i64{}
+		let root = rc_value_root(pos, target, pre0)
+		if root != 0 && is_value_struct(cast(Ty, cast(Node, root).type_)) != 0 && (cast(Node, root).kind != EX_IDENT || cast(IdentExpr, root).ref == 0 || cast(Sym, cast(IdentExpr, root).ref).kind != SYM_GLOBAL) {
+			// The bytes of a local or parameter: a frame, not a long-lived slot.
+			rc_seq(val)
+			rc_splice(stmts, i, cast([]i64, pre0))
+			return len(cast([]i64, pre0))
+		}
+		if root != 0 && rc_ingot_base(root) != 0 {
+			return rc_wrap(s, stmts, i, rc_chain_read(pos, target), t, cast([]i64, pre0))
+		}
+		if root != 0 && rc_local_base(root) == 0 && is_value_struct(cast(Ty, t)) == 0 {
+			rc_pin_value(s, t)
+		}
+		rc_seq(val)
+		rc_splice(stmts, i, cast([]i64, pre0))
+		return len(cast([]i64, pre0))
+	}
 	if k == EX_IDENT {
 		if cast(IdentExpr, target).ref != 0 && cast(Sym, cast(IdentExpr, target).ref).kind == SYM_GLOBAL {
 			// xs = append(xs, v): the append counts its own element and returns the same
@@ -1978,6 +2041,61 @@ fn rc_assign(s i64, stmts []i64, i i64) i64 {
 	}
 	rc_seq(val)
 	return 0
+}
+
+// rc_value_inner reports a store target whose base is a value struct (#669).
+fn rc_value_inner(t i64) i64 {
+	if cast(Node, t).kind == EX_MEM {
+		return is_value_struct(cast(Ty, cast(Node, cast(MemExpr, t).base).type_))
+	}
+	return is_value_struct(cast(Ty, cast(Node, cast(ElemExpr, t).seq).type_))
+}
+
+// rc_value_root walks target's value struct bases up to the container that holds the value (a
+// slice or object, or a variable), binding each index on the way to a temporary (added to pre).
+fn rc_value_root(pos i64, target i64, pre []i64) i64 {
+	mut x = target
+	for {
+		let k = cast(Node, x).kind
+		mut b = 0
+		if k == EX_MEM {
+			if cast(MemExpr, x).index != 0 {
+				let it = temp(pos, cast(MemExpr, x).index, ty_int)
+				pre = append(pre, cast(i64, it))
+				cast(MemExpr, x).index = sym_ref_node(pos, cast(Sym, it.sym))
+			}
+			b = cast(MemExpr, x).base
+		} else if k == EX_ELEM {
+			let it = temp(pos, cast(ElemExpr, x).idx, ty_int)
+			pre = append(pre, cast(i64, it))
+			cast(ElemExpr, x).idx = sym_ref_node(pos, cast(Sym, it.sym))
+			b = cast(ElemExpr, x).seq
+		} else {
+			return x
+		}
+		if is_value_struct(cast(Ty, cast(Node, b).type_)) == 0 {
+			return b
+		}
+		x = b
+	}
+	return 0
+}
+
+// rc_chain_read is a second read of target, a field or element inside a value struct whose
+// indexes rc_value_root bound: the nodes along the value struct bases are copied.
+fn rc_chain_read(pos i64, x i64) i64 {
+	let k = cast(Node, x).kind
+	if k != EX_MEM && k != EX_ELEM {
+		return x
+	}
+	let n = node_new(k, pos)
+	replace_node(n, x)
+	if k == EX_MEM && is_value_struct(cast(Ty, cast(Node, cast(MemExpr, x).base).type_)) != 0 {
+		cast(MemExpr, n).base = rc_chain_read(pos, cast(MemExpr, x).base)
+	} else if k == EX_ELEM && is_value_struct(cast(Ty, cast(Node, cast(ElemExpr, x).seq).type_)) != 0 {
+		cast(ElemExpr, n).seq = rc_chain_read(pos, cast(ElemExpr, x).seq)
+	}
+	return n
 }
 
 // rc_wrap binds the stored value, reads the old one, counts the new value, drops the old
@@ -2128,7 +2246,7 @@ fn rc_elem_read(pos i64, target ElemExpr, t i64) i64 {
 // rc_append_into reports whether xs = append(xs, v) grows the very global being assigned:
 // rt_append_rc counted its element and returned the same header, so nothing else moves.
 fn rc_append_into(v i64, target IdentExpr) i64 {
-	if cast(Node, v).kind != EX_CALL || len(cast(Call, v).name) == 0 || cast(Call, v).name != "rt_append_rc" {
+	if cast(Node, v).kind != EX_CALL || len(cast(Call, v).name) == 0 || (cast(Call, v).name != "rt_append_rc" && cast(Call, v).name != "rt_append_mem_rc") {
 		return 0
 	}
 	let a0 = cast(Call, v).args[0]

@@ -1,0 +1,77 @@
+package main
+
+import "hearth"
+import "say"
+
+// #669 step 2: a value struct with str fields lives in long-lived memory once kept. Each slot
+// that holds one counts what its strs point at: a global, a global slice's elements, a value
+// struct inside another and inside a reference struct. Replacing one gives the old strs back,
+// so a hundred rounds of replacements leave the counted blocks where they were.
+
+type Entry value struct {
+	key  str
+	n    i64
+	note ?str
+}
+
+type Pair value struct {
+	a Entry
+	b Entry
+}
+
+type Holder struct {
+	label str
+	at    Entry
+}
+
+mut current Entry
+mut table = []Entry{}
+mut spare = []Entry{}
+mut pairs = []Pair{}
+mut held = Holder{label: "h", at: Entry{key: "start"}}
+
+fn round(r i64) {
+	current = keep(Entry{key: "cur {r}", n: r})
+	current.key = keep("set {r}")
+	current.note = keep("note {r}")
+	table = keep([]Entry{Entry{key: "a{r}", n: 1}, Entry{key: "b{r}", n: 2, note: "x{r}"}, Entry{key: "c{r}", n: 3}})
+	table[0] = keep(Entry{key: "z{r}", n: 9})
+	table[1].key = keep("y{r}")
+	spare = keep([]Entry{Entry{key: "s{r}", n: 4}})
+	copy(table, spare)
+	table[2] = table[0]
+	pairs = keep([]Pair{Pair{a: Entry{key: "pa{r}"}, b: Entry{key: "pb{r}"}}})
+	pairs[0].b = keep(Entry{key: "pc{r}"})
+	held = keep(Holder{label: "h{r}", at: Entry{key: "held {r}"}})
+	held.at = keep(Entry{key: "moved {r}"})
+}
+
+fn show() {
+	mut keys = []str{}
+	for e in table {
+		keys = append(keys, "{e.key}:{e.n}")
+	}
+	mut note = "nil"
+	if let t = current.note {
+		note = t
+	}
+	say.Line(current.key, current.n, note, keys, pairs[0].a.key, pairs[0].b.key, held.label, held.at.key)
+}
+
+fn main() {
+	// A global never assigned holds the zero value: "" in each str field.
+	say.Line(len(current.key), current.n, current.note == nil)
+	round(0)
+	show()
+	hearth.Reset()
+	round(1)
+	hearth.Reset()
+	let (b0, _, _) = hearth.RcStats()
+	for r in 2..102 {
+		round(r)
+		hearth.Reset()
+	}
+	show()
+	let (b1, _, _) = hearth.RcStats()
+	say.Line("counted blocks steady:", b1 - b0 <= 2)
+}
