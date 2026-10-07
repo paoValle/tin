@@ -344,7 +344,7 @@ argument, a result), so two names never share a value. (`value` is a contextual 
   that captured one keeps its fields, and an `arena` block's value has them copied out. A func
   or `dyn` field,
   a reference in an inline array, a channel element and a `dyn` object of a value struct are
-  E295 (#669, design/design_layouts.md).
+  E295 (#692, design/design_layouts.md).
 - `?P` of a value struct `P` is a value too (#669): a tag word and `P`'s bytes, stored inline
   and copied like `P`, nil when zeroed, so `make([]?P, n)` holds n nils and a `?P` field
   needs no initializer. It narrows like any optional (`if x != nil`, `if let p = x`, `x ?? d`);

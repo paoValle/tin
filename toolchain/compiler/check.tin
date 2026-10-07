@@ -360,7 +360,7 @@ fn resolve_type(tx i64) i64 {
 	if k == TX_CHAN {
 		let ct = resolve_type(cast(TypeExpr, tx).a)
 		if is_value_struct(cast(Ty, ct)) != 0 {
-			value_not_yet(cast(Node, tx).pos, ct, " cannot travel on a channel yet (#669)")
+			value_not_yet(cast(Node, tx).pos, ct, " cannot travel on a channel yet (#692)")
 		}
 		return chan_of(ct)
 	}
@@ -854,7 +854,7 @@ fn resolve_fields(st Ty, tx TypeExpr) {
 				let m = err_code(cast(Node, cast(ParsedField, src[i]).ty).pos, "E295 NOT_YET")
 				buf_str(m, "a value struct field of type ")
 				type_name(cast([]u8, m), cast(Ty, cast(Field, fs[i]).ty))
-				buf_str(m, " is not built yet (#669): a value struct holds numbers, bool, str, slices, maps, structs, pointer optionals and other value structs, and an inline array holds none of the references")
+				buf_str(m, " is not built yet (#692): a value struct holds numbers, bool, str, slices, maps, structs, pointer optionals and other value structs, and an inline array holds none of the references")
 				err_end(cast([]u8, m))
 			}
 			i = i + 1
@@ -7190,7 +7190,7 @@ fn check_assignable(e Node, from i64, to Ty) {
 		return
 	}
 	if (kind_of(to) == K_DYN || (kind_of(to) == K_OPT && kind_of(cast(Ty, to.elem)) == K_DYN)) && is_value_struct(cast(Ty, from)) != 0 {
-		value_not_yet(e.pos, from, " cannot be a dyn object yet (#669)")
+		value_not_yet(e.pos, from, " cannot be a dyn object yet (#692)")
 		return
 	}
 	if kind_of(to) == K_DYN && kind_of(cast(Ty, from)) != K_DYN {

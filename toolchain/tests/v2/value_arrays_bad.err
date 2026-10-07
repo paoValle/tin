@@ -1,4 +1,4 @@
-toolchain/tests/v2/value_arrays_bad.tin:9:4: error E295 NOT_YET: a value struct field of type [2]str is not built yet (#669): a value struct holds numbers, bool, str, slices, maps, structs, pointer optionals and other value structs, and an inline array holds none of the references
+toolchain/tests/v2/value_arrays_bad.tin:9:4: error E295 NOT_YET: a value struct field of type [2]str is not built yet (#692): a value struct holds numbers, bool, str, slices, maps, structs, pointer optionals and other value structs, and an inline array holds none of the references
 toolchain/tests/v2/value_arrays_bad.tin:14:5: error E238 INDEX: index 4 is out of range for [4]u8
 toolchain/tests/v2/value_arrays_bad.tin:15:16: error E238 INDEX: cannot slice [4]u8
 toolchain/tests/v2/value_arrays_bad.tin:16:8: error E217 BUILTIN_ARGS: first argument to append must be a slice, not [4]u8
