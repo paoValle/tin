@@ -1,0 +1,71 @@
+package main
+
+// #669 step 5: a map's value may be a value struct. Each entry's bytes live in a cell of the
+// map's own, written by m[k] = v and read by m[k] (a missing key reads the zero value); a
+// long-lived map counts the fields of its values and frees a cell when its entry goes.
+
+import "argo"
+import "hearth"
+import "say"
+
+type P value struct {
+	x i64
+	y i64
+	z i64
+}
+
+type Entry value struct {
+	key  str
+	n    i64
+	tags []str
+}
+
+mut book = map[str]Entry{}
+
+fn main() {
+	mut ps = map[str]P{}
+	ps["a"] = P{x: 1, y: 2, z: 3}
+	ps["b"] = P{x: 4}
+	let a = ps["a"]
+	ps["a"] = P{x: 9, y: 9, z: 9}
+	say.Line(a, ps["a"], ps["missing"], len(ps))
+	let (q, ok) = ps["b"]
+	let (r, ok2) = ps["none"]
+	say.Line(q, ok, r, ok2)
+	mut sum = 0
+	for k, v in ps {
+		sum += v.x + v.y + v.z + len(k)
+	}
+	say.Line(sum)
+	delete(ps, "b")
+	say.Line(ps, len(ps))
+	mut es = map[i64]Entry{}
+	es[1] = Entry{key: "one", n: 1, tags: []str{"t"}}
+	es[2] = Entry{key: "two"}
+	say.Line(es[1].key, es[2].tags, len(es[3].key), es)
+	mut out = []u8{}
+	mut named = map[str]Entry{}
+	named["one"] = es[1]
+	argo.Put(mut out, named)
+	say.Line(str(out))
+	mut back = map[str]Entry{}
+	argo.Get(str(out), mut back) catch err {
+		say.Line(err)
+	}
+	say.Line(back["one"].key, back["one"].tags)
+	for i in 0..3 {
+		book = keep(map[str]Entry{"w": Entry{key: "w{i}"}})
+		book["x"] = keep(Entry{key: "x{i}", tags: []str{"a{i}"}})
+		hearth.Reset()
+	}
+	let (b0, _, _) = hearth.RcStats()
+	for i in 0..100 {
+		book = keep(map[str]Entry{"w": Entry{key: "w{i}"}})
+		book["x"] = keep(Entry{key: "x{i}", tags: []str{"a{i}"}})
+		book["x"] = keep(Entry{key: "y{i}"})
+		delete(book, "w")
+		hearth.Reset()
+	}
+	let (b1, _, _) = hearth.RcStats()
+	say.Line(book, b1 - b0 <= 4)
+}

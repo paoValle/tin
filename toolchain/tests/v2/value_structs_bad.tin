@@ -2,8 +2,8 @@ package main
 
 // #631 phase A: what a value struct refuses. Its bytes are its own, so a let value struct and a
 // parameter that is not mut cannot be changed (the parameter's bytes are its caller's); it has no
-// identity for same; and func and dyn fields inside it, map values, optionals, channels and
-// dyn objects come with #669 (E295).
+// identity for same; and func and dyn fields inside it, optionals, channels and dyn objects come
+// with #669 (E295).
 
 type P value struct {
 	x i64

@@ -1,0 +1,8 @@
+{1 2 3} {9 9 9} {0 0 0} 2
+{4 0 0} true {0 0 0} false
+33
+map[a:{9 9 9}] 1
+one [] 0 map[1:{one 1 [t]} 2:{two 0 []}]
+{"one":{"key":"one","n":1,"tags":["t"]}}
+one [t]
+map[x:{y99 0 []}] true

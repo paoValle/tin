@@ -1,0 +1,29 @@
+package main
+
+import "say"
+
+// #669 step 5: a value struct in a map is read out as a copy, so its fields cannot be changed
+// in place (E710), whether by assignment or through a mut receiver or argument.
+
+type P value struct {
+	x i64
+	y i64
+}
+
+fn (p mut P) bump() {
+	p.x += 1
+}
+
+fn grow(p mut P) {
+	p.y += 1
+}
+
+fn main() {
+	mut m = map[str]P{}
+	m["a"] = P{x: 1}
+	m["a"].x = 5
+	m["a"].y += 1
+	m["a"].bump()
+	grow(mut m["a"])
+	say.Line(m)
+}

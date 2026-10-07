@@ -1479,6 +1479,9 @@ fn key_out(e Node, kt i64) i64 {
 
 // map_set_call stores v under key k in map m.
 fn map_set_call(pos i64, m i64, k i64, v i64, kt i64) i64 {
+	if is_value_struct(cast(Ty, cast(Ty, cast(Node, m).type_).elem)) != 0 {
+		return map_set_vcell(pos, m, key_in(cast(Node, k), kt), v, key_composite(kt))
+	}
 	if is_dyn_value(cast(Ty, cast(Ty, cast(Node, m).type_).elem)) != 0 {
 		return map_set_dyn(pos, m, key_in(cast(Node, k), kt), v, key_composite(kt))
 	}
@@ -1516,8 +1519,34 @@ fn map_set_dyn(pos i64, m i64, k i64, v i64, ck i64) i64 {
 	return mk_seq(pos, cast(i64, stmts), call, ty_void)
 }
 
+// map_set_vcell stores value struct v under k, the key's stored form, in a cell of map m's own
+// as wide as the value (#669): its bytes are copied in, and in a long-lived map its fields are
+// counted (inc) and the old ones released (drop). ck says the key is encoded (rt_map_setk).
+fn map_set_vcell(pos i64, m i64, k i64, v i64, ck i64) i64 {
+	let vt = cast(Ty, cast(Node, v).type_)
+	mut inc = rc_none()
+	mut drop = rc_none()
+	if value_has_ref(vt) != 0 {
+		inc = vinc_fn(cast(i64, vt))
+		drop = drop_fn(cast(i64, vt))
+	}
+	mut args = []i64{}
+	args = append(args, m)
+	args = append(args, k)
+	args = append(args, v)
+	args = append(args, mk_int(pos, vt.size, ty_int))
+	args = append(args, fn_ref_node(pos, cast(Fn, inc)))
+	args = append(args, fn_ref_node(pos, cast(Fn, drop)))
+	args = append(args, mk_int(pos, ck, ty_int))
+	return rt_call(pos, "rt_map_set_vcell", cast(i64, args), ty_void)
+}
+
 // map_val is the value of entry j of map m (rt_map_val) as a vt.
 fn map_val(pos i64, m i64, j i64, vt i64) i64 {
+	if is_value_struct(cast(Ty, vt)) != 0 {
+		// The entry's cell holds the value's bytes (#669).
+		return rt_call(pos, "rt_map_val", args2(m, j), vt)
+	}
 	if is_dyn_value(cast(Ty, vt)) != 0 {
 		return rt_call(pos, "rt_map_val_dyn", args2(m, j), vt)
 	}
@@ -1776,6 +1805,13 @@ fn key_dec_into(pos i64, body []i64, s i64, dst i64, ft i64) {
 // map_read is m[k]: a missing key reads as the value type's zero, and a str, slice, map
 // or struct zero is a real (never nil) value.
 fn map_read(pos i64, m Node, k i64, vt i64) i64 {
+	if is_value_struct(cast(Ty, vt)) != 0 {
+		// The entry's cell, or the value's zero (in a frame area) when the key is missing (#669).
+		mut zs = []i64{}
+		let z = temp(pos, zero_value(pos, vt), vt)
+		zs = append(zs, cast(i64, z))
+		return mk_seq(pos, cast(i64, zs), rt_call(pos, "rt_map_vget", args3(cast(i64, m), key_in(cast(Node, k), cast(Ty, m.type_).key), sym_ref_node(pos, cast(Sym, z.sym))), vt), vt)
+	}
 	if is_dyn_value(cast(Ty, vt)) != 0 {
 		// A dyn value has no zero (#567): a missing key panics, or reads nil from a ?dyn map.
 		return rt_call(pos, "rt_map_get_dyn", args3(cast(i64, m), key_in(cast(Node, k), cast(Ty, m.type_).key), mk_int(pos, i64(kind_of(cast(Ty, vt)) == K_DYN), ty_int)), vt)
@@ -5794,7 +5830,10 @@ fn argo_dfn(pos i64, t Ty) i64 {
 		wb3 = append(wb3, cast(i64, mk))
 		argo_err_return(pos, wb3, cast(i64, p))
 		let mv = argo_value(pos, wb3, cast(i64, p), cast(Ty, t.elem))
-		if mv != 0 && is_dyn_value(cast(Ty, t.elem)) != 0 {
+		if mv != 0 && is_value_struct(cast(Ty, t.elem)) != 0 {
+			// A value struct goes in a cell of the map's own (#669).
+			wb3 = append(wb3, expr_stmt(cast(Node, map_set_vcell(pos, sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, mk.sym)), mv, 0))))
+		} else if mv != 0 && is_dyn_value(cast(Ty, t.elem)) != 0 {
 			// Two-word values go in cells of the map's own (#632).
 			wb3 = append(wb3, expr_stmt(cast(Node, map_set_dyn(pos, sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, mk.sym)), mv, 0))))
 		} else if mv != 0 {

@@ -958,7 +958,7 @@ fn rg_arena_cell_store(i i64, v i64, t i64, pos i64) i64 {
 }
 
 fn rg_grows_op(name str) i64 {
-	return i64(name == "rt_append" || name == "rt_append_rc" || name == "rt_append_dyn" || name == "rt_slice_appendn" || name == "rt_slice_appendn_rc" || name == "rt_append_str" || name == "rt_map_set" || name == "rt_map_setk" || name == "rt_map_set_dyn" || name == "rt_slice_appendn_dyn" || name == "rt_append_mem" || name == "rt_append_mem_rc" || name == "rt_slice_appendn_vrc")
+	return i64(name == "rt_append" || name == "rt_append_rc" || name == "rt_append_dyn" || name == "rt_slice_appendn" || name == "rt_slice_appendn_rc" || name == "rt_append_str" || name == "rt_map_set" || name == "rt_map_setk" || name == "rt_map_set_dyn" || name == "rt_slice_appendn_dyn" || name == "rt_append_mem" || name == "rt_append_mem_rc" || name == "rt_slice_appendn_vrc" || name == "rt_map_set_vcell")
 }
 
 // rg_grow notes that the running function may grow the slice or map with bits b.
@@ -1605,6 +1605,15 @@ fn rg_runtime_call(e i64, name str, b []i64, pos i64) i64 {
 		rg_store(b0, co, ct, b[2], cast(Node, args[2]).type_, pos, "")
 		return 0
 	}
+	if name == "rt_map_set_vcell" {
+		// A value struct's bytes into the map's cell (#669); an encoded key is copied.
+		let ck = cast(Node, args[6]).kind == EX_INT && cast(IntLit, args[6]).val != 0
+		if !ck {
+			rg_store(b0, co, ct, b[1], cast(Node, args[1]).type_, pos, "")
+		}
+		rg_store(b0, co, ct, b[2], cast(Ty, cast(Node, args[0]).type_).elem, pos, "")
+		return 0
+	}
 	if name == "rt_map_set_dyn" {
 		// A dyn value (#567): argument 2 is its object word; an encoded key (argument 4
 		// set) is copied, as by rt_map_setk.
@@ -1647,6 +1656,10 @@ fn rg_runtime_call(e i64, name str, b []i64, pos i64) i64 {
 			return rg_load(b0, cast(Node, e).type_)
 		}
 		return 0
+	}
+	if name == "rt_map_vget" {
+		// The value struct in a map's cell, or the zero given (#669).
+		return rg_load(b0, cast(Node, e).type_) | b[2]
 	}
 	if name == "rt_map_get_dyn" || name == "rt_map_val_dyn" {
 		// The dyn value in a map's cell (#567).

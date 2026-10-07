@@ -1,0 +1,4 @@
+toolchain/tests/v2/value_maps_bad.tin:24:8: error E710 NOT_ASSIGNABLE: cannot change a field of a map entry: a value struct in a map is a copy, so write mut v = m[k], change v, then m[k] = v
+toolchain/tests/v2/value_maps_bad.tin:25:8: error E710 NOT_ASSIGNABLE: cannot change a field of a map entry: a value struct in a map is a copy, so write mut v = m[k], change v, then m[k] = v
+toolchain/tests/v2/value_maps_bad.tin:26:3: error E710 NOT_ASSIGNABLE: cannot change a field of a map entry: a value struct in a map is a copy, so write mut v = m[k], change v, then m[k] = v
+toolchain/tests/v2/value_maps_bad.tin:27:12: error E710 NOT_ASSIGNABLE: cannot change a field of a map entry: a value struct in a map is a copy, so write mut v = m[k], change v, then m[k] = v

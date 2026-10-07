@@ -2590,6 +2590,43 @@ fn rt_map_set_pair(m i64, k i64, w0 i64, w1 i64, ck i64) {
 // rt_map_get_dyn is m[k] in a map of dyn values: the value's two words, or a nil ?dyn
 // (0, 0) for a missing key. must reports a missing key instead: a dyn S has no zero value.
 // rt_map_found tells whether the key was there, as after rt_map_get.
+// rt_map_set_vcell stores the value struct at p (size bytes) under k (#669): in the entry's
+// cell, made in the map's region the first time, so m[k] is its address. In a long-lived map
+// the new value's fields gain counts (inc) and the old value's lose theirs (drop); the map
+// counts the cell itself, as rt_map_set_dyn's.
+fn rt_map_set_vcell(m i64, k i64, p i64, size i64, inc fn(i64), drop fn(i64), ck i64) {
+	if m == 0 {
+		rt_panic("assignment to entry in nil map")
+	}
+	mut c = rt_map_get(m, k)
+	if m[9] != 0 {
+		inc(p)
+	}
+	let fresh = c == 0
+	if fresh {
+		c = rt_region_alloc(m[9], size)
+	} else if m[9] != 0 {
+		drop(c)
+	}
+	memmove(c, p, size)
+	if fresh {
+		if ck != 0 {
+			rt_map_setk(m, cast(str, k), c)
+		} else {
+			rt_map_set(m, k, c, 1)
+		}
+	}
+}
+
+// rt_map_vget is m[k] for a value struct (#669): the entry's cell, or zero when there is none.
+fn rt_map_vget(m i64, k i64, zero i64) i64 {
+	let c = rt_map_get(m, k)
+	if c == 0 {
+		return zero
+	}
+	return c
+}
+
 fn rt_map_get_dyn(m i64, k i64, must i64) (i64, i64) {
 	let c = rt_map_get(m, k)
 	if c == 0 {

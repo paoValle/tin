@@ -343,8 +343,12 @@ argument, a result), so two names never share a value. (`value` is a contextual 
   object) counts what its fields point at, so a replaced value gives them back; a kept closure
   that captured one keeps its fields, and an `arena` block's value has them copied out. A func
   or `dyn` field,
-  a reference in an inline array, a map value, an optional value struct, a channel element and
-  a `dyn` object of a value struct are E295 (#669, design/design_layouts.md).
+  a reference in an inline array, an optional value struct, a channel element and a `dyn`
+  object of a value struct are E295 (#669, design/design_layouts.md).
+- A map's value may be a value struct: each entry's bytes live in a cell of the map's own,
+  `m[k] = v` copies them in and `m[k]` reads a copy (the zero value for a missing key). As in
+  Go, a field of an entry cannot be changed in place (`m[k].x = 1` is E710): write
+  `mut v = m[k]`, change `v`, then `m[k] = v`.
 
 ### Enums
 

@@ -340,9 +340,6 @@ fn resolve_type(tx i64) i64 {
 			err_code_type(cast(Node, tx).pos, "E201 MAP_KEY", "a map key must compare by value (str, numbers, bool, or structs and enums of those), not ", mkt, "")
 		}
 		let mvt = resolve_type(cast(TypeExpr, tx).b)
-		if is_value_struct(cast(Ty, mvt)) != 0 {
-			value_not_yet(cast(Node, tx).pos, mvt, " as a map value is not built yet (#669): store its fields, or use a struct")
-		}
 		return map_of(mkt, mvt)
 	}
 	if k == TX_PTR {
@@ -818,6 +815,11 @@ fn value_write_check(pos i64, target i64, whole i64) {
 		x = cast(MemExpr, x).base
 		field = 1
 	}
+	if (field != 0 || whole != 0) && map_entry_read(x) != 0 {
+		// A map's value struct is read out as a copy (#669), as in Go.
+		err_code_at(pos, "E710 NOT_ASSIGNABLE", "cannot change a field of a map entry: a value struct in a map is a copy, so write mut v = m[k], change v, then m[k] = v")
+		return
+	}
 	if cast(Node, x).kind != EX_IDENT || cast(IdentExpr, x).ref == 0 {
 		return
 	}
@@ -843,6 +845,15 @@ fn value_write_check(pos i64, target i64, whole i64) {
 		buf_str(m, ": it is a value struct declared with let (declare it with mut to change it)")
 		err_end(cast([]u8, m))
 	}
+}
+
+// map_entry_read reports whether e is m[k] for a map of value structs, as map_read lowers it.
+fn map_entry_read(e i64) i64 {
+	mut x = e
+	if cast(Node, x).kind == EX_SEQ {
+		x = cast(SeqExpr, x).value
+	}
+	return i64(cast(Node, x).kind == EX_CALL && cast(Call, x).name == "rt_map_vget")
 }
 
 // ---- declarations ----
@@ -10481,10 +10492,14 @@ fn keep_fn(t Ty) Fn {
 		} else if is_ref(t.key) != 0 {
 			kv = keep_call(pos, keep_fn(cast(Ty, t.key)), kv, t.key)
 		}
-		if is_ref(t.elem) != 0 || is_dyn_value(cast(Ty, t.elem)) != 0 {
+		if is_ref(t.elem) != 0 || is_dyn_value(cast(Ty, t.elem)) != 0 || value_has_ref(cast(Ty, t.elem)) != 0 {
 			vv = keep_call(pos, keep_fn(cast(Ty, t.elem)), vv, t.elem)
 		}
-		if is_dyn_value(cast(Ty, t.elem)) != 0 {
+		if is_value_struct(cast(Ty, t.elem)) != 0 {
+			// A value struct goes into a cell of the kept map (#669).
+			mut vs12 = cast(Block, live.then).stmts
+			vs12 = append(vs12, expr_stmt(cast(Node, map_set_vcell(pos, sym_ref_node(pos, cast(Sym, out.sym)), to_bits(cast(Node, kv)), vv, kc))))
+		} else if is_dyn_value(cast(Ty, t.elem)) != 0 {
 			// A dyn value goes into a cell of the kept map (#567).
 			mut vs11 = cast(Block, live.then).stmts
 			vs11 = append(vs11, expr_stmt(cast(Node, map_set_dyn(pos, sym_ref_node(pos, cast(Sym, out.sym)), to_bits(cast(Node, kv)), vv, kc))))
@@ -10624,8 +10639,8 @@ fn rc_map_bits(t Ty) i64 {
 	if rc_counted(cast(Ty, t.elem)) != 0 {
 		b = b | 2
 	}
-	if is_shape_value(cast(Ty, t.elem)) != 0 {
-		// Each value is a cell of the map's own (#567).
+	if is_shape_value(cast(Ty, t.elem)) != 0 || is_value_struct(cast(Ty, t.elem)) != 0 {
+		// Each value is a cell of the map's own (#567, #669).
 		b = b | 2
 	}
 	return b
@@ -10772,8 +10787,9 @@ fn rc_drop_body(pos i64, body []i64, x i64, t Ty) {
 			mut vs1 = cast(Block, live.then).stmts
 			vs1 = append(vs1, expr_stmt(rc_dec_call(pos, from_bits(cast(Node, rt_call(pos, "rt_map_key", args2(x, sym_ref_node(pos, cast(Sym, j))), ty_int)), kt), rc_none())))
 		}
-		if is_shape_value(cast(Ty, t.elem)) != 0 {
-			// The entry's dyn cell (#567), which releases its object (#618).
+		if is_shape_value(cast(Ty, t.elem)) != 0 || is_value_struct(cast(Ty, t.elem)) != 0 {
+			// The entry's cell: a dyn one releases its object (#567, #618), a value struct's its
+			// counted fields (#669).
 			mut vs12 = cast(Block, live.then).stmts
 			vs12 = append(vs12, expr_stmt(rc_dec_call(pos, rt_call(pos, "rt_map_val", args2(x, sym_ref_node(pos, cast(Sym, j))), ty_int), rc_map_drop(t))))
 		} else if rc_counted(cast(Ty, t.elem)) != 0 {
@@ -11077,7 +11093,7 @@ fn arenacopy_fn(t Ty) Fn {
 		} else if is_ref(t.key) != 0 {
 			kv = keep_call(pos, arenacopy_fn(cast(Ty, t.key)), kv, t.key)
 		}
-		if is_ref(t.elem) != 0 {
+		if is_ref(t.elem) != 0 || value_has_ref(cast(Ty, t.elem)) != 0 {
 			vv = keep_call(pos, arenacopy_fn(cast(Ty, t.elem)), vv, t.elem)
 		}
 		mut setname = "rt_map_set"
@@ -11085,7 +11101,10 @@ fn arenacopy_fn(t Ty) Fn {
 			setname = "rt_map_setk"
 		}
 		mut vs9 = cast(Block, live.then).stmts
-		if is_dyn_value(cast(Ty, t.elem)) != 0 {
+		if is_value_struct(cast(Ty, t.elem)) != 0 {
+			// A value struct goes into a cell of the new map (#669).
+			vs9 = append(vs9, expr_stmt(cast(Node, map_set_vcell(pos, sym_ref_node(pos, cast(Sym, out.sym)), to_bits(cast(Node, kv)), vv, kc))))
+		} else if is_dyn_value(cast(Ty, t.elem)) != 0 {
 			// A two-word value goes into a cell of the new map (#567, #632).
 			vs9 = append(vs9, expr_stmt(cast(Node, map_set_dyn(pos, sym_ref_node(pos, cast(Sym, out.sym)), to_bits(cast(Node, kv)), vv, kc))))
 		} else {
