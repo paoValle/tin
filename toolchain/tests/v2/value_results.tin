@@ -1,0 +1,174 @@
+package main
+
+import "constraints"
+import "say"
+
+// #631 phase A2: a function returning one value struct writes it to a destination its caller
+// passes, through every kind of call: direct, method, generic, function value, closure, dyn
+// method, recursion that hands its own destination on, deferred, with stack arguments, and a
+// result read in place (a field, an argument, a comparison).
+
+type P value struct {
+	x i64
+	y i64
+}
+
+type RGB value struct {
+	r u8
+	g u8
+	b u8
+}
+
+type Big value struct {
+	a i64
+	b i64
+	c i64
+	d i64
+	e i64
+	f i64
+	g i64
+	h i64
+	i i64
+	j i64
+	k i64
+	l i64
+	m i64
+	n i64
+	o i64
+	p i64
+	q i64
+	r i64
+	s i64
+	t i64
+	u i64
+	v i64
+	w i64
+	z i64
+	tail [8]i64
+}
+
+shape Mover {
+	moved(d i64) P
+}
+
+type Walker struct {
+	at P
+}
+
+fn (w Walker) moved(d i64) P {
+	return P{x: w.at.x + d, y: w.at.y - d}
+}
+
+fn (p P) swapped() P {
+	return P{x: p.y, y: p.x}
+}
+
+fn add(a P, b P) P {
+	return P{x: a.x + b.x, y: a.y + b.y}
+}
+
+// pick has the shape of an early exit (if c { return a }): a parameter returned as the result.
+fn pick(a P, b P, first bool) P {
+	if first {
+		return a
+	}
+	return b
+}
+
+// walk returns a call's result as its own: the call writes straight into walk's destination.
+fn walk(p P, n i64) P {
+	if n == 0 {
+		return p
+	}
+	return walk(P{x: p.x + 1, y: p.y + 2}, n - 1)
+}
+
+fn via(p P) P {
+	return p.swapped()
+}
+
+fn twice[T constraints.Any](f fn(T) T, v T) T {
+	return f(f(v))
+}
+
+fn color(i i64) RGB {
+	return RGB{r: u8(i), g: u8(i * 2), b: u8(255 - i)}
+}
+
+fn big(seed i64) Big {
+	mut b Big
+	b.a = seed
+	b.z = seed * 2
+	b.tail[7] = seed * 3
+	return b
+}
+
+fn many(a i64, b i64, c i64, d i64, e i64, f i64, g i64, h i64, i i64, j i64) P {
+	return P{x: a + c + e + g + i, y: b + d + f + h + j}
+}
+
+fn both(n i64) (P, i64) {
+	return P{x: n, y: -n}, n * 10
+}
+
+// heavy has a frame past 4 KiB, so its destination's slot is far from the frame pointer.
+fn heavy(n i64) P {
+	mut arr [600]i64
+	mut i = 0
+	for i < 600 {
+		arr[i] = i * n
+		i = i + 1
+	}
+	return P{x: arr[599], y: arr[1]}
+}
+
+mut log = ""
+
+fn note(p P) P {
+	log = keep(log + "{p.x},{p.y};")
+	return p
+}
+
+fn deferred() {
+	defer note(P{x: 9, y: 9})
+	note(P{x: 1, y: 1})
+}
+
+fn main() {
+	let a = P{x: 1, y: 2}
+	let b = add(a, P{x: 10, y: 20})
+	say.Line(b, a.swapped(), via(b), pick(a, b, true), pick(a, b, false))
+	say.Line(walk(a, 5), add(add(a, a), add(b, b)).x, add(a, b) == P{x: 12, y: 24})
+	say.Line(twice(fn(p P) P {
+		return p.swapped()
+	}, a), twice(fn(p P) P {
+		return add(p, p)
+	}, a))
+	let k = 100
+	let shift = fn(p P) P {
+		return P{x: p.x + k, y: p.y + k}
+	}
+	say.Line(shift(a), shift(shift(b)))
+	let m dyn Mover = Walker{at: P{x: 5, y: 5}}
+	say.Line(m.moved(2), m.moved(-1).y)
+	mut cs = []RGB{}
+	mut sum = 0
+	for i in 0..4 {
+		cs = append(cs, color(i))
+		let c = color(i + 10)
+		sum += i64(c.r) + i64(c.b)
+	}
+	say.Line(cs, sum)
+	let g = big(7)
+	say.Line(g.a, g.z, g.tail[7], big(3).tail[7])
+	say.Line(many(1, 2, 3, 4, 5, 6, 7, 8, 9, 10))
+	let (p, n) = both(4)
+	say.Line(p, n, heavy(2))
+	deferred()
+	say.Line(log)
+	mut acc = P{x: 0, y: 0}
+	for i in 0..1000 {
+		acc = add(acc, P{x: i, y: 1})
+	}
+	say.Line(acc)
+}

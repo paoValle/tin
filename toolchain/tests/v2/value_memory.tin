@@ -1,0 +1,40 @@
+package main
+
+import "hearth"
+import "say"
+
+// #631: a million two-field value structs are one block of 16 MB (within 10 percent, with the
+// slice header and the mapping's rounding), where reference structs take a pointer per element
+// and an object each.
+
+type P value struct {
+	x f64
+	y f64
+}
+
+type R struct {
+	x f64
+	y f64
+}
+
+// grown is how much the long-lived heap took from the system since slab0 and large0.
+fn grown(slab0 i64, large0 i64) i64 {
+	let (slab, large, _) = hearth.HeapStats()
+	return slab - slab0 + large - large0
+}
+
+fn main() {
+	let tmp = make([]P, 1000000)
+	let (s0, l0, _) = hearth.HeapStats()
+	mut ps = keep(tmp)
+	ps[999999].y = 2.5
+	let g = grown(s0, l0)
+	say.Line("value", len(ps), ps[999999], g >= 16000000, g <= 17600000)
+	mut rs = make([]R, 0, 1000000)
+	for i in 0..1000000 {
+		rs = append(rs, R{x: 1.0, y: 2.0})
+	}
+	let (s1, l1, _) = hearth.HeapStats()
+	let kept = keep(rs)
+	say.Line("reference", len(kept), grown(s1, l1) > 2 * g)
+}

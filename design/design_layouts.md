@@ -127,6 +127,19 @@ caller copies again; the hidden destination of 1.3 and the two-register path for
 bytes are the next step (A2), with inline arrays (1.6). The region checker sees no reference in
 a value struct (`has_ptr` is 0, `rc_counted` is 0), since none flows: its bytes are copied.
 
+**As built in phase A2, results (#631).** A function whose one result is a value struct (any
+size) takes a hidden destination: x8 on arm64 (as AAPCS64 does), r10 on x86-64, which no
+argument, temporary or closure descriptor uses at a call. Its prologue stores it in a frame word,
+and `return v` copies v's bytes there and returns that address, so the caller's view is
+unchanged: the result is the address of its bytes. Every call of such a function (direct, method,
+generic instance, function value, closure or `dyn` method: the call's type decides) gets a frame
+area of its own, assigned per function after inlining and just before the frame is laid out
+(`value_dests`), and the caller puts its address in the register last before the branch. A
+`return f(...)` of such a call passes the function's own destination on, so a chain of them
+writes the result once. A function with several results still returns each value struct as a
+pool copy. The two-register path for values up to 16 bytes is left for later: with no
+allocation on the result path, it would save one copy of at most 16 bytes per call.
+
 ### 1.4 Reference fields
 
 A value struct may hold references (`str`, slices, maps, reference structs, `?T`). Inline storage
@@ -171,8 +184,8 @@ part of this design.
 - **A.** Value structs whose fields are numbers, `bool`, other value structs and inline arrays of
   those (no references). A1 (built): everything below but inline arrays, with the
   representation described after 1.3. A2: inline arrays (built: a `K_VARRAY` type that counts
-  as a value struct for storage, `Ty.key` holding N), results through a hidden destination,
-  values up to 16 bytes in registers. Inline in fields, slices, frames; copy semantics; zero values and
+  as a value struct for storage, `Ty.key` holding N), results through a hidden destination
+  (built, after 1.3), values up to 16 bytes in registers (not yet). Inline in fields, slices, frames; copy semantics; zero values and
   `make`; `==`; map keys; printing; `argo`; `keep` as a copy; generics; both back ends and the
   ABI of section 1.3. This is what `Point`, `complex`, `RGB`, matrix cells and `UUID` need, and
   it meets #631's acceptance (one million `Point` in 16 MB plus the header).

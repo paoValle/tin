@@ -950,6 +950,179 @@ fn value_copy_words(dst i64, src i64, size i64, zero i64) {
 	}
 }
 
+// ---- value struct results (#631 phase A2) ----
+// A function whose one result is a value struct writes it to an address its caller passes in x8
+// (r10 on x86-64, design_layouts.md §1.3) and returns that address, so no result goes through
+// the pool. The caller gives each such call a frame area of its own, made just before the
+// frame is laid out; a call whose value the function returns as its own is given the function's
+// destination instead (-1 in vd_pairs), so the callee writes straight into the caller's caller.
+shared mut vd_fn i64
+shared mut vd_dst i64 // the running function's destination local (0: its result is not one)
+shared mut vd_pairs []i64 // [call, destination local or -1] for the running function's calls
+
+// dest_fn reports whether f returns one value struct, through a destination.
+fn dest_fn(f Fn) i64 {
+	let t = cast(Ty, f.type_)
+	return i64(cast(i64, t) != 0 && kind_of(t) == K_FUNC && len(t.results) == 1 && is_value_struct(cast(Ty, t.results[0])) != 0)
+}
+
+// dest_call reports a call of such a function: any call (direct, through a function value or a
+// dyn method) whose value is a value struct, except the runtime's own (rt_vdup).
+fn dest_call(e i64) i64 {
+	if cast(Node, e).kind != EX_CALL || cast(Call, e).intrinsic != 0 || is_value_struct(cast(Ty, cast(Node, e).type_)) == 0 {
+		return 0
+	}
+	return i64(str_prefix(cast(Call, e).name, "rt_") == 0)
+}
+
+// value_dests gives f's destination calls their areas, and f its own destination's slot.
+fn value_dests(f Fn) {
+	vd_fn = cast(i64, f)
+	vd_dst = 0
+	vd_pairs = []i64{}
+	if dest_fn(f) != 0 {
+		vd_dst = ia_local_in(f, ty_int)
+		// Read by the code generator only: a frame word of its own.
+		cast(Sym, vd_dst).addr = 1
+	}
+	vd_stmts(cast(Block, f.body).stmts)
+}
+
+fn vd_stmts(v []i64) {
+	mut i = 0
+	for i < len(v) {
+		vd_stmt(v[i])
+		i = i + 1
+	}
+}
+
+fn vd_stmt(s i64) {
+	if s == 0 {
+		return
+	}
+	let k = cast(Node, s).kind
+	if k == ST_BLOCK {
+		vd_stmts(cast(Block, s).stmts)
+	} else if k == ST_LET {
+		vd_expr(cast(LetStmt, s).init)
+	} else if k == ST_ASSIGN {
+		vd_expr(cast(AssignStmt, s).target)
+		vd_expr(cast(AssignStmt, s).value)
+	} else if k == ST_EXPR {
+		vd_expr(cast(ExprStmt, s).x)
+	} else if k == ST_IF {
+		vd_expr(cast(IfStmt, s).cond)
+		vd_stmt(cast(IfStmt, s).then)
+		vd_stmt(cast(IfStmt, s).else_)
+	} else if k == ST_WHILE {
+		vd_expr(cast(WhileStmt, s).cond)
+		vd_stmt(cast(WhileStmt, s).body)
+		vd_stmt(cast(WhileStmt, s).post)
+	} else if k == ST_RETURN {
+		let v = cast(ReturnStmt, s).value
+		if vd_dst != 0 && v != 0 && dest_call(v) != 0 {
+			vd_pairs = append(vd_pairs, v)
+			vd_pairs = append(vd_pairs, -1)
+			vd_parts(v)
+		} else {
+			vd_expr(v)
+		}
+		let vals = cast(ReturnStmt, s).values
+		mut j = 0
+		for cast(i64, vals) != 0 && j < len(vals) {
+			vd_expr(vals[j])
+			j = j + 1
+		}
+	} else if k == ST_CALLMULTI {
+		vd_expr(cast(CallMultiStmt, s).call)
+	}
+}
+
+fn vd_expr(e i64) {
+	if e == 0 {
+		return
+	}
+	let k = cast(Node, e).kind
+	if k == EX_CALL {
+		if dest_call(e) != 0 {
+			vd_pairs = append(vd_pairs, e)
+			vd_pairs = append(vd_pairs, ia_local_in(cast(Fn, vd_fn), cast(Node, e).type_))
+		}
+		vd_parts(e)
+	} else if k == EX_UNARY {
+		vd_expr(cast(Unary, e).x)
+	} else if k == EX_BINARY {
+		vd_expr(cast(Binary, e).l)
+		vd_expr(cast(Binary, e).r)
+	} else if k == EX_INDEX {
+		vd_expr(cast(IndexExpr, e).x)
+		vd_expr(cast(IndexExpr, e).i)
+	} else if k == EX_CONV {
+		vd_expr(cast(Conv, e).x)
+	} else if k == EX_MEM {
+		vd_expr(cast(MemExpr, e).base)
+		vd_expr(cast(MemExpr, e).index)
+		vd_expr(cast(MemExpr, e).len)
+	} else if k == EX_ELEM {
+		vd_expr(cast(ElemExpr, e).seq)
+		vd_expr(cast(ElemExpr, e).idx)
+	} else if k == EX_SEQ {
+		vd_stmts(cast(SeqExpr, e).stmts)
+		vd_expr(cast(SeqExpr, e).value)
+	}
+}
+
+// vd_parts visits a call's callee and arguments.
+fn vd_parts(e i64) {
+	vd_expr(cast(Call, e).callee)
+	let args = cast(Call, e).args
+	mut i = 0
+	for cast(i64, args) != 0 && i < len(args) {
+		vd_expr(args[i])
+		i = i + 1
+	}
+}
+
+// vd_dest is the destination of call e: its area, -1 for the function's own, 0 when it has none.
+fn vd_dest(e i64) i64 {
+	mut i = 0
+	for i < len(vd_pairs) {
+		if vd_pairs[i] == e {
+			return vd_pairs[i + 1]
+		}
+		i = i + 2
+	}
+	if dest_call(e) != 0 {
+		err_code_at(cast(Node, e).pos, "E990 INTERNAL", "a value struct result has no destination")
+	}
+	return 0
+}
+
+// vd_pass puts call e's destination in x8, last before the branch.
+fn vd_pass(e i64) {
+	if is_value_struct(cast(Ty, cast(Node, e).type_)) == 0 {
+		return
+	}
+	let d = vd_dest(e)
+	if d < 0 {
+		slot_mem(I_LDR, 8, cast(Sym, vd_dst).off)
+	} else if d > 0 {
+		fp_offset(8, cast(Sym, d).off)
+	}
+}
+
+// vd_return returns value struct v through the function's destination: copied there, or, from
+// a call given that destination, already there.
+fn vd_return(v i64) {
+	if cast(Node, v).kind == EX_CALL && vd_dest(v) < 0 {
+		gen_call(v, 0)
+		return
+	}
+	slot_mem(I_LDR, X16, cast(Sym, vd_dst).off)
+	gen_value_store(v, cast(Ty, cast(Node, v).type_).size)
+	slot_mem(I_LDR, 0, cast(Sym, vd_dst).off)
+}
+
 // gen_dyn_pair computes a dyn value into adjacent machine registers. In storage the two
 // words are contiguous; globals use an explicit second data word because each declaration
 // has its own linker slot.
@@ -2957,7 +3130,7 @@ fn gen_call(e i64, d i64) {
 	// With the args in place, a callee's parameter-only base case can be answered
 	// without the call (fib's leaves), which Go never inlines for recursive functions.
 	mut pat = cast(IfStmt, 0)
-	if cast(i64, f) != 0 && variadic == 0 {
+	if cast(i64, f) != 0 && variadic == 0 && dest_fn(f) == 0 {
 		pat = cast(IfStmt, exit_pattern(f))
 	}
 	mut done_l = 0
@@ -3009,6 +3182,7 @@ fn gen_call(e i64, d i64) {
 			i = i + 1
 		}
 	}
+	vd_pass(e)
 	if cast(i64, f) != 0 {
 		emit1(I_BL, cast(i64, f))
 		f.used = 1
@@ -3873,6 +4047,8 @@ fn gen_return(s ReturnStmt) {
 			}
 			i = i - 1
 		}
+	} else if s.value != 0 && vd_dst != 0 && is_value_struct(cast(Ty, cast(Node, s.value).type_)) != 0 {
+		vd_return(s.value)
 	} else if s.value != 0 {
 		if is_dyn_value(cast(Ty, cast(Node, s.value).type_)) != 0 {
 			gen_dyn_pair(s.value, 0, 1, 0)
@@ -4827,11 +5003,12 @@ fn gen_fn(f Fn) {
 	used_fregs = 0
 	slice_truncate(g_loops, 0)
 	slice_truncate(g_loop_labels, 0)
+	value_dests(f)
 	let nslots = assign_homes(f)
 	cg = []i64{}
 	param_loads = 0
 	mut early = 0
-	if fn_polls(f) == 0 {
+	if fn_polls(f) == 0 && dest_fn(f) == 0 {
 		early = early_exit(cast(i64, f))
 	}
 	let pre = cast([]i64, cg)
@@ -4849,6 +5026,10 @@ fn gen_fn(f Fn) {
 		} else if es.reg == REG_SLOT {
 			slot_mem(I_STR, X17, es.off)
 		}
+	}
+	// A value struct result's destination arrives in x8 (#631).
+	if vd_dst != 0 {
+		slot_mem(I_STR, 8, cast(Sym, vd_dst).off)
 	}
 	mut i = 0
 	for i < len(f.params) {

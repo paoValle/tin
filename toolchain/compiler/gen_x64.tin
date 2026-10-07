@@ -972,6 +972,30 @@ fn x_value_store(v i64, size i64) {
 	}
 }
 
+// x_vd_pass puts call e's destination in r10, last before the call (#631 A2, gen.tin vd_pass).
+fn x_vd_pass(e i64) {
+	if is_value_struct(cast(Ty, cast(Node, e).type_)) == 0 {
+		return
+	}
+	let d = vd_dest(e)
+	if d < 0 {
+		x_slot_load(R10, cast(Sym, vd_dst).off)
+	} else if d > 0 {
+		emit2(X_LEA, R10, x_mem1(RBP, cast(Sym, d).off))
+	}
+}
+
+// x_vd_return returns value struct v through the function's destination (gen.tin vd_return).
+fn x_vd_return(v i64) {
+	if cast(Node, v).kind == EX_CALL && vd_dest(v) < 0 {
+		x_gen_call(v, 0)
+		return
+	}
+	x_slot_load(XSCR, cast(Sym, vd_dst).off)
+	x_value_store(v, cast(Ty, cast(Node, v).type_).size)
+	x_slot_load(RAX, cast(Sym, vd_dst).off)
+}
+
 // x_gen_dyn_pair computes a dyn value as adjacent object and table words.
 // x_pair_slot_word reports whether x is a two-word local in its frame slot.
 fn x_pair_slot_word(x i64) i64 {
@@ -2104,6 +2128,7 @@ fn x_gen_call(e i64, d i64) {
 	if cast(i64, f) == 0 {
 		x_pop(RAX)
 	}
+	x_vd_pass(e)
 	if cast(i64, f) != 0 {
 		if f.extern_ != 0 {
 			// al counts the vector registers a variadic callee must save.
@@ -2821,6 +2846,8 @@ fn x_gen_return(s ReturnStmt) {
 			}
 			i = i - 1
 		}
+	} else if s.value != 0 && vd_dst != 0 && is_value_struct(cast(Ty, cast(Node, s.value).type_)) != 0 {
+		x_vd_return(s.value)
 	} else if s.value != 0 {
 		if is_dyn_value(cast(Ty, cast(Node, s.value).type_)) != 0 {
 			x_gen_dyn_pair(s.value, RAX, RDX, 0)
@@ -3203,6 +3230,10 @@ fn x_has_stack_params(f Fn) i64 {
 // x_entry_moves moves the parameters from their argument registers (or stack slots at
 // [rbp + 16 + 8k]) into their homes; register moves run in parallel.
 fn x_entry_moves(f Fn) {
+	// A value struct result's destination arrives in r10 (#631).
+	if vd_dst != 0 {
+		x_slot_store(R10, cast(Sym, vd_dst).off)
+	}
 	let locals = cast([]i64, f.locals)
 	mut dsts = []i64{}
 	mut srcs = []i64{}
@@ -3492,6 +3523,7 @@ fn x_gen_fn(f Fn) {
 	used_fregs = 0
 	slice_truncate(g_loops, 0)
 	slice_truncate(g_loop_labels, 0)
+	value_dests(f)
 	let nslots = x_assign_homes(f)
 	cg = []i64{}
 	x_entry_moves(f)

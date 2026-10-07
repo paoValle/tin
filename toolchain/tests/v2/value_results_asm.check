@@ -1,0 +1,13 @@
+# #631 A2: a function returning one value struct stores the destination its caller passes (x8 on
+# arm64, r10 on x86-64) and the caller passes a frame area of its own; no pool copy (rt_vdup).
+[arm64]
+CHECK: (?m)^_make3:
+CHECK: str x8, \[x29, #[0-9]+\]
+CHECK-NOT: rt_vdup
+CHECK: (?m)^_total:
+CHECK: add x8, x29, #[0-9]+\n\tbl _make3
+CHECK-NOT: rt_vdup
+CHECK: (?m)^_main\.main:
+
+[amd64]
+CHECK: (?ms)# L(?P<a>[0-9]+): make3$.*?# L(?P<b>[0-9]+): total$.*?^L(?P=a):\n(?:(?!rt_vdup)(?!^L(?P=b):$)[\s\S])*?mov QWORD PTR \[rbp-0x[0-9a-f]+\],r10\n(?:(?!rt_vdup)(?!^L(?P=b):$)[\s\S])*^L(?P=b):\n(?:(?!rt_vdup)[\s\S])*?lea r10,\[rbp-0x[0-9a-f]+\]\ncall S[0-9]+  # make3

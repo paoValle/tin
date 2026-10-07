@@ -1,0 +1,28 @@
+package main
+
+import "say"
+
+type P value struct {
+	x i64
+	y i64
+	z i64
+}
+
+fn make3(i i64) P {
+	mut p = P{x: i, y: i + 1}
+	p.z = p.x * p.y
+	return p
+}
+
+fn total(n i64) i64 {
+	mut t = 0
+	for i in 0..n {
+		let p = make3(i)
+		t += p.z
+	}
+	return t
+}
+
+fn main() {
+	say.Line(total(10))
+}
