@@ -2527,7 +2527,11 @@ fn init_zero_field(pos i64, stmts []i64, obj i64, t Ty, fi i64) {
 	if k == K_STRING || k == K_SLICE {
 		stmts = append(stmts, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, obj)), cast(i64, t), fi), zero_value(pos, ft)))
 	} else if is_value_struct(cast(Ty, ft)) != 0 {
-		// A value struct field starts as zeroed bytes, as the object does (#631).
+		// A value struct field starts as zeroed bytes, as the object does (#631); its str
+		// fields hold "" (#669).
+		if value_has_ref(cast(Ty, ft)) != 0 {
+			stmts = append(stmts, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, obj)), cast(i64, t), fi), value_zero(pos, cast(Ty, ft))))
+		}
 	} else if k == K_STRUCT || k == K_MAP || k == K_FUNC || k == K_DYN {
 		let m = err_code(pos, "E203 NO_ZERO_VALUE")
 		buf_str(m, "field ")
@@ -2541,6 +2545,20 @@ fn init_zero_field(pos i64, stmts []i64, obj i64, t Ty, fi i64) {
 		}
 		err_end(cast([]u8, m))
 	}
+}
+
+// value_zero is the zero value of a value struct holding a str (#669): zeroed bytes, then "" in
+// each str field, built in a frame area like a literal.
+fn value_zero(pos i64, t Ty) i64 {
+	mut stmts = []i64{}
+	let obj = temp(pos, mk_int(pos, 0, cast(i64, t)), cast(i64, t))
+	stmts = append(stmts, cast(i64, obj))
+	mut i = 0
+	for i < len(t.fields) {
+		init_zero_field(pos, cast([]i64, stmts), obj.sym, t, i)
+		i = i + 1
+	}
+	return mk_seq(pos, cast(i64, stmts), sym_ref_node(pos, cast(Sym, obj.sym)), 0)
 }
 
 fn get_cell_addr(pos i64, os Sym) i64 {
@@ -3227,6 +3245,10 @@ fn chk_arena(e i64) i64 {
 // arena_value_check reports a value type the arena cannot copy out: one holding a func or dyn
 // value (their objects are not described by the type), or a recursive one.
 fn arena_value_check(pos i64, vt i64) {
+	if holds_value_ref(cast(Ty, vt), []i64{}) != 0 {
+		err_code_type(pos, "E295 NOT_YET", "an arena block's value of type ", vt, " is not built yet (#669): it holds a value struct with a str or optional field")
+		return
+	}
 	mut bad = ""
 	if arena_copyable(cast(Ty, vt), []i64{}) == 0 {
 		bad = " holds a func or dyn value, which cannot be copied: return the data it needs instead"
@@ -4465,7 +4487,11 @@ fn chk_builtin(e i64, name str, want i64) i64 {
 				replace_node(e, rt_call(pos, "rt_slice_make_nest", args3(args[1], c, mk_int(pos, elem_size(cast(Ty, t.elem)), ty_int)), cast(i64, t)))
 				return cast(i64, t)
 			}
-			replace_node(e, rt_call(pos, "rt_slice_make", args3(args[1], c, mk_int(pos, elem_size(t), ty_int)), cast(i64, t)))
+			mut made = rt_call(pos, "rt_slice_make", args3(args[1], c, mk_int(pos, elem_size(t), ty_int)), cast(i64, t))
+			if zero_len == 0 {
+				made = value_fill_strs(pos, made, t)
+			}
+			replace_node(e, made)
 			return cast(i64, t)
 		}
 		if k == K_MAP {
@@ -4754,6 +4780,10 @@ fn lower_keep(e Node, want i64) i64 {
 	}
 	// E320 names this keep (#625).
 	keep_at = pos
+	if holds_value_ref(cast(Ty, t), []i64{}) != 0 {
+		err_code_type(pos, "E295 NOT_YET", "keep of ", t, " is not built yet (#669): it holds a value struct with a str or optional field")
+		return t
+	}
 	if kind_of(cast(Ty, t)) == K_DYN || type_has_dyn(cast(Ty, t), 0) != 0 {
 		let f = keep_fn(cast(Ty, t))
 		let c = node_new(EX_CALL, pos)

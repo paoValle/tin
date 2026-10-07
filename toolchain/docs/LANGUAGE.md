@@ -332,9 +332,14 @@ argument, a result), so two names never share a value. (`value` is a contextual 
   u.b` ranges over a copy, and it compares, hashes, prints (`[a b c]`) and encodes to JSON as
   its elements do. It cannot be sliced or appended to. Outside a value struct `[N]T` keeps its
   meaning, a slice that starts with N zero elements.
-- Phase A holds numbers, `bool`, inline arrays and other value structs; a field of a reference
-  type, a map value, an optional, a channel element and a `dyn` object of a value struct are
-  E295 until phase B (design/design_layouts.md).
+- A value struct holds numbers, `bool`, inline arrays of those, `str`, pointer optionals
+  (`?str`, `?Node`) and other value structs (#669). A `str` field starts as `""`, and copying
+  the value copies the field's word, so the string is shared as `str` values always are.
+  A value struct with a `str` or optional field cannot be kept, held by a global, captured by a
+  function literal or returned from an `arena` block yet, since long-lived memory does not
+  count its fields yet. A slice, map, reference-struct or `dyn` field, a `str` in an inline
+  array, a map value, an optional value struct, a channel element and a `dyn` object of a
+  value struct are E295 too (#669, design/design_layouts.md).
 
 ### Enums
 

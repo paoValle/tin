@@ -33,6 +33,7 @@ shared mut rs_active i64 // the use-after-reset walk is running (rs_walk)
 shared mut rs_dead []i64 // locals that may hold request memory from before a hearth.Reset()
 shared mut rs_said []i64 // locals already reported
 shared mut rs_cur []i64 // [local, bits] of each local's latest assignment on the walk (else Sym.region)
+shared mut rg_vref_node i64 // the value struct expression rg_expr is computing the plain bits of (#669)
 
 fn has_ptr(t Ty) i64 {
 	let k = kind_of(t)
@@ -43,8 +44,9 @@ fn has_ptr(t Ty) i64 {
 		// A dyn value's bits are its object's; the table is static.
 		return 1
 	}
-	// A value struct's bytes are copied wherever it is stored (#631): no reference flows.
-	return i64(k == K_STRING || (k == K_STRUCT && t.value == 0) || k == K_SLICE || k == K_MAP || k == K_ERROR || k == K_FUNC)
+	// A value struct's bytes are copied wherever it is stored (#631): no reference flows, unless
+	// a field of it is one (#669).
+	return i64(k == K_STRING || (k == K_STRUCT && (t.value == 0 || value_has_ref(t) != 0)) || k == K_SLICE || k == K_MAP || k == K_ERROR || k == K_FUNC)
 }
 
 fn rg_analyzable(f Fn) i64 {
@@ -193,6 +195,8 @@ fn rg_stmt(s i64) {
 		let tk = cast(Node, t).kind
 		if tk == EX_IDENT {
 			rg_assign_sym(cast(Sym, cast(IdentExpr, t).ref), v, cast(Node, s).pos)
+		} else if rg_value_field(t) != 0 {
+			rg_value_store(t, v, cast(Node, s).pos)
 		} else if rg_regrow(t, cast(AssignStmt, s).value) != 0 {
 			// The slot gets back the object it held; the append checked what it added.
 		} else if tk == EX_MEM && rg_cell_index(cast(MemExpr, t).base) >= 0 {
@@ -525,6 +529,55 @@ fn rg_store(c i64, co i64, ct i64, v i64, t i64, pos i64, gname str) {
 	}
 }
 
+// rg_value_field reports a store target inside a value struct with a reference field (#669).
+fn rg_value_field(t i64) i64 {
+	let k = cast(Node, t).kind
+	if k == EX_MEM {
+		return value_has_ref(cast(Ty, cast(Node, cast(MemExpr, t).base).type_))
+	}
+	if k == EX_ELEM {
+		return value_has_ref(cast(Ty, cast(Node, cast(ElemExpr, t).seq).type_))
+	}
+	return 0
+}
+
+// rg_value_store checks a store of bits v into a field of a value struct (#669). The bytes are
+// the value's own: a local or parameter needs nothing (its bits are always "anything"); a value
+// inside a container or a global is a store of v into that container.
+fn rg_value_store(t i64, v i64, pos i64) {
+	mut x = t
+	for {
+		let k = cast(Node, x).kind
+		mut b = 0
+		if k == EX_MEM {
+			if cast(MemExpr, x).index != 0 {
+				rg_expr(cast(MemExpr, x).index)
+			}
+			b = cast(MemExpr, x).base
+		} else if k == EX_ELEM {
+			rg_expr(cast(ElemExpr, x).idx)
+			b = cast(ElemExpr, x).seq
+		} else {
+			break
+		}
+		if is_value_struct(cast(Ty, cast(Node, b).type_)) == 0 {
+			// x is a value inside the container b.
+			let c = rg_expr(b)
+			rg_store(c, rg_owner(b), rg_key(cast(Node, b).type_), v, cast(Node, x).type_, pos, "")
+			return
+		}
+		x = b
+	}
+	if cast(Node, x).kind == EX_IDENT {
+		let s = cast(Sym, cast(IdentExpr, x).ref)
+		if cast(i64, s) != 0 && s.kind == SYM_GLOBAL {
+			rg_store(RG_INGOT, 0, 0, v, cast(Node, x).type_, pos, s.name)
+		}
+		return
+	}
+	rg_expr(x)
+}
+
 // rg_own_cell is the variable e reads or writes when e is the word of a cell the running
 // function made for one of its own variables, which no closure that may be kept captures; or 0.
 fn rg_own_cell(e i64) i64 {
@@ -601,6 +654,15 @@ fn rg_cell_store(i i64, v_in i64, t i64, pos i64) {
 }
 
 fn rg_expr(e i64) i64 {
+	if e != rg_vref_node && value_has_ref(cast(Ty, cast(Node, e).type_)) != 0 {
+		// A value struct with a reference field may hold anything its fields were given, in
+		// bytes copied from place to place: request memory of unknown origin (#669).
+		let saved = rg_vref_node
+		rg_vref_node = e
+		let b = rg_expr(e)
+		rg_vref_node = saved
+		return b | RG_EMB | RG_UNK
+	}
 	let k = cast(Node, e).kind
 	if k == EX_IDENT {
 		let s = cast(Sym, cast(IdentExpr, e).ref)

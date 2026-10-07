@@ -341,7 +341,7 @@ fn resolve_type(tx i64) i64 {
 		}
 		let mvt = resolve_type(cast(TypeExpr, tx).b)
 		if is_value_struct(cast(Ty, mvt)) != 0 {
-			value_not_yet(cast(Node, tx).pos, mvt, " as a map value is not built yet (#631 phase B): store its fields, or use a struct")
+			value_not_yet(cast(Node, tx).pos, mvt, " as a map value is not built yet (#669): store its fields, or use a struct")
 		}
 		return map_of(mkt, mvt)
 	}
@@ -352,7 +352,7 @@ fn resolve_type(tx i64) i64 {
 		let inner = resolve_type(cast(TypeExpr, tx).a)
 		let ik = kind_of(cast(Ty, inner))
 		if is_value_struct(cast(Ty, inner)) != 0 {
-			value_not_yet(cast(Node, tx).pos, inner, " cannot be optional yet (#631 phase B): add a bool field that says whether it is set")
+			value_not_yet(cast(Node, tx).pos, inner, " cannot be optional yet (#669): add a bool field that says whether it is set")
 			return inner
 		}
 		if ik != K_STRUCT && ik != K_DYN && ik != K_STRING && ik != K_SLICE && ik != K_MAP && scalar_optionable(cast(Ty, inner)) == 0 {
@@ -367,7 +367,7 @@ fn resolve_type(tx i64) i64 {
 	if k == TX_CHAN {
 		let ct = resolve_type(cast(TypeExpr, tx).a)
 		if is_value_struct(cast(Ty, ct)) != 0 {
-			value_not_yet(cast(Node, tx).pos, ct, " cannot travel on a channel yet (#631 phase B)")
+			value_not_yet(cast(Node, tx).pos, ct, " cannot travel on a channel yet (#669)")
 		}
 		return chan_of(ct)
 	}
@@ -656,7 +656,48 @@ fn array_make(pos i64, t Ty, n i64) i64 {
 	if ek == K_SLICE {
 		return rt_call(pos, "rt_slice_make_nest", args3(nn, mk_int(pos, n, ty_int), mk_int(pos, elem_size(cast(Ty, t.elem)), ty_int)), cast(i64, t))
 	}
-	return rt_call(pos, "rt_slice_make", args3(nn, mk_int(pos, n, ty_int), mk_int(pos, elem_size(t), ty_int)), cast(i64, t))
+	return value_fill_strs(pos, rt_call(pos, "rt_slice_make", args3(nn, mk_int(pos, n, ty_int), mk_int(pos, elem_size(t), ty_int)), cast(i64, t)), t)
+}
+
+// global_value_ref reports a global of a type holding a value struct with a reference field,
+// which long-lived memory cannot count yet (#669).
+fn global_value_ref(pos i64, t i64) {
+	if holds_value_ref(cast(Ty, t), []i64{}) != 0 {
+		err_code_type(pos, "E295 NOT_YET", "a global of type ", t, " is not built yet (#669): it holds a value struct with a str or optional field")
+	}
+}
+
+// value_fill_strs gives each element of the new slice made (of type t) "" in its str fields, when
+// they are value structs holding some (#669): a zeroed word is not a str.
+fn value_fill_strs(pos i64, made i64, t Ty) i64 {
+	let et = cast(Ty, t.elem)
+	if value_has_ref(et) == 0 {
+		return made
+	}
+	mut offs = []i64{}
+	value_str_offsets(et, 0, offs)
+	mut acc = made
+	mut i = 0
+	for i < len(offs) {
+		acc = rt_call(pos, "rt_slice_fill_str", args3(acc, mk_int(pos, elem_size(t), ty_int), mk_int(pos, offs[i], ty_int)), cast(i64, t))
+		i = i + 1
+	}
+	return acc
+}
+
+// value_str_offsets adds the offsets of value struct t's str fields, nested ones too, at base.
+fn value_str_offsets(t Ty, base i64, offs []i64) {
+	mut i = 0
+	for i < len(t.fields) {
+		let ft = cast(Ty, cast(Field, t.fields[i]).ty)
+		let off = base + field_offset(t, i)
+		if kind_of(ft) == K_STRING {
+			offs = append(offs, off)
+		} else if kind_of(ft) == K_STRUCT && is_value_struct(ft) != 0 {
+			value_str_offsets(ft, off, offs)
+		}
+		i = i + 1
+	}
 }
 
 fn resolve_fields(st Ty, tx TypeExpr) {
@@ -690,20 +731,23 @@ fn resolve_fields(st Ty, tx TypeExpr) {
 	st.fields = cast([]i64, cast(i64, fs))
 	st.enum_ = cast([]EnumVariant, tx.b)
 	if st.value != 0 {
-		// A value struct holds numbers, bool and other value structs; references come with
-		// phase B (#631), when the memory model counts what its bytes point at.
+		// A value struct holds numbers, bool, str, pointer optionals and other value structs;
+		// the other references come with #669, when the memory model counts what its bytes
+		// point at. An inline array holds numbers, bool and value structs of those.
 		i = 0
 		for i < len(fs) {
 			mut ft = cast(Ty, cast(Field, fs[i]).ty)
+			let inline = i64(kind_of(ft) == K_VARRAY)
 			for kind_of(ft) == K_VARRAY {
 				ft = cast(Ty, ft.elem)
 			}
 			let fk = kind_of(ft)
-			if fk != K_INT && fk != K_FLOAT && fk != K_BOOL && is_value_struct(ft) == 0 {
+			let refok = i64(inline == 0 && (fk == K_STRING || (fk == K_OPT && opt_scalar(ft) == 0 && is_value_struct(cast(Ty, ft.elem)) == 0)))
+			if (fk != K_INT && fk != K_FLOAT && fk != K_BOOL && is_value_struct(ft) == 0 && refok == 0) || (inline != 0 && value_has_ref(ft) != 0) {
 				let m = err_code(cast(Node, cast(ParsedField, src[i]).ty).pos, "E295 NOT_YET")
 				buf_str(m, "a value struct field of type ")
-				type_name(cast([]u8, m), ft)
-				buf_str(m, " is not built yet (#631 phase B): a value struct holds numbers, bool and other value structs")
+				type_name(cast([]u8, m), cast(Ty, cast(Field, fs[i]).ty))
+				buf_str(m, " is not built yet (#669): a value struct holds numbers, bool, str, pointer optionals and other value structs, and an inline array holds no str")
 				err_end(cast([]u8, m))
 			}
 			i = i + 1
@@ -1993,6 +2037,7 @@ fn check_var(v Decl) {
 	}
 	if v.type_ != 0 {
 		sb_forbid(v.pos, s.type_, "a global cannot hold ")
+		global_value_ref(v.pos, s.type_)
 	}
 	let pu = use_global_of(cast(i64, v))
 	if pu != 0 {
@@ -2046,6 +2091,7 @@ fn check_var(v Decl) {
 	if s.type_ == 0 {
 		s.type_ = default_type(t)
 		sb_forbid(v.pos, s.type_, "a global cannot hold ")
+		global_value_ref(v.pos, s.type_)
 	}
 	if s.tls != 0 && is_dyn_value(cast(Ty, s.type_)) != 0 {
 		// A dyn value is two words: the per-core global takes two fresh slots, its object
@@ -3213,6 +3259,9 @@ fn capture_sym(f Fn, os Sym) i64 {
 		if os.mut_ != 0 {
 			err_code_at(f.pos, "E703 CAPTURE_MUT", "a function literal cannot capture the mut parameter '" + os.name + ("': copy it into a local first, or pass it as an argument"))
 		}
+		if value_has_ref(cast(Ty, os.type_)) != 0 {
+			err_code_at(f.pos, "E295 NOT_YET", "a function literal cannot capture '" + os.name + ("', a value struct with a str or optional field, yet (#669): pass it as an argument"))
+		}
 		ci = len(caps)
 		caps = append(caps, cast(i64, os))
 		os.addr = 1
@@ -3611,6 +3660,10 @@ fn zero_value(pos i64, t i64) i64 {
 	}
 	if (k == K_STRUCT || k == K_MAP || k == K_FUNC || k == K_DYN) && is_value_struct(cast(Ty, t)) == 0 {
 		err_code_type(pos, "E203 NO_ZERO_VALUE", "a variable of type ", t, " needs an initializer (it cannot be nil; use ?T for an optional)")
+	}
+	if value_has_ref(cast(Ty, t)) != 0 {
+		// Its str fields hold "" (#669).
+		return value_zero(pos, cast(Ty, t))
 	}
 	// A value struct's zero: its bytes zeroed where they are stored (#631).
 	return mk_int(pos, 0, t)
@@ -7010,7 +7063,7 @@ fn check_assignable(e Node, from i64, to Ty) {
 		return
 	}
 	if (kind_of(to) == K_DYN || (kind_of(to) == K_OPT && kind_of(cast(Ty, to.elem)) == K_DYN)) && is_value_struct(cast(Ty, from)) != 0 {
-		value_not_yet(e.pos, from, " cannot be a dyn object yet (#631 phase B)")
+		value_not_yet(e.pos, from, " cannot be a dyn object yet (#669)")
 		return
 	}
 	if kind_of(to) == K_DYN && kind_of(cast(Ty, from)) != K_DYN {

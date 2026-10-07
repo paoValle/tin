@@ -1,0 +1,151 @@
+package main
+
+import "argo"
+import "constraints"
+import "say"
+import "sift"
+
+// #669 step 1: a value struct may hold str and pointer-optional fields. Its zero value has ""
+// in each str field (make, a declaration, a field left out), every store copies the bytes (the
+// strings are shared, as strs always are), and ==, map keys, printing, argo, generics and sorting
+// follow the fields.
+
+type Node struct {
+	v i64
+}
+
+type Entry value struct {
+	key  str
+	n    i64
+	note ?str
+	link ?Node
+}
+
+type Key value struct {
+	name str
+	id   i64
+}
+
+type Pair value struct {
+	a Entry
+	b Entry
+	w f64
+}
+
+type Holder struct {
+	label str
+	at    Entry
+	keys  [3]Key
+}
+
+type Box[T constraints.Any] struct {
+	v T
+}
+
+fn mk(k str, n i64) Entry {
+	return Entry{key: k, n: n}
+}
+
+fn (e mut Entry) bump(s str) {
+	e.key = e.key + s
+	e.n += 1
+}
+
+fn (e Entry) show() str {
+	mut s = "{e.key}#{e.n}"
+	if let t = e.note {
+		s = s + "(" + t + ")"
+	}
+	if let l = e.link {
+		s = s + "->{l.v}"
+	}
+	return s
+}
+
+fn longest(es []Entry) Entry {
+	mut best = es[0]
+	for e in es {
+		if len(e.key) > len(best.key) {
+			best = e
+		}
+	}
+	return best
+}
+
+fn main() {
+	// Zero values.
+	mut e Entry
+	say.Line(e.show(), len(e.key), e.note == nil, e.link == nil)
+	let zs = make([]Pair, 2)
+	say.Line(len(zs[1].b.key), zs[0].a.show(), zs[1].w)
+	let h = Holder{label: "h"}
+	say.Line(h.label, h.at.show(), len(h.keys[2].name), h.keys[0] == Key{name: "", id: 0})
+
+	// Copies.
+	e.key = "hello {e.n}"
+	e.note = "noted"
+	let f = e
+	e.key = "changed"
+	e.note = nil
+	say.Line(e.show(), f.show())
+
+	// Slices, appends, elements written in place, sorting, a value returned.
+	mut es = make([]Entry, 2)
+	es[1] = mk("one", 1)
+	es = append(es, mk("three", 3), f)
+	es[0].bump("!")
+	es[2].link = Node{v: 7}
+	sift.SortFunc(mut es, fn(l Entry, r Entry) i64 {
+		if l.key < r.key {
+			return -1
+		}
+		if l.key > r.key {
+			return 1
+		}
+		return 0
+	})
+	mut shown = []str{}
+	for x in es {
+		shown = append(shown, x.show())
+	}
+	say.Line(shown, longest(es).show())
+
+	// Nested value structs.
+	mut p Pair
+	p.a = mk("a", 1)
+	p.b.key = "b"
+	p.b.bump("?")
+	say.Line(p.a.show(), p.b.show(), p.w)
+
+	// == and map keys follow the fields.
+	let k1 = Key{name: "x" + "0", id: 1}
+	let k2 = Key{name: "x0", id: 1}
+	say.Line(k1 == k2, k1 != Key{name: "y", id: 1}, k1)
+	mut seen = map[Key]i64{}
+	seen[Key{name: "k", id: 1}] = 10
+	seen[Key{name: "k" + "", id: 1}] += 5
+	seen[Key{name: "j", id: 2}] = 1
+	say.Line(seen[Key{name: "k", id: 1}], len(seen), seen)
+
+	// Generics, argo.
+	let b = Box[Key]{v: k2}
+	say.Line(b.v.name, b)
+	mut out = []u8{}
+	argo.Put(mut out, []Key{k1, Key{name: "q\"z", id: 9}})
+	say.Line(str(out))
+	mut back = []Key{}
+	argo.Get(str(out), mut back) catch err {
+		say.Line(err)
+	}
+	say.Line(back, back[1] == Key{name: "q\"z", id: 9})
+
+	// Built in a loop, kept in a slice that outlives it.
+	mut log = []Key{}
+	for i in 0..1000 {
+		let k = Key{name: "n{i}", id: i}
+		if i % 250 == 0 {
+			log = append(log, k)
+		}
+	}
+	say.Line(log)
+}

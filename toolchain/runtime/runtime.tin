@@ -1684,6 +1684,18 @@ fn rt_slice_make_str(n i64, c i64) i64 {
 	return h
 }
 
+// rt_slice_fill_str puts "" at offset off of each of h's elements (esz bytes each): the str
+// fields of value structs a make just zeroed (#669). It returns h.
+fn rt_slice_fill_str(h i64, esz i64, off i64) i64 {
+	let e = cast(i64, "")
+	let d = h[2]
+	for i in 0..h[0] {
+		let p = d + i*esz + off
+		p[0] = e
+	}
+	return h
+}
+
 // rt_slice_make_nest makes a [][]T of n empty slices, each a header of its own.
 fn rt_slice_make_nest(n i64, c i64, esz i64) i64 {
 	let h = rt_slice_make(n, c, 8)

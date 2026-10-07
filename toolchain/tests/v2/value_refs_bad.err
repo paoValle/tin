@@ -1,0 +1,8 @@
+toolchain/tests/v2/value_refs_bad.tin:16:6: error E295 NOT_YET: a value struct field of type []i64 is not built yet (#669): a value struct holds numbers, bool, str, pointer optionals and other value structs, and an inline array holds no str
+toolchain/tests/v2/value_refs_bad.tin:20:7: error E295 NOT_YET: a value struct field of type [2]str is not built yet (#669): a value struct holds numbers, bool, str, pointer optionals and other value structs, and an inline array holds no str
+toolchain/tests/v2/value_refs_bad.tin:23:5: error E295 NOT_YET: a global of type Entry is not built yet (#669): it holds a value struct with a str or optional field
+toolchain/tests/v2/value_refs_bad.tin:25:5: error E295 NOT_YET: a global of type []Entry is not built yet (#669): it holds a value struct with a str or optional field
+toolchain/tests/v2/value_refs_bad.tin:29:10: error E295 NOT_YET: keep of Entry is not built yet (#669): it holds a value struct with a str or optional field
+toolchain/tests/v2/value_refs_bad.tin:30:10: error E295 NOT_YET: a function literal cannot capture 'e', a value struct with a str or optional field, yet (#669): pass it as an argument
+toolchain/tests/v2/value_refs_bad.tin:33:10: error E295 NOT_YET: an arena block's value of type Entry is not built yet (#669): it holds a value struct with a str or optional field
+toolchain/tests/v2/value_refs_bad.tin:36:32: error E237 COMPARE: cannot compare Entry values: a field holds ?str, which has no value equality
