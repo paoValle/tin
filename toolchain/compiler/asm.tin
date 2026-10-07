@@ -1003,10 +1003,18 @@ fn encode(ins i64, pc i64) i64 {
 		return 0xA8C003E0 | (((z >> 3) & 0x7f) << 15) | (rn(y) << 10) | rn(x)
 	}
 	if op == I_B {
-		return 0x14000000 | (((label_addr(x) - pc) >> 2) & 0x3ffffff)
+		let off = (label_addr(x) - pc) >> 2
+		if off < -33554432 || off >= 33554432 {
+			link_fail("branch out of range")
+		}
+		return 0x14000000 | (off & 0x3ffffff)
 	}
 	if op == I_BL {
-		return 0x94000000 | (((call_addr(cast(Fn, x)) - pc) >> 2) & 0x3ffffff)
+		let off = (call_addr(cast(Fn, x)) - pc) >> 2
+		if off < -33554432 || off >= 33554432 {
+			link_fail("call out of range")
+		}
+		return 0x94000000 | (off & 0x3ffffff)
 	}
 	if op == I_BCOND {
 		return enc_branch19(0x54000000, pc, label_addr(y), x)
@@ -1192,4 +1200,87 @@ fn encode(ins i64, pc i64) i64 {
 	}
 	link_fail("cannot encode instruction")
 	return 0
+}
+
+// branch_far is whether off (in bytes) is past what a 19-bit or 14-bit branch field reaches.
+fn branch_far(off i64, words i64) i64 {
+	if off < -(words << 2) || off >= (words << 2) {
+		return 1
+	}
+	return 0
+}
+
+fn relax_put(out []Fn, op i64, a i64, b i64, c i64, d i64) []Fn {
+	out = append(out, cast(Fn, op))
+	out = append(out, cast(Fn, a))
+	out = append(out, cast(Fn, b))
+	out = append(out, cast(Fn, c))
+	out = append(out, cast(Fn, d))
+	return out
+}
+
+// relax_branches widens a conditional branch whose target is out of reach into the inverted
+// branch over the unconditional b, which reaches +-128 MiB (#603): b.cond, cbz and cbnz reach
+// +-1 MiB, tbz and tbnz +-32 KiB. The label table and the addresses come from the layout before
+// the pass, so a branch is judged against what the linkers would lay out without it; widening
+// makes the function longer and can push another branch out of range, so the pass repeats until
+// an iteration changes nothing, and then nothing in the linked layout is out of reach. The
+// code only grows, so it ends. What stays E990 is a b or bl past +-128 MiB.
+fn relax_branches() {
+	mut changed = 1
+	for changed != 0 {
+		changed = 0
+		let labels = slice_filled(g_labels + 1, 0)
+		mut pc = 0
+		mut i = 0
+		for i < len(code) {
+			let op = cast(i64, code[i])
+			if op == I_LABEL {
+				labels[cast(i64, code[i + 1])] = pc
+			} else if op != I_FUNC {
+				pc = pc + 4
+			}
+			i = i + 5
+		}
+		mut out = []Fn{}
+		mut addr = 0
+		i = 0
+		for i < len(code) {
+			let op = cast(i64, code[i])
+			mut far = 0
+			if op == I_BCOND || op == I_CBZ || op == I_CBNZ {
+				far = branch_far(labels[cast(i64, code[i + 2])] - addr, 262144)
+			} else if op == I_TBZ || op == I_TBNZ {
+				far = branch_far(labels[cast(i64, code[i + 3])] - addr, 8192)
+			}
+			if far != 0 {
+				let l = new_label()
+				if op == I_BCOND {
+					out = relax_put(out, I_BCOND, cast(i64, code[i + 1]) ^ 1, l, 0, 0)
+				} else if op == I_CBZ {
+					out = relax_put(out, I_CBNZ, cast(i64, code[i + 1]), l, 0, 0)
+				} else if op == I_CBNZ {
+					out = relax_put(out, I_CBZ, cast(i64, code[i + 1]), l, 0, 0)
+				} else if op == I_TBZ {
+					out = relax_put(out, I_TBNZ, cast(i64, code[i + 1]), cast(i64, code[i + 2]), l, 0)
+				} else {
+					out = relax_put(out, I_TBZ, cast(i64, code[i + 1]), cast(i64, code[i + 2]), l, 0)
+				}
+				if op == I_TBZ || op == I_TBNZ {
+					out = relax_put(out, I_B, cast(i64, code[i + 3]), 0, 0, 0)
+				} else {
+					out = relax_put(out, I_B, cast(i64, code[i + 2]), 0, 0, 0)
+				}
+				out = relax_put(out, I_LABEL, l, 0, 0, 0)
+				changed = 1
+			} else {
+				out = relax_put(out, op, cast(i64, code[i + 1]), cast(i64, code[i + 2]), cast(i64, code[i + 3]), cast(i64, code[i + 4]))
+			}
+			if op != I_LABEL && op != I_FUNC {
+				addr = addr + 4
+			}
+			i = i + 5
+		}
+		code = out
+	}
 }

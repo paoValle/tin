@@ -1040,5 +1040,15 @@
       "stdout": "440082 10000\n",
       "stderr": ""
     }
+  },
+  {
+    "source": "long-branch.tin",
+    "issue": 603,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "522843\n",
+      "stderr": ""
+    }
   }
 ]
