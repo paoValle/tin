@@ -1,0 +1,19 @@
+# #669: a 16-byte value struct result comes back in x0 and x1 (rax and rdx on x86-64) with no
+# destination register (x8, r10): add loads the words, twice passes add's on, and total stores
+# them in the call's area.
+[arm64]
+CHECK: (?m)^_add:
+CHECK-NOT: x8
+CHECK: ldr x1, \[x0, #8\]\n\tldr x0, \[x0\]\n\tldp x29, x30
+CHECK: (?m)^_twice:
+CHECK-NOT: x8
+CHECK: bl _add\n
+CHECK: (?m)^_total:
+CHECK-NOT: x8
+CHECK: bl _add\n\tstr x0, \[x29, #[0-9]+\]\n\tstr x1, \[x29, #[0-9]+\]
+CHECK: (?m)^_main\.main:
+
+[amd64]
+CHECK: (?ms)^# L(?P<a>[0-9]+): add$.*?^L(?P=a):\n(?:(?!r10)(?!\nret\n)[\s\S])*?mov rdx,QWORD PTR \[rax\+0x8\]\nmov rax,QWORD PTR \[rax\]\n
+CHECK-NOT: r10
+CHECK: call S[0-9]+  # add\nmov QWORD PTR \[rbp-0x[0-9a-f]+\],rax\nmov QWORD PTR \[rbp-0x[0-9a-f]+\],rdx\n

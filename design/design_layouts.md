@@ -151,6 +151,14 @@ allocation on the result path, it would save one copy of at most 16 bytes per ca
   references it is still built apart and copied, since the region pass would see its stores as
   stores into the temporary.
 
+**As built in phase B, registers (#669).** A value struct result of 8 or 16 bytes comes back in
+x0 and x1 (rax and rdx on x86-64), as a `dyn` value does (`dest_regs`): the callee takes no
+destination and loads the words (`vd_return_regs`), and the caller stores them in the call's
+area and has its address, so the caller's view is unchanged (`vd_receive`). A `return f(...)` of
+such a call passes the words on. Sizes between 8 and 16 bytes, and below 8, still use the
+destination: loading whole words from an element packed at that size could read past the end
+of its block.
+
 ### 1.4 Reference fields
 
 A value struct may hold references (`str`, slices, maps, reference structs, `?T`). Inline storage

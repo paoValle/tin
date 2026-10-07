@@ -1,0 +1,33 @@
+package main
+
+import "say"
+
+// #669: a 16-byte value struct result comes back in x0 and x1 (rax and rdx on x86-64): the callee
+// takes no destination and loads the words, a call that returns another's result passes them
+// on, and the caller stores them in the call's area.
+
+type Vec value struct {
+	x f64
+	y f64
+}
+
+fn add(a Vec, b Vec) Vec {
+	return Vec{x: a.x + b.x, y: a.y + b.y}
+}
+
+fn twice(a Vec) Vec {
+	return add(a, a)
+}
+
+fn total(n i64) f64 {
+	mut s = 0.0
+	for i in 0..n {
+		let v = twice(Vec{x: f64(i), y: 1.0})
+		s += v.x + v.y
+	}
+	return s
+}
+
+fn main() {
+	say.Line(total(10))
+}

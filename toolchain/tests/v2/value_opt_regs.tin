@@ -1,0 +1,46 @@
+package main
+
+import "say"
+
+// #669: a ?P of 16 bytes comes back in two registers like any value struct of that size: a value,
+// nil (the zero constant) and a call returned as the function's own.
+
+type N value struct {
+	v i64
+}
+
+type S value struct {
+	k str
+}
+
+fn find(xs []N, t i64) ?N {
+	for x in xs {
+		if x.v == t {
+			return x
+		}
+	}
+	return nil
+}
+
+fn name(i i64) ?S {
+	if i % 2 == 0 {
+		return nil
+	}
+	return S{k: "odd {i}"}
+}
+
+fn again(xs []N, t i64) ?N {
+	return find(xs, t)
+}
+
+fn main() {
+	let xs = []N{N{v: 1}, N{v: 5}, N{v: 9}}
+	say.Line(find(xs, 5), find(xs, 4), again(xs, 9) ?? N{v: -1}, again(xs, 3) ?? N{v: -1})
+	for i in 0..4 {
+		if let s = name(i) {
+			say.Line(s.k)
+		} else {
+			say.Line("none", i)
+		}
+	}
+}

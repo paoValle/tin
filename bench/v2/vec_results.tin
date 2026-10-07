@@ -1,0 +1,32 @@
+package main
+
+import "say"
+
+// Small value struct results (#669): points of 16 bytes returned by value from the calls a loop
+// makes, which come back in two registers.
+type Pt value struct {
+	x i64
+	y i64
+}
+
+fn add(a Pt, b Pt) Pt {
+	return Pt{x: (a.x + b.x) & 16777215, y: (a.y + b.y) & 16777215}
+}
+
+fn half(a Pt) Pt {
+	return Pt{x: a.x >> 1, y: a.y >> 1}
+}
+
+fn mix(a Pt) Pt {
+	return Pt{x: (a.x * 3 + a.y + 1) & 16777215, y: ((a.y * 5) ^ a.x) & 16777215}
+}
+
+fn main() {
+	mut p = Pt{x: 0, y: 0}
+	mut v = Pt{x: 1, y: 2}
+	for i in 0..100000000 {
+		p = add(p, half(v))
+		v = mix(v)
+	}
+	say.Line(p.x, p.y)
+}

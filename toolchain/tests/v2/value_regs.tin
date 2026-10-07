@@ -1,0 +1,95 @@
+package main
+
+import "constraints"
+import "say"
+
+// #669: a value struct result of 8 or 16 bytes comes back in two registers, with no destination,
+// through direct calls, a chain of returns, methods, closures, function values, dyn methods and
+// generic instances; a 12-byte one still goes through its destination.
+
+type Vec value struct {
+	x f64
+	y f64
+}
+
+type Pair value struct {
+	a i32
+	b i32
+}
+
+type Odd value struct {
+	a i32
+	b i32
+	c i32
+}
+
+type Wrap[T constraints.Any] value struct {
+	v T
+}
+
+shape Shape {
+	center() Vec
+}
+
+type Circle struct {
+	c Vec
+	r f64
+}
+
+fn (c Circle) center() Vec {
+	return c.c
+}
+
+fn add(a Vec, b Vec) Vec {
+	return Vec{x: a.x + b.x, y: a.y + b.y}
+}
+
+fn twice(a Vec) Vec {
+	return add(a, a)
+}
+
+fn (v Vec) scaled(k f64) Vec {
+	return Vec{x: v.x * k, y: v.y * k}
+}
+
+fn swap(p Pair) Pair {
+	return Pair{a: p.b, b: p.a}
+}
+
+fn odd(i i32) Odd {
+	return Odd{a: i, b: i + 1, c: i + 2}
+}
+
+fn wrap[T constraints.Any](v T) Wrap[T] {
+	return Wrap[T]{v: v}
+}
+
+fn pick(vs []Vec, i i64) Vec {
+	if i < 0 {
+		return Vec{}
+	}
+	return vs[i]
+}
+
+fn main() {
+	let a = Vec{x: 1.5, y: 2.5}
+	let b = twice(a)
+	let c = add(b, twice(b)).scaled(2.0)
+	say.Line(a, b, c)
+	let vs = []Vec{a, b, c}
+	mut acc = Vec{}
+	for i in 0..3 {
+		acc = add(acc, pick(vs, i))
+	}
+	say.Line(acc, pick(vs, -1))
+	let f = fn(v Vec) Vec { return v.scaled(10.0) }
+	let g = add
+	say.Line(f(a), g(a, a))
+	let s dyn Shape = Circle{c: Vec{x: 7.0, y: 8.0}, r: 1.0}
+	say.Line(s.center(), swap(Pair{a: 1, b: 2}), odd(5), wrap(a), wrap(Pair{a: 3, b: 4}).v)
+	mut ps = []Pair{}
+	for i in 0..4 {
+		ps = append(ps, swap(Pair{a: i32(i), b: i32(i * 10)}))
+	}
+	say.Line(ps, add(twice(a), add(a, b)).x)
+}

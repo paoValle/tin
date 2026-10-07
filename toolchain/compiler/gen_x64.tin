@@ -974,7 +974,7 @@ fn x_value_store(v i64, size i64) {
 
 // x_vd_pass puts call e's destination in r10, last before the call (#631 A2, gen.tin vd_pass).
 fn x_vd_pass(e i64) {
-	if is_value_struct(cast(Ty, cast(Node, e).type_)) == 0 {
+	if is_value_struct(cast(Ty, cast(Node, e).type_)) == 0 || dest_regs(cast(Ty, cast(Node, e).type_)) != 0 {
 		return
 	}
 	let d = vd_dest(e)
@@ -983,6 +983,42 @@ fn x_vd_pass(e i64) {
 	} else if d > 0 {
 		emit2(X_LEA, R10, x_mem1(RBP, cast(Sym, d).off))
 	}
+}
+
+// x_vd_receive stores a value struct returned in rax and rdx in the call's area and leaves its
+// address in rax (gen.tin vd_receive).
+fn x_vd_receive(e i64) {
+	let t = cast(Ty, cast(Node, e).type_)
+	if dest_regs(t) == 0 {
+		return
+	}
+	let d = vd_dest(e)
+	if d > 0 {
+		x_st(RAX, x_mem1(RBP, cast(Sym, d).off), 3)
+		if t.size == 16 {
+			x_st(RDX, x_mem1(RBP, cast(Sym, d).off + 8), 3)
+		}
+		emit2(X_LEA, RAX, x_mem1(RBP, cast(Sym, d).off))
+	}
+}
+
+// x_vd_return_regs returns value struct v in rax and rdx (gen.tin vd_return_regs).
+fn x_vd_return_regs(v i64) {
+	if cast(Node, v).kind == EX_CALL && vd_dest(v) < 0 {
+		x_gen_call(v, 0)
+		return
+	}
+	if cast(Node, v).kind == EX_INT && is_const(v) != 0 && const_val(v) == 0 {
+		// The zero value (a nil ?P): no bytes to load.
+		x_load_imm(RAX, 0)
+		x_load_imm(RDX, 0)
+		return
+	}
+	x_gen_to(v, RAX, 0)
+	if cast(Ty, cast(Node, v).type_).size == 16 {
+		x_ld(RDX, x_mem1(RAX, 8), 3)
+	}
+	x_ld(RAX, x_mem1(RAX, 0), 3)
 }
 
 // x_vd_return returns value struct v through the function's destination (gen.tin vd_return).
@@ -2141,6 +2177,7 @@ fn x_gen_call(e i64, d i64) {
 		x_ld(RAX, x_mem1(R11, 0), 3)
 		emit1(X_CALL_R, RAX)
 	}
+	x_vd_receive(e)
 	if area > 0 {
 		emit2(X_ADDI, RSP, area)
 	}
@@ -2848,6 +2885,8 @@ fn x_gen_return(s ReturnStmt) {
 		}
 	} else if s.value != 0 && vd_dst != 0 && is_value_struct(cast(Ty, cast(Node, s.value).type_)) != 0 {
 		x_vd_return(s.value)
+	} else if s.value != 0 && vd_regs != 0 && is_value_struct(cast(Ty, cast(Node, s.value).type_)) != 0 {
+		x_vd_return_regs(s.value)
 	} else if s.value != 0 {
 		if is_dyn_value(cast(Ty, cast(Node, s.value).type_)) != 0 {
 			x_gen_dyn_pair(s.value, RAX, RDX, 0)
