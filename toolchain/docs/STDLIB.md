@@ -24,6 +24,7 @@ Generated from the comments in `toolchain/std/*/` and `packages/*/` by `tools/ge
 | [ore](#ore) | byte slices (bytes) |
 | [flume](#flume) | buffered I/O (bufio) |
 | [quarry](#quarry) | files, environment, process (os) |
+| [spawn](#spawn) | starting child processes (os/exec) |
 | [trail](#trail) | paths (path/filepath) |
 | [lever](#lever) | command-line flags (flag) |
 | [tide](#tide) | time (time) |
@@ -792,6 +793,22 @@ Package quarry is the operating system interface (like Go's os): arguments, envi
 - `Exit(code i64)`: Exit flushes stdout and ends the program with status code.
 - `Eprint(s str)`: Eprint writes s to stderr.
 - `Eprintln(s str)`: Eprintln writes s and a newline to stderr in one write.
+
+## spawn
+
+Package spawn starts child processes, like Go's os/exec: Start a program with inherited, null or file standard descriptors, wait for it, signal it or kill it. A program is never run through a shell: write []str{"sh", "-c", script} for one. Linux is the target; macOS is the last part of #576, and pipes, Run and maxOutput are the next one.
+
+- `type Stdio enum`: Stdio says where a child's standard descriptor points.
+- `type Env enum`: Env says which environment a child gets. A Tin slice has no nil, so where Go's exec.Cmd says "nil inherits and an empty list is empty", this package says so with a variant.
+- `type Cmd struct`: Cmd describes a program to start. Argv[0] is the program: a name without a slash is looked up in PATH.
+- `type Process struct`: Process is a running child. Wait reaps it; a Process that is never waited for leaves a zombie.
+- `const SIGKILL = 9`: SIGKILL and SIGTERM are the signals Signal and Kill send.
+- `const SIGTERM = 15`
+- `Start(c Cmd) !Process`: Start starts c and returns the running child. A start error names the program, like Go's exec.Error.
+- `(p mut Process) Wait() !i64`: Wait waits for the child, reaps it and returns its exit code, or -1 when a signal killed it. A task deadline (within) interrupts the wait, kills the child and reaps it.
+- `(p Process) Signal(sig i64) !`: Signal sends sig to the child.
+- `(p Process) Kill() !`: Kill sends SIGKILL to the child.
+- `LookPath(name str) !str`: LookPath finds name like Go's exec.LookPath: a name with a slash is used as it is, otherwise each PATH entry is tried in order and the first executable file wins.
 
 ## trail
 

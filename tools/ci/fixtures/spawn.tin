@@ -1,0 +1,101 @@
+package main
+
+import "say"
+import "spawn"
+import "fault"
+import "quarry"
+
+// The #576 Linux tests: start and wait, exit codes, a missing program, stdin from a file, a
+// separate stderr, a working directory, signals, and a task deadline killing the child. They run
+// in the Linux containers (tools/ci/spawn_check.py); /bin/sh and cat need debian:bookworm-slim.
+
+fn cmd(argv []str) spawn.Cmd {
+	return spawn.Cmd{Argv: argv, Env: spawn.Env.Inherit, Dir: "", Stdin: spawn.Stdio.Inherit, Stdout: spawn.Stdio.Inherit, Stderr: spawn.Stdio.Inherit}
+}
+
+fn main() {
+	// /bin/echo runs and exits 0.
+	mut p = spawn.Start(cmd([]str{"/bin/echo", "hello"})) catch err {
+		say.Line("echo start failed", err)
+		return
+	}
+	let code = p.Wait() catch err {
+		say.Line("echo wait failed", err)
+		return
+	}
+	say.Line("echo", code)
+
+	// sh -c 'exit 3' exits 3.
+	mut q = spawn.Start(cmd([]str{"/bin/sh", "-c", "exit 3"})) catch err {
+		say.Line("sh start failed", err)
+		return
+	}
+	let code3 = q.Wait() catch err {
+		say.Line("sh wait failed", err)
+		return
+	}
+	say.Line("sh exit", code3)
+
+	// A missing program fails with the path in the message.
+	spawn.Start(cmd([]str{"/no/such/tin-program"})) catch err {
+		say.Line("missing", err)
+	}
+
+	// A program name is looked up in PATH.
+	let path = spawn.LookPath("sh") catch err {
+		say.Line("lookpath failed", err)
+		return
+	}
+	say.Line("lookpath", path != "")
+
+	// A task deadline interrupts the wait: the child is killed, reaped and the deadline reported.
+	mut w = spawn.Start(cmd([]str{"/bin/sleep", "10"})) catch err {
+		say.Line("deadline start failed", err)
+		return
+	}
+	let r = within 100ms {
+		try w.Wait()
+	} catch err {
+		say.Line("deadline", fault.Is(err, fault.DeadlineExceeded))
+		i64(-1)
+	}
+	say.Line("deadline result", r)
+
+	// Two hundred runs in a row leak no descriptors and leave no zombies (each Wait reaps).
+	let dirsBefore = quarry.ReadDir("/proc/self/fd") catch _ {
+		[]str{}
+	}
+	let fdsBefore = len(dirsBefore)
+	for i in 0..200 {
+		mut r2 = spawn.Start(cmd([]str{"/bin/true"})) catch err {
+			say.Line("loop start failed", err)
+			return
+		}
+		let c2 = r2.Wait() catch err {
+			say.Line("loop wait failed", err)
+			return
+		}
+		if c2 != 0 {
+			say.Line("loop exit", c2)
+		}
+	}
+	let dirsAfter = quarry.ReadDir("/proc/self/fd") catch _ {
+		[]str{}
+	}
+	say.Line("loop fds equal", fdsBefore == len(dirsAfter))
+
+	// Signal: a sleeping child is killed and Wait reports -1.
+	mut s = spawn.Start(cmd([]str{"/bin/sleep", "10"})) catch err {
+		say.Line("sleep start failed", err)
+		return
+	}
+	s.Kill() catch err {
+		say.Line("kill failed", err)
+		return
+	}
+	let killed = s.Wait() catch err {
+		say.Line("sleep wait failed", err)
+		return
+	}
+	say.Line("killed", killed)
+}

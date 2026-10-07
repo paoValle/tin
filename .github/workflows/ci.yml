@@ -56,6 +56,9 @@ jobs:
         run: python3 tools/ci/docs_check.py bin/tinc
       - name: Exact number conversion (Go reference and hard parsing corpus)
         run: python3 tools/ci/number_check.py
+      - name: Child processes start, wait, signal and are cut by a deadline (Docker)
+        if: runner.os == 'Linux'
+        run: python3 tools/ci/spawn_check.py
       - name: DEFLATE against Go (every length and distance code, both directions)
         run: python3 tools/ci/squash_twin_check.py
       - name: Memory primitives and deterministic allocation failure

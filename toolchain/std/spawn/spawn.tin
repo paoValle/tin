@@ -1,0 +1,124 @@
+// Package spawn starts child processes, like Go's os/exec: Start a program with inherited, null
+// or file standard descriptors, wait for it, signal it or kill it. A program is never run through
+// a shell: write []str{"sh", "-c", script} for one. Linux is the target; macOS is the last part
+// of #576, and pipes, Run and maxOutput are the next one.
+package spawn
+
+import "say"
+
+// Stdio says where a child's standard descriptor points.
+type Stdio enum {
+	Inherit   // the parent's own descriptor
+	Null      // /dev/null
+	File(str) // the named file, opened in the descriptor's direction
+}
+
+// Env says which environment a child gets. A Tin slice has no nil, so where Go's exec.Cmd says
+// "nil inherits and an empty list is empty", this package says so with a variant.
+type Env enum {
+	Inherit  // the parent's environment
+	Empty    // no variables at all
+	Set([]str) // exactly these "NAME=value" entries
+}
+
+// Cmd describes a program to start. Argv[0] is the program: a name without a slash is looked up
+// in PATH.
+type Cmd struct {
+	Argv   []str
+	Env    Env
+	Dir    str
+	Stdin  Stdio
+	Stdout Stdio
+	Stderr Stdio
+}
+
+// Process is a running child. Wait reaps it; a Process that is never waited for leaves a zombie.
+type Process struct {
+	pid   i64
+	pidfd i64
+	done  bool
+}
+
+// SIGKILL and SIGTERM are the signals Signal and Kill send.
+const SIGKILL = 9
+
+const SIGTERM = 15
+
+// Start starts c and returns the running child. A start error names the program, like Go's
+// exec.Error.
+fn Start(c Cmd) !Process {
+	if len(c.Argv) == 0 {
+		fail say.Fault("spawn: empty argv")
+	}
+	return try spawnStart(c)
+}
+
+// Wait waits for the child, reaps it and returns its exit code, or -1 when a signal killed it.
+// A task deadline (within) interrupts the wait, kills the child and reaps it.
+fn (p mut Process) Wait() !i64 {
+	if p.done {
+		fail say.Fault("spawn: already waited for")
+	}
+	let code = try spawnWait(mut p)
+	p.done = true
+	return code
+}
+
+// Signal sends sig to the child.
+fn (p Process) Signal(sig i64) ! {
+	try spawnSignal(p.pid, sig)
+}
+
+// Kill sends SIGKILL to the child.
+fn (p Process) Kill() ! {
+	try p.Signal(SIGKILL)
+}
+
+// LookPath finds name like Go's exec.LookPath: a name with a slash is used as it is, otherwise
+// each PATH entry is tried in order and the first executable file wins.
+fn LookPath(name str) !str {
+	if len(name) == 0 {
+		fail say.Fault("spawn: empty program name")
+	}
+	if containsSlash(name) {
+		if !spawnExecutable(name) {
+			fail say.Fault("spawn: %s: not executable", name)
+		}
+		return name
+	}
+	for _, dir in splitPath(spawnPathVar()) {
+		mut d = dir
+		if len(d) == 0 {
+			d = "."
+		}
+		let full = d + "/" + name
+		if spawnExecutable(full) {
+			return full
+		}
+	}
+	fail say.Fault("spawn: %s: executable file not found in PATH", name)
+}
+
+// containsSlash reports whether name has a directory part.
+fn containsSlash(name str) bool {
+	for i in 0..len(name) {
+		if name[i] == '/' {
+			return true
+		}
+	}
+	return false
+}
+
+// splitPath splits PATH on ':'.
+fn splitPath(path str) []str {
+	mut out = []str{}
+	mut start = 0
+	for i in 0..len(path) {
+		if path[i] == ':' {
+			out = append(out, path[start:i])
+			start = i + 1
+		}
+	}
+	out = append(out, path[start:len(path)])
+	return out
+}

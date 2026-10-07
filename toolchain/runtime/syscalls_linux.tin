@@ -27,12 +27,47 @@ fn rt_sys_close(fd i64) i64 {
 	return linux_result(linux_raw(linux_nr_close(), fd, 0, 0, 0, 0, 0))
 }
 
+fn rt_sys_uname(buf i64) i64 {
+	return linux_result(linux_raw(linux_nr_uname(), buf, 0, 0, 0, 0, 0))
+}
+
 fn rt_sys_getpid() i64 {
 	return linux_result(linux_raw(linux_nr_getpid(), 0, 0, 0, 0, 0, 0))
 }
 
-fn rt_sys_uname(buf i64) i64 {
-	return linux_result(linux_raw(linux_nr_uname(), buf, 0, 0, 0, 0, 0))
+fn rt_sys_faccessat(dirfd i64, path i64, mode i64, flags i64) i64 {
+	return linux_result(linux_raw(linux_nr_faccessat(), dirfd, path, mode, flags, 0, 0))
+}
+
+// rt_sys_execve is execve for the spawn child: the raw result, -errno, because a vfork child
+// must report the exact error itself (rt_errno state is the parent's). It is also the tagged
+// entry point for the exec capability (#576).
+fn rt_sys_execve(path i64, argv i64, envp i64) i64 {
+	return linux_raw(linux_nr_execve(), path, argv, envp, 0, 0, 0)
+}
+
+fn rt_sys_dup3(old i64, new i64, flags i64) i64 {
+	return linux_result(linux_raw(linux_nr_dup3(), old, new, flags, 0, 0, 0))
+}
+
+fn rt_sys_kill(pid i64, sig i64) i64 {
+	return linux_result(linux_raw(linux_nr_kill(), pid, sig, 0, 0, 0, 0))
+}
+
+fn rt_sys_pidfd_open(pid i64, flags i64) i64 {
+	return linux_result(linux_raw(linux_nr_pidfd_open(), pid, flags, 0, 0, 0, 0))
+}
+
+fn rt_sys_wait4(pid i64, status i64, options i64, rusage i64) i64 {
+	return linux_result(linux_raw(linux_nr_wait4(), pid, status, options, rusage, 0, 0))
+}
+
+fn rt_sys_waitid(idtype i64, id i64, info i64, options i64) i64 {
+	return linux_result(linux_raw(linux_nr_waitid(), idtype, id, info, options, 0, 0))
+}
+
+fn rt_sys_close_range(first i64, last i64, flags i64) i64 {
+	return linux_result(linux_raw(linux_nr_close_range(), first, last, flags, 0, 0, 0))
 }
 
 fn rt_sys_chdir(path i64) i64 {

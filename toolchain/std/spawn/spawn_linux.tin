@@ -1,0 +1,156 @@
+package spawn
+
+import "say"
+import "quarry"
+
+// The Linux part of #576: the child record, the clone, the pidfd wait and the PATH search. The
+// runtime does the raw work (toolchain/runtime/spawn_linux.tin).
+
+// spawnStart starts c: build the child's argument and environment vectors and its standard
+// descriptors, clone it, and wait for the exec result (CLONE_VFORK).
+fn spawnStart(c Cmd) !Process {
+	let prog = try resolveProgram(c.Argv[0])
+	mut cargv = calloc(len(c.Argv)+1, 8)
+	for i, a in c.Argv {
+		cargv[i] = rt_cstr(a)
+	}
+	cargv[len(c.Argv)] = 0
+	mut cenvp = i64(0)
+	match c.Env {
+		Inherit => {}
+		Empty => {
+			cenvp = calloc(1, 8)
+		}
+		Set(vars) => {
+			let e = calloc(len(vars)+1, 8)
+			for i, v in vars {
+				e[i] = rt_cstr(v)
+			}
+			e[len(vars)] = 0
+			cenvp = e
+		}
+	}
+	mut dirp = i64(0)
+	if len(c.Dir) > 0 {
+		dirp = rt_cstr(c.Dir)
+	}
+	let rec = rt_spawn_rec()
+	rt_spawn_set(rec, 0, cargv)
+	rt_spawn_set(rec, 1, cenvp)
+	rt_spawn_set(rec, 2, rt_cstr(prog))
+	rt_spawn_set(rec, 3, dirp)
+	let in = try openStdio(c.Stdin, true)
+	let out = try openStdio(c.Stdout, false)
+	let err = try openStdio(c.Stderr, false)
+	if in >= 0 {
+		rt_spawn_set(rec, 4, in)
+	}
+	if out >= 0 {
+		rt_spawn_set(rec, 5, out)
+	}
+	if err >= 0 {
+		rt_spawn_set(rec, 6, err)
+	}
+	let (pid, e) = rt_sys_posix_spawn(rec)
+	if in >= 0 {
+		rt_sys_close(in)
+	}
+	if out >= 0 {
+		rt_sys_close(out)
+	}
+	if err >= 0 {
+		rt_sys_close(err)
+	}
+	rt_spawn_free(rec)
+	free(cargv)
+	if cenvp != 0 {
+		free(cenvp)
+	}
+	if e != 0 {
+		fail say.Fault("spawn: %s: %s", prog, errnoText(e))
+	}
+	let pidfd = rt_spawn_pidfd(pid)
+	if pidfd < 0 {
+		fail say.Fault("spawn: %s: pidfd_open: %s", prog, errnoText(rt_errno()))
+	}
+	return Process{pid: pid, pidfd: pidfd, done: false}
+}
+
+// resolveProgram is the program to exec: a name with a slash is used as it is, so execve
+// reports "no such file or directory" itself; a bare name goes through PATH.
+fn resolveProgram(name str) !str {
+	if containsSlash(name) {
+		return name
+	}
+	return try LookPath(name)
+}
+
+// spawnWait waits for the child through the scheduler; a deadline kills and reaps it.
+fn spawnWait(p mut Process) !i64 {
+	let (code, sig, waited) = rt_spawn_wait(p.pid, p.pidfd, 0)
+	if !waited {
+		fail cast(fault, rt_wait_fault())
+	}
+	rt_sys_close(p.pidfd)
+	if sig != 0 {
+		return -1
+	}
+	return code
+}
+
+// spawnSignal sends sig to the child.
+fn spawnSignal(pid i64, sig i64) ! {
+	let r = rt_sys_kill(pid, sig)
+	if r < 0 {
+		fail say.Fault("spawn: kill %d: %s", pid, errnoText(rt_errno()))
+	}
+}
+
+// spawnExecutable reports whether path is an executable file (faccessat with X_OK).
+fn spawnExecutable(path str) bool {
+	return rt_sys_faccessat(-100, rt_cstr(path), 1, 0) == 0
+}
+
+// spawnPathVar is the PATH environment variable, empty when unset.
+fn spawnPathVar() str {
+	return quarry.Getenv("PATH")
+}
+
+// openStdio opens the descriptor a Stdio asks for, or -1 for Inherit.
+fn openStdio(s Stdio, input bool) !i64 {
+	match s {
+		Inherit => {
+			return -1
+		}
+		Null => {
+			return try openPath("/dev/null", input)
+		}
+		File(path) => {
+			return try openPath(path, input)
+		}
+	}
+}
+
+// openPath opens path for the descriptor's direction, with O_CLOEXEC so a second child never
+// inherits it.
+fn openPath(path str, input bool) !i64 {
+	mut flags = i64(0x80000) // O_CLOEXEC
+	if !input {
+		flags |= 1 | 64 | 512 // O_WRONLY | O_CREAT | O_TRUNC
+	}
+	let fd = rt_sys_open(rt_cstr(path), flags, 420)
+	if fd < 0 {
+		fail say.Fault("spawn: %s: %s", path, errnoText(rt_errno()))
+	}
+	return fd
+}
+
+// errnoText is rt_sys_strerror with its first letter lowered, as Go spells errno texts.
+fn errnoText(e i64) str {
+	let p = rt_sys_strerror(e)
+	let s = rt_str_from_raw(p, strlen(p))
+	if len(s) > 0 && s[0] >= 'A' && s[0] <= 'Z' {
+		store8(cast(i64, s)+8, i64(s[0])+32)
+	}
+	return s
+}

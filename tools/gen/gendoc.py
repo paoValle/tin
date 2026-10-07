@@ -4,7 +4,7 @@ import os, re
 
 SKIP = {"runtime", "std", "fmt", "say"}
 ORDER = ["say", "fault", "argo", "io", "anvil", "hearth", "relay", "task", "wire", "tls", "hpack", "twine", "glyph", "mint", "gauge", "bits",
-         "link", "ore", "flume", "quarry", "trail", "lever", "tide", "dice", "sift", "atlas", "cairn", "stamp", "squash", "ledger",
+         "link", "ore", "flume", "quarry", "spawn", "trail", "lever", "tide", "dice", "sift", "atlas", "cairn", "stamp", "squash", "ledger",
          "seal", "herald", "crucible", "constraints", "policy", "redis", "mysql", "postgres", "kafka", "websocket", "atomic",
          "lane", "replay"]
 ROLE = {"say": "formatting and printing (fmt)", "fault": "fault chains and standard sentinels (errors)", "argo": "JSON (encoding/json)", "anvil": "HTTP/1.1 and HTTP/2 server, HTTPS with ServeTLS (net/http)",
@@ -12,7 +12,7 @@ ROLE = {"say": "formatting and printing (fmt)", "fault": "fault chains and stand
         "hpack": "HTTP/2 header compression (golang.org/x/net/http2/hpack)",
         "twine": "strings (strings)", "glyph": "UTF-8 and Unicode (unicode/utf8, unicode)", "mint": "number and string conversion (strconv)",
         "gauge": "math (math)", "bits": "bit counting and manipulation (math/bits)", "link": "URLs and their escaping (net/url)", "io": "streaming shapes (io)", "ore": "byte slices (bytes)", "flume": "buffered I/O (bufio)",
-        "quarry": "files, environment, process (os)", "trail": "paths (path/filepath)", "lever": "command-line flags (flag)",
+        "quarry": "files, environment, process (os)", "spawn": "starting child processes (os/exec)", "trail": "paths (path/filepath)", "lever": "command-line flags (flag)",
         "tide": "time (time)", "dice": "random numbers (math/rand)", "sift": "sorting, searching and the generic slice functions (sort, slices, cmp)", "atlas": "functions on maps (maps)",
         "cairn": "containers (container/heap, sets, LRU)", "stamp": "hashes and checksums (hash/*)", "squash": "compression: DEFLATE, gzip, zlib, Snappy, LZ4, Zstandard (compress/flate, compress/gzip, compress/zlib)",
         "ledger": "CSV reading and writing (encoding/csv)",

@@ -107,6 +107,35 @@ fn linux_nr_accept4() i64 {
 	return 242
 }
 
+fn linux_nr_faccessat() i64 {
+	return 48
+}
+
+fn linux_nr_execve() i64 {
+	return 221
+}
+
+fn linux_nr_dup3() i64 {
+	return 24
+}
+
+fn linux_nr_pidfd_open() i64 {
+	return 434
+}
+
+fn linux_nr_wait4() i64 {
+	return 260
+}
+
+fn linux_nr_waitid() i64 {
+	return 95
+}
+
+fn linux_nr_close_range() i64 {
+	return 436
+}
+
+
 fn linux_nr_connect() i64 {
 	return 203
 }

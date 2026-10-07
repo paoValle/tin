@@ -1,0 +1,158 @@
+// Starting child processes (#576), the Linux part: clone(CLONE_VM|CLONE_VFORK|SIGCHLD) with a
+// small child stack, as musl's posix_spawn and Go's forkAndExecInChild do. The child runs raw
+// syscalls only: it must not allocate, take a lock or touch the scheduler, because the parent
+// blocks in vfork until it execs or exits.
+
+const spawnCloneFlags = 0x100 | 0x4000 | 17 // CLONE_VM | CLONE_VFORK | SIGCHLD
+
+// The child record, filled by the parent before the clone; the child only reads it.
+const spawnArgv = 0     // pointer to argv, NULL-terminated
+const spawnEnvp = 1     // pointer to envp, NULL-terminated
+const spawnPath = 2     // the program, a C string
+const spawnDir = 3      // the working directory, a C string, or 0
+const spawnIn = 4       // the descriptor for 0, or -1 to leave it
+const spawnOut = 5      // the descriptor for 1, or -1 to leave it
+const spawnErr = 6      // the descriptor for 2, or -1 to leave it
+const spawnErrPipe = 7  // the error pipe's write end (close-on-exec)
+const spawnSigset = 8   // 8 zero bytes: the empty signal mask
+const spawnAct = 9      // a zeroed sigaction, SIG_DFL
+const spawnErrBuf = 10  // 4 bytes the child writes the errno into
+const spawnWords = 12
+
+// rt_spawn_rec returns a child record with its small buffers.
+fn rt_spawn_rec() i64 {
+	let rec = calloc(spawnWords, 8)
+	rec[spawnIn] = -1
+	rec[spawnOut] = -1
+	rec[spawnErr] = -1
+	rec[spawnSigset] = calloc(1, 8)
+	rec[spawnAct] = calloc(4, 8)
+	rec[spawnErrBuf] = calloc(1, 8)
+	return rec
+}
+
+fn rt_spawn_set(rec i64, slot i64, v i64) {
+	rec[slot] = v
+}
+
+fn rt_spawn_get(rec i64, slot i64) i64 {
+	return rec[slot]
+}
+
+fn rt_spawn_free(rec i64) {
+	free(rec[spawnSigset])
+	free(rec[spawnAct])
+	free(rec[spawnErrBuf])
+	free(rec)
+}
+
+// rt_spawn_fail writes the positive errno to the error pipe and exits 127, as a failed execve
+// must not return into the child. r is the raw syscall result, -errno.
+fn rt_spawn_fail(rec i64, r i64) {
+	__st(rec[spawnErrBuf], 0 - r, 4)
+	rt_sys_write(rec[spawnErrPipe], rec[spawnErrBuf], 4)
+	rt_sys_exit(127)
+}
+
+// rt_spawn_child is the child's whole life: raw syscalls only, then execve.
+fn rt_spawn_child(rec i64) {
+	// The runtime's signal mask, its SIGSEGV and SIGBUS handlers and its alternate stack do not
+	// belong in a child.
+	rt_sys_pthread_sigmask(0, rec[spawnSigset], 0) // SIG_SETMASK
+	rt_sys_sigaction(11, rec[spawnAct], 0)         // SIGSEGV
+	rt_sys_sigaction(7, rec[spawnAct], 0)          // SIGBUS
+	rt_sys_sigaltstack(0, 0)
+	if rec[spawnIn] >= 0 && rec[spawnIn] != 0 {
+		rt_sys_dup3(rec[spawnIn], 0, 0)
+	}
+	if rec[spawnOut] >= 0 && rec[spawnOut] != 1 {
+		rt_sys_dup3(rec[spawnOut], 1, 0)
+	}
+	if rec[spawnErr] >= 0 && rec[spawnErr] != 2 {
+		rt_sys_dup3(rec[spawnErr], 2, 0)
+	}
+	if rec[spawnDir] != 0 {
+		let r = linux_raw(linux_nr_chdir(), rec[spawnDir], 0, 0, 0, 0, 0)
+		if r < 0 {
+			rt_spawn_fail(rec, r)
+		}
+	}
+	// Every runtime descriptor is already close-on-exec; mark any other descriptor so too
+	// (Linux 5.9+; an older kernel returns EINVAL and the fds stay, as they were before #576).
+	rt_sys_close_range(3, -1, 4) // CLOSE_RANGE_CLOEXEC
+	// The child's whole point: execve, raw, and never return.
+	let r = rt_sys_execve(rec[spawnPath], rec[spawnArgv], rec[spawnEnvp])
+	rt_spawn_fail(rec, r)
+}
+
+// rt_sys_posix_spawn starts the child and returns (pid, errno). With CLONE_VFORK the parent
+// returns from the clone only after the child execs or exits, so the error pipe tells which: 4
+// bytes is the exec errno, EOF is success. The name is the tagged spawn entry point (#576).
+fn rt_sys_posix_spawn(rec i64) (i64, i64) {
+	let errp = calloc(2, 4)
+	let pr = rt_sys_pipe(errp)
+	if pr < 0 {
+		free(errp)
+		return -1, 0 - pr
+	}
+	rec[spawnErrPipe] = i64(i32(__ld(errp+4, 4)))
+	let size = 8 * rt_page_size()
+	let stack = mem_map(size, MAP_STACK)
+	let pid = rt_sys_clone(spawnCloneFlags, stack+size, 0, 0, cast(i64, rt_spawn_child), rec)
+	let cloneErrno = rt_errno()
+	// The parent continues here: the child has execd or exited.
+	rt_sys_close(i64(i32(__ld(errp+4, 4))))
+	mut childErrno = i64(0)
+	let n = rt_sys_read(i64(i32(__ld(errp, 4))), rec[spawnErrBuf], 4)
+	if n == 4 {
+		childErrno = i64(i32(__ld(rec[spawnErrBuf], 4)))
+	}
+	rt_sys_close(i64(i32(__ld(errp, 4))))
+	free(errp)
+	rt_sys_munmap(stack, size)
+	if pid < 0 {
+		return pid, cloneErrno
+	}
+	return pid, childErrno
+}
+
+// rt_spawn_pidfd opens the pidfd a wait can block on.
+fn rt_spawn_pidfd(pid i64) i64 {
+	return rt_sys_pidfd_open(pid, 0)
+}
+
+// rt_spawn_reap kills the child if asked and reaps it, so no zombie is left. It returns the exit
+// code, or -1 when the child was killed by a signal (its number in killed), and reports whether
+// the wait had to kill it.
+fn rt_spawn_reap(pid i64, pidfd i64, killFirst bool) (i64, i64) {
+	if killFirst {
+		rt_sys_kill(pid, 9)
+	}
+	let info = calloc(4, 8)
+	let r = rt_sys_waitid(3, pidfd, info, 4) // P_PIDFD, WEXITED
+	if r < 0 {
+		free(info)
+		return -1, 0
+	}
+	let code = i64(i32(__ld(info+8, 4)))  // si_code
+	// SIGCHLD's siginfo: si_pid at 16, si_uid at 20, si_status at 24.
+	let status = i64(i32(__ld(info+24, 4))) // si_status
+	free(info)
+	if code == 1 { // CLD_EXITED
+		return status, 0
+	}
+	return -1, status // CLD_KILLED or CLD_DUMPED: the signal number
+}
+
+// rt_spawn_wait waits for the child through the scheduler (fd readiness with a deadline), reaps
+// it and returns (exit code, signal, waited). waited is false when the timeout or the task's
+// deadline came first; the child is then killed and reaped anyway.
+fn rt_spawn_wait(pid i64, pidfd i64, timeout i64) (i64, i64, bool) {
+	let r = rt_task_wait(pidfd, 1, timeout)
+	if r != waitReady {
+		let (code, sig) = rt_spawn_reap(pid, pidfd, true)
+		return code, sig, false
+	}
+	let (code, sig) = rt_spawn_reap(pid, pidfd, false)
+	return code, sig, true
+}
