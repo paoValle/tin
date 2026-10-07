@@ -1,0 +1,24 @@
+package main
+
+// Methods go on named types of this package (#564): not on a builtin type or an alias of one; a mut receiver needs a reference type, as a mut parameter does;
+// and a named type has only the methods declared on it.
+
+type Celsius f64
+type Score = i64
+
+fn (x f64) Half() f64 {
+	return x / 2
+}
+
+fn (s Score) Double() i64 {
+	return s * 2
+}
+
+fn (c mut Celsius) Reset() {
+	c = 0
+}
+
+fn main() {
+	let c = Celsius(1)
+	_ = c.Kelvin()
+}

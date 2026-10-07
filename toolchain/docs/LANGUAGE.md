@@ -793,7 +793,11 @@ fn main() {
 ```
 
 The receiver comes first and is a parameter like any other: `mut` lets the method modify
-it. Methods are declared on named types in the same package.
+it. Methods are declared on named types in the same package: structs and enums, and named
+non-struct types such as `type Celsius f64` or `type IDs []i64` (#564). A `mut` receiver must
+be a reference type (a struct, slice or map), as a `mut` parameter must (E702). A named type
+with the methods of a shape satisfies it in generic code; as a `dyn` object only structs and
+enums can be used (E516).
 
 A method that is not called is a *method value* (#565): `let get = c.get` is a closure of
 type `fn() i64` that holds `c`, evaluated where the value is made, and calls `get` on it;

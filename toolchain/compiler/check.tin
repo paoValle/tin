@@ -980,8 +980,9 @@ fn declare_fn(f Fn) {
 	}
 	if f.recv != 0 {
 		let rt = cast(Ty, resolve_type(f.recv))
-		if kind_of(rt) != K_STRUCT {
-			err_code_type(f.pos, "E140 RECEIVER", "methods need a struct receiver, not ", cast(i64, rt), "")
+		if kind_of(rt) != K_STRUCT && (rt.under == 0 || named_here(rt) == 0) {
+			// A named non-struct type of this package takes methods too (#564).
+			err_code_type(f.pos, "E140 RECEIVER", "methods need a struct receiver or a named type of this package, not ", cast(i64, rt), "")
 		}
 		name = rt.name + "." + f.name
 		// The receiver is passed as parameter zero.
@@ -1048,6 +1049,22 @@ fn declare_fn(f Fn) {
 	let fs = sym_new(SYM_FUNC, name, f.pos)
 	fs.fn_ = cast(i64, f)
 	declare_global(fs)
+}
+
+// named_here reports whether named type t was declared in the package being checked: its
+// qualified name is the package's, or unqualified in package main (#564).
+fn named_here(t Ty) i64 {
+	if len(ck_pkg) == 0 {
+		mut i = 0
+		for i < len(t.name) {
+			if t.name[i] == '.' {
+				return 0
+			}
+			i = i + 1
+		}
+		return 1
+	}
+	return i64(len(t.name) > len(ck_pkg) && t.name[:len(ck_pkg) + 1] == ck_pkg + ".")
 }
 
 fn check_const(c Decl) {

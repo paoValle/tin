@@ -982,7 +982,8 @@ handler, or in a `once` block of code the cores run (`examples/percore.tin`).
 
 ### E140 RECEIVER
 
-A method belongs to a struct (or enum) type declared in the same package.
+A method belongs to a struct (or enum) type, or a named type such as `type Celsius f64` (#564),
+declared in the same package. A builtin type such as `i64`, or an alias of one, takes none.
 
 ```tin edition=1
 package main
@@ -996,11 +997,11 @@ fn main() {
 ```
 
 ```text
-example.tin:3:1: error E140 RECEIVER: methods need a struct receiver, not i64
+example.tin:3:1: error E140 RECEIVER: methods need a struct receiver or a named type of this package, not i64
 ```
 
-Fix: write a function that takes the value (`fn double(n i64) i64`), or declare a struct
-that holds it and give the struct the method.
+Fix: write a function that takes the value (`fn double(n i64) i64`), or declare a named type
+(`type Count i64`) and give it the method.
 
 ## E2xx Types, expressions and calls
 

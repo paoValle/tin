@@ -1924,6 +1924,19 @@ fn chk_select(e i64, want i64) i64 {
 		let sig = cast(ShapeSig, info.b)
 		return method_value(e, x, cast(i64, xt), name, sig.types, sig.muts, sig.results, i64(sig.bang != 0) | (i64(sig.mutres != 0) << 1))
 	}
+	if xt.under != 0 && cast(i64, find_fn(xt.name + "." + name)) != 0 {
+		// A method value on a named non-struct type (#564, #565).
+		let nmf = find_fn(xt.name + "." + name)
+		mut nps = []i64{}
+		mut nms = []i64{}
+		mut npi = 1
+		for npi < len(nmf.ptypes) {
+			nps = append(nps, nmf.ptypes[npi])
+			nms = append(nms, nmf.muts[npi])
+			npi = npi + 1
+		}
+		return method_value(e, x, cast(i64, xt), name, nps, nms, nmf.rtypes, i64(nmf.bang != 0) | (i64(nmf.mutres != 0) << 1))
+	}
 	if kind_of(xt) == K_STRUCT {
 		let i = struct_field(xt, name)
 		let mf = find_fn(xt.name + "." + name)
@@ -3724,6 +3737,32 @@ fn chk_call(e i64, want i64) i64 {
 		let xt = cast(Ty, chk(cast(Node, x), 0))
 		if kind_of(xt) == K_OPT {
 			err_code_type(cast(Node, e).pos, "E421 UNCHECKED_OPTIONAL", "cannot call a method of optional ", cast(i64, xt), " before checking it against nil")
+			return ty_int
+		}
+		if xt.under != 0 {
+			// A method of a named non-struct type (#564).
+			let nm = find_fn(xt.name + "." + m)
+			if cast(i64, nm) != 0 {
+				if is_private(m) != 0 && foreign_type(xt) != 0 {
+					private_use(cast(Node, e).pos, "method", m, type_pkg(xt))
+				}
+				mut nargs = []i64{}
+				nargs = append(nargs, x)
+				mut ni = 0
+				for ni < len(cast(Call, e).args) {
+					nargs = append(nargs, cast(Call, e).args[ni])
+					ni = ni + 1
+				}
+				cast(Call, e).args = cast([]i64, nargs)
+				cast(Call, e).name = nm.qname
+				cast(Call, e).method = 1
+				return direct_call(cast(Call, e), nm)
+			}
+			let um = err_code(cast(Node, e).pos, "E214 METHOD")
+			type_name(cast([]u8, um), xt)
+			buf_str(um, " has no method ")
+			buf_str(um, m)
+			err_end(cast([]u8, um))
 			return ty_int
 		}
 		if kind_of(xt) == K_STRUCT {

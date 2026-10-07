@@ -1,0 +1,4 @@
+toolchain/tests/v2/named_methods_bad.tin:9:1: error E140 RECEIVER: methods need a struct receiver or a named type of this package, not f64
+toolchain/tests/v2/named_methods_bad.tin:13:1: error E140 RECEIVER: methods need a struct receiver or a named type of this package, not i64
+toolchain/tests/v2/named_methods_bad.tin:17:1: error E702 MUT_VALUE_PARAM: parameter 'c' is mut, but a value of type Celsius is passed by value: only structs, slices and maps can be modified through a parameter, so remove mut
+toolchain/tests/v2/named_methods_bad.tin:23:7: error E214 METHOD: Celsius has no method Kelvin

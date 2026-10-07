@@ -1,0 +1,95 @@
+package main
+
+import "mint"
+import "say"
+import "sift"
+
+// A named non-struct type of this package takes methods (#564): on numbers, strings, slices,
+// maps and func types, called directly, through a shape in a generic function, or as method
+// values. A mut receiver needs a reference type (a slice or map), as a mut parameter does.
+
+type Celsius f64
+type Cents i64
+type Name str
+type IDs []i64
+type Tally map[str]i64
+type Op fn(i64) i64
+
+fn (c Celsius) F() f64 {
+	return f64(c)*9.0/5.0 + 32.0
+}
+
+fn (c Celsius) Warmer(d Celsius) Celsius {
+	return c + d
+}
+
+fn (p Cents) String() str {
+	return "$" + mint.Itoa(i64(p) / 100) + "." + mint.Itoa(i64(p) % 100 / 10) + mint.Itoa(i64(p) % 10)
+}
+
+fn (n Name) Greet() str {
+	return "hi " + str(n)
+}
+
+fn (ids IDs) Sum() i64 {
+	mut t = 0
+	for x in ids {
+		t += x
+	}
+	return t
+}
+
+fn (ids mut IDs) Add(x i64) {
+	ids = append(ids, x)
+}
+
+fn (t mut Tally) Bump(k str) {
+	t[k] = t[k] + 1
+}
+
+fn (o Op) Twice(x i64) i64 {
+	return o(o(x))
+}
+
+shape Stringer {
+	String() str
+}
+
+fn show[T Stringer](xs []T) []str {
+	mut out = []str{}
+	for x in xs {
+		out = append(out, x.String())
+	}
+	return out
+}
+
+fn inc(x i64) i64 {
+	return x + 1
+}
+
+fn main() {
+	let c = Celsius(100.0)
+	say.Line("celsius", c.F(), c.Warmer(1.5), Celsius(0.0).F())
+	say.Line("cents", Cents(1999).String(), show([]Cents{5, 250}))
+	say.Line("name", Name("ann").Greet())
+	mut ids IDs = []i64{1, 2}
+	ids.Add(3)
+	say.Line("ids", ids.Sum(), ids)
+	mut t Tally = map[str]i64{}
+	t.Bump("a")
+	t.Bump("a")
+	say.Line("tally", t)
+	let op Op = inc
+	say.Line("op", op.Twice(5))
+	let f = c.F
+	let g = ids.Sum
+	say.Line("values", f(), g())
+	mut names = []Name{"bo", "al"}
+	sift.SortFunc(mut names, fn(a Name, b Name) i64 {
+		if a < b {
+			return -1
+		}
+		return 1
+	})
+	say.Line("sorted", names, names[0].Greet())
+}
