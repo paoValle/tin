@@ -1,0 +1,76 @@
+package main
+
+// lasso: the patterns the parser refuses, with the byte offset, and the compile limits. These
+// are faults, not compile diagnostics, so this is a runtime test (lasso_faults, not lasso_bad:
+// the suite reserves *_bad for negative compilation tests and their .err files).
+
+import "say"
+import "lasso"
+
+fn main() {
+	let bad = []str{
+		// Backreferences and lookaround need backtracking.
+		`(a)\1`,
+		`(?=a)`,
+		`(?!a)`,
+		`(?<=a)`,
+		`(?<!a)`,
+		// Classes.
+		`[a`,
+		`[^]`,
+		`[z-a]`,
+		`[a-\d]`,
+		`[[:foo:]]`,
+		`\p{Nope}`,
+		// Escapes.
+		`\q`,
+		`\0`,
+		`\x`,
+		`\x{}`,
+		`\x{110000}`,
+		`a\`,
+		`\C`,
+		// Repetition.
+		`*a`,
+		`+a`,
+		`?a`,
+		`a**`,
+		`a{2,1}`,
+		`a{1001}`,
+		// Groups.
+		`(?P<name>a`,
+		`(?P<>a)`,
+		`(?x)a`,
+		`(?i`,
+		`a)`,
+		`(`,
+		`)`,
+		// Limits: 1000 repeats is fine, 1001 is not; 1200 nested groups are too deep.
+		`a{1000}`,
+		repeat(`(`, 1200) + `a` + repeat(`)`, 1200),
+	}
+	for _, p in bad {
+		let re = lasso.Compile(p) catch err {
+			say.Line("bad", short(p), err)
+			continue
+		}
+		say.Line("ok", short(p), re.String())
+	}
+}
+
+// short keeps a long pattern out of the output.
+fn short(p str) str {
+	if len(p) <= 40 {
+		return p
+	}
+	return p[0:16] + "..." + p[len(p)-8:len(p)]
+}
+
+// repeat concatenates s n times.
+fn repeat(s str, n i64) str {
+	mut out = ""
+	for i in 0..n {
+		out += s
+	}
+	return out
+}

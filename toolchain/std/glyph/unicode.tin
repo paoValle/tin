@@ -28,6 +28,30 @@ fn inRanges(data str, r i64) bool {
 	return false
 }
 
+// TableRanges returns the table's code points as low, high pairs, with strides expanded, for a
+// caller that builds its own classes (lasso's \p{...}).
+fn TableRanges(t Table) []i64 {
+	let data = tableData(t)
+	mut out = []i64{}
+	mut i = 0
+	for i+8 <= len(data) {
+		let lo = rd3(data, i)
+		let hi = rd3(data, i+3)
+		let stride = i64(data[i+6]) | i64(data[i+7])<<8
+		if stride <= 1 {
+			out = append(out, lo, hi)
+		} else {
+			mut r = lo
+			for r <= hi {
+				out = append(out, r, r)
+				r += stride
+			}
+		}
+		i += 8
+	}
+	return out
+}
+
 // Is reports whether r is in the set t.
 fn Is(t Table, r i32) bool {
 	return inRanges(tableData(t), i64(r))

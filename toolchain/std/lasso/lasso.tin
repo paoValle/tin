@@ -1,0 +1,398 @@
+package lasso
+
+// Package lasso is regular expressions with linear-time matching: RE2 syntax and the RE2
+// guarantee, like Go's regexp. A pattern is parsed into a syntax tree, simplified and compiled
+// into a program for a Pike VM, which tracks the capture slots of every thread at once, so a
+// hostile pattern or input cannot make matching take longer than a fixed multiple of the input.
+// Backreferences and lookaround, which need backtracking, are refused with the byte offset.
+//
+//	re := lasso.MustCompile(`(?P<key>\w+)=(?P<val>[^&]*)`)
+//	if re.Match("a=b") {
+//		let m = re.Find("a=b")
+//		say.Line(m.Start, m.End)
+//	}
+//
+// Offsets are byte offsets into the UTF-8 input. A compiled Regexp is immutable and can be
+// stored in a global; matching allocates its VM state per call and never per input byte.
+//
+// This is the first step of #571: the syntax, the compiler, the VM and the API above. The
+// literal-prefix scan, the one-pass and DFA fast paths and the per-core scratch reuse are
+// follow-ups, and the package comment says so.
+
+import "fault"
+import "say"
+
+// Match is one match's byte offsets: Start is the first byte and End is one past the last.
+type Match struct {
+	Start i64
+	End   i64
+}
+
+// Regexp is a compiled pattern.
+type Regexp struct {
+	p       prog
+	pattern str
+}
+
+// Compile parses and compiles pattern, like Go's regexp.Compile. A bad pattern fails with a
+// fault naming the byte offset.
+fn Compile(pattern str) !Regexp {
+	let pr = try parse(pattern)
+	let simple = simplify(pr.re)
+	let p = compileProg(simple, pr.names, pr.ngroup)
+	return Regexp{p: keep(p), pattern: keep(pattern)}
+}
+
+// MustCompile is Compile for a pattern that must be valid (a package-level global, say): it
+// panics when the pattern is bad.
+fn MustCompile(pattern str) Regexp {
+	let re = Compile(pattern) catch err {
+		panic(say.Fmt("%s", err))
+	}
+	return re
+}
+
+// String returns the pattern the Regexp was compiled from.
+fn (re Regexp) String() str {
+	return re.pattern
+}
+
+// NumSubexp returns the number of capturing groups, like Go's NumSubexp.
+fn (re Regexp) NumSubexp() i64 {
+	return re.p.ncap/2 - 1
+}
+
+// Named returns the group index of a named capture, or -1, like Go's SubexpIndex.
+fn (re Regexp) Named(name str) i64 {
+	let (i, ok) = re.p.names[name]
+	if !ok {
+		return -1
+	}
+	return i
+}
+
+// find runs the machine over s from pos and returns the capture slots, or an empty slice.
+fn (re Regexp) find(s str, pos i64) []i64 {
+	mut m = newMachine(re.p)
+	if !m.run(s, pos) {
+		return []i64{}
+	}
+	return m.matchcap
+}
+
+// Match reports whether the pattern matches anywhere in s.
+fn (re Regexp) Match(s str) bool {
+	mut m = newMachine(re.p)
+	return m.run(s, 0)
+}
+
+// Find returns the byte offsets of the leftmost match, like Go's FindStringIndex.
+fn (re Regexp) Find(s str) (i64, i64, bool) {
+	let m = re.find(s, 0)
+	if len(m) == 0 {
+		return 0, 0, false
+	}
+	return m[0], m[1], true
+}
+
+// FindAll returns up to n matches (n < 0 for all), like Go's FindAllStringIndex.
+fn (re Regexp) FindAll(s str, n i64) []Match {
+	mut out = []Match{}
+	mut pos = i64(0)
+	mut prevEnd = i64(-1)
+	mut i = i64(0)
+	for i < n || n < 0 {
+		if pos > i64(len(s)) {
+			break
+		}
+		let m = re.find(s, pos)
+		if len(m) == 0 {
+			break
+		}
+		mut accept = true
+		if m[1] == m[0] {
+			// An empty match: skip it when it starts where the last one ended, and step over one
+			// rune so the search advances (Go's allMatches).
+			if m[0] == prevEnd {
+				accept = false
+			}
+			if m[0] >= i64(len(s)) {
+				if accept {
+					out = append(out, Match{Start: m[0], End: m[1]})
+					i += 1
+				}
+				break
+			}
+			let (_, size) = decodeAt(s, m[0])
+			pos = m[0] + size
+		} else {
+			pos = m[1]
+		}
+		prevEnd = m[1]
+		if accept {
+			out = append(out, Match{Start: m[0], End: m[1]})
+			i += 1
+		}
+	}
+	return out
+}
+
+// FindAllSubmatchIndex returns up to n matches (n < 0 for all) with their groups, flattened:
+// 2*(groups+1) offsets per match, -1 for a group that did not take part, like Go's
+// FindAllStringSubmatchIndex.
+fn (re Regexp) FindAllSubmatchIndex(s str, n i64) []i64 {
+	mut out = []i64{}
+	mut pos = i64(0)
+	mut prevEnd = i64(-1)
+	mut i = i64(0)
+	for i < n || n < 0 {
+		if pos > i64(len(s)) {
+			break
+		}
+		let m = re.find(s, pos)
+		if len(m) == 0 {
+			break
+		}
+		mut accept = true
+		if m[1] == m[0] {
+			if m[0] == prevEnd {
+				accept = false
+			}
+			if m[0] >= i64(len(s)) {
+				if accept {
+					for _, v in m {
+						out = append(out, v)
+					}
+					i += 1
+				}
+				break
+			}
+			let (_, size) = decodeAt(s, m[0])
+			pos = m[0] + size
+		} else {
+			pos = m[1]
+		}
+		prevEnd = m[1]
+		if accept {
+			for _, v in m {
+				out = append(out, v)
+			}
+			i += 1
+		}
+	}
+	return out
+}
+
+// SubmatchIndex returns the byte offsets of the leftmost match and its groups: 2*(n+1) values,
+// -1 for a group that did not take part, like Go's FindStringSubmatchIndex.
+fn (re Regexp) SubmatchIndex(s str) []i64 {
+	return re.find(s, 0)
+}
+
+// Submatch returns the text of the leftmost match and its groups, nil for a group that did not
+// take part, like Go's FindStringSubmatch.
+fn (re Regexp) Submatch(s str) []?str {
+	let m = re.find(s, 0)
+	mut out = []?str{}
+	if len(m) == 0 {
+		return out
+	}
+	mut i = 0
+	for i+1 < len(m) {
+		if m[i] < 0 || m[i+1] < 0 {
+			out = append(out, nil)
+		} else {
+			out = append(out, s[m[i]:m[i+1]])
+		}
+		i += 2
+	}
+	return out
+}
+
+// Replace returns a copy of s with every match replaced by tmpl, where $1, ${name} and $$ are
+// expanded, like Go's ReplaceAllString.
+fn (re Regexp) Replace(s str, tmpl str) str {
+	mut out = ""
+	mut pos = i64(0)
+	mut prevEnd = i64(-1)
+	for {
+		if pos > i64(len(s)) {
+			break
+		}
+		let m = re.find(s, pos)
+		if len(m) == 0 {
+			break
+		}
+		out += s[pos:m[0]]
+		out += expand(re, tmpl, s, m)
+		if m[1] == m[0] {
+			if m[0] >= i64(len(s)) {
+				pos = m[0]
+				prevEnd = m[1]
+				break
+			}
+			let (_, size) = decodeAt(s, m[0])
+			out += s[m[0]:m[0]+size]
+			pos = m[0] + size
+		} else {
+			pos = m[1]
+		}
+		prevEnd = m[1]
+	}
+	if pos <= i64(len(s)) {
+		out += s[pos:]
+	}
+	return out
+}
+
+// ReplaceFunc returns a copy of s with every match replaced by f(match), like Go's
+// ReplaceAllStringFunc.
+fn (re Regexp) ReplaceFunc(s str, f fn(str) str) str {
+	mut out = ""
+	mut pos = i64(0)
+	for {
+		if pos > i64(len(s)) {
+			break
+		}
+		let m = re.find(s, pos)
+		if len(m) == 0 {
+			break
+		}
+		out += s[pos:m[0]]
+		out += f(s[m[0]:m[1]])
+		if m[1] == m[0] {
+			if m[0] >= i64(len(s)) {
+				pos = m[0]
+				break
+			}
+			let (_, size) = decodeAt(s, m[0])
+			out += s[m[0]:m[0]+size]
+			pos = m[0] + size
+		} else {
+			pos = m[1]
+		}
+	}
+	if pos <= i64(len(s)) {
+		out += s[pos:]
+	}
+	return out
+}
+
+// Split slices s around every match, like Go's Split: n < 0 returns every piece, n == 0 returns
+// nothing, and n > 0 at most n pieces.
+fn (re Regexp) Split(s str, n i64) []str {
+	if n == 0 {
+		return []str{}
+	}
+	if len(re.pattern) > 0 && len(s) == 0 {
+		return []str{""}
+	}
+	let matches = re.FindAll(s, n)
+	mut out = []str{}
+	mut beg = i64(0)
+	mut end = i64(0)
+	for _, hit in matches {
+		if n > 0 && i64(len(out)) >= n-1 {
+			break
+		}
+		end = hit.Start
+		if hit.End != 0 {
+			out = append(out, s[beg:end])
+		}
+		beg = hit.End
+	}
+	if end != i64(len(s)) {
+		out = append(out, s[beg:])
+	}
+	return out
+}
+
+// QuoteMeta returns s with the metacharacters escaped, like Go's QuoteMeta.
+fn QuoteMeta(s str) str {
+	mut out = ""
+	for i in 0..len(s) {
+		let c = s[i]
+		if c == '\\' || c == '.' || c == '+' || c == '*' || c == '?' || c == '(' || c == ')' ||
+			c == '|' || c == '[' || c == ']' || c == '{' || c == '}' || c == '^' || c == '$' {
+			out += "\\"
+		}
+		out += s[i:i+1]
+	}
+	return out
+}
+
+// expand expands one replacement template for a match, Go's expand.
+fn expand(re Regexp, tmpl str, s str, m []i64) str {
+	mut out = ""
+	mut i = 0
+	for i < len(tmpl) {
+		let c = tmpl[i]
+		if c != '$' {
+			out += tmpl[i:i+1]
+			i += 1
+			continue
+		}
+		i += 1
+		if i >= len(tmpl) {
+			out += "$"
+			break
+		}
+		if tmpl[i] == '$' {
+			out += "$"
+			i += 1
+			continue
+		}
+		mut name = ""
+		mut num = i64(-1)
+		if tmpl[i] == '{' {
+			let start = i + 1
+			mut j = start
+			for j < len(tmpl) && tmpl[j] != '}' {
+				j += 1
+			}
+			if j >= len(tmpl) {
+				out += "$"
+				continue
+			}
+			name = tmpl[start:j]
+			i = j + 1
+		} else {
+			let start = i
+			mut j = i
+			for j < len(tmpl) && (tmpl[j] == '_' || tmpl[j] >= 'a' && tmpl[j] <= 'z' ||
+				tmpl[j] >= 'A' && tmpl[j] <= 'Z' || tmpl[j] >= '0' && tmpl[j] <= '9') {
+				j += 1
+			}
+			if j == start {
+				out += "$"
+				continue
+			}
+			name = tmpl[start:j]
+			i = j
+		}
+		mut slot = i64(-1)
+		if len(name) > 0 && name[0] >= '0' && name[0] <= '9' {
+			mut v i64 = 0
+			mut ok = true
+			for k in 0..len(name) {
+				if name[k] < '0' || name[k] > '9' {
+					ok = false
+				} else {
+					v = v*10 + i64(name[k]) - '0'
+				}
+			}
+			if ok {
+				slot = v
+			}
+		} else {
+			let (v, have) = re.p.names[name]
+			if have {
+				slot = v
+			}
+		}
+		if slot >= 0 && 2*slot+1 < len(m) && m[2*slot] >= 0 && m[2*slot+1] >= 0 {
+			out += s[m[2*slot]:m[2*slot+1]]
+		}
+	}
+	return out
+}

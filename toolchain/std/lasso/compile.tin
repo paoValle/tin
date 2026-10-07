@@ -1,0 +1,349 @@
+package lasso
+
+// The syntax tree to program compiler, following Go's regexp/syntax compile.go: fragments with
+// patch lists, one instruction per node. The program is what the Pike VM runs.
+
+import "glyph"
+
+// Instruction ops.
+const instFail = 0
+const instNop = 1
+const instAlt = 2
+const instCapture = 3
+const instEmptyWidth = 4
+const instRune = 5
+const instMatch = 6
+
+// Empty-width conditions (Go's syntax.EmptyOp).
+const emptyBeginLine = 1
+const emptyEndLine = 2
+const emptyBeginText = 4
+const emptyEndText = 8
+const emptyWordBoundary = 16
+const emptyNoWordBoundary = 32
+
+// class is one InstRune's rune set: low, high pairs, and whether it matches case-insensitively.
+type class struct {
+	runes []i64
+	fold  bool
+}
+
+// inst is one program instruction.
+type inst struct {
+	op  i64
+	out i64
+	arg i64
+}
+
+// prog is a compiled program.
+type prog struct {
+	insts   []inst
+	classes []class
+	start   i64
+	ncap    i64
+	names   map[str]i64
+}
+
+// frag is a compiled fragment: its entry instruction and the patch list of its exits.
+type frag struct {
+	i        i64
+	out      []i64
+	nullable bool
+}
+
+// compiler is the compile state.
+type compiler struct {
+	p prog
+}
+
+// compileProg compiles a simplified tree into a program.
+fn compileProg(re regexp, names map[str]i64, ngroup i64) prog {
+	mut c = compiler{p: prog{insts: []inst{}, classes: []class{}, start: 0, ncap: 2, names: names}}
+	c.p.insts = append(c.p.insts, inst{op: instFail, out: 0, arg: 0})
+	let f = c.compile(re)
+	c.patch(f.out, c.inst(instMatch).i)
+	c.p.start = f.i
+	if c.p.ncap < 2*(ngroup+1) {
+		c.p.ncap = 2 * (ngroup + 1)
+	}
+	return c.p
+}
+
+// inst appends an instruction.
+fn (c mut compiler) inst(op i64) frag {
+	let f = frag{i: i64(len(c.p.insts)), out: []i64{}, nullable: true}
+	c.p.insts = append(c.p.insts, inst{op: op, out: 0, arg: 0})
+	return f
+}
+
+// patch sets every patch-list slot to val.
+fn (c mut compiler) patch(l []i64, val i64) {
+	for _, p in l {
+		if p&1 == 0 {
+			c.p.insts[p>>1].out = val
+		} else {
+			c.p.insts[p>>1].arg = val
+		}
+	}
+}
+
+// appendPatch chains l2 after l1.
+fn (c mut compiler) appendPatch(l1 []i64, l2 []i64) []i64 {
+	if len(l1) == 0 {
+		return l2
+	}
+	if len(l2) == 0 {
+		return l1
+	}
+	let last = l1[len(l1)-1]
+	if last&1 == 0 {
+		c.p.insts[last>>1].out = l2[0]
+	} else {
+		c.p.insts[last>>1].arg = l2[0]
+	}
+	mut out = l1
+	for _, p in l2 {
+		out = append(out, p)
+	}
+	return out
+}
+
+// compile compiles one node.
+fn (c mut compiler) compile(re regexp) frag {
+	if re.op == opNoMatch {
+		return frag{i: 0, out: []i64{}, nullable: false}
+	}
+	if re.op == opEmptyMatch {
+		return c.nop()
+	}
+	if re.op == opLiteral {
+		if len(re.runes) == 0 {
+			return c.nop()
+		}
+		mut f = frag{}
+		for j in 0..len(re.runes)/2 {
+			let f1 = c.rune([]i64{re.runes[2*j], re.runes[2*j+1]}, re.flags)
+			if j == 0 {
+				f = f1
+			} else {
+				f = c.cat(f, f1)
+			}
+		}
+		return f
+	}
+	if re.op == opCharClass {
+		return c.rune(re.runes, re.flags)
+	}
+	if re.op == opAnyCharNotNL {
+		return c.rune([]i64{0, 9, 11, 0x10FFFF}, 0)
+	}
+	if re.op == opAnyChar {
+		return c.rune([]i64{0, 0x10FFFF}, 0)
+	}
+	if re.op == opBeginLine {
+		return c.empty(emptyBeginLine)
+	}
+	if re.op == opEndLine {
+		return c.empty(emptyEndLine)
+	}
+	if re.op == opBeginText {
+		return c.empty(emptyBeginText)
+	}
+	if re.op == opEndText {
+		return c.empty(emptyEndText)
+	}
+	if re.op == opWordBoundary {
+		return c.empty(emptyWordBoundary)
+	}
+	if re.op == opNoWordBoundary {
+		return c.empty(emptyNoWordBoundary)
+	}
+	if re.op == opCapture {
+		let bra = c.cap(re.cap * 2)
+		let sub = c.compile(re.sub[0])
+		let ket = c.cap(re.cap*2 + 1)
+		return c.cat(c.cat(bra, sub), ket)
+	}
+	if re.op == opStar {
+		return c.star(c.compile(re.sub[0]), re.flags&nonGreedy != 0)
+	}
+	if re.op == opPlus {
+		return c.plus(c.compile(re.sub[0]), re.flags&nonGreedy != 0)
+	}
+	if re.op == opQuest {
+		return c.quest(c.compile(re.sub[0]), re.flags&nonGreedy != 0)
+	}
+	if re.op == opRepeat {
+		// x{n,m}: n copies then (m-n) optional copies (m == -1 means unbounded).
+		let min = re.min
+		let max = re.max
+		mut f = frag{}
+		mut i = i64(0)
+		for i < min {
+			let f1 = c.compile(re.sub[0])
+			if i == 0 {
+				f = f1
+			} else {
+				f = c.cat(f, f1)
+			}
+			i += 1
+		}
+		mut rest = frag{i: 0, out: []i64{}, nullable: true}
+		if max < 0 {
+			let f1 = c.star(c.compile(re.sub[0]), re.flags&nonGreedy != 0)
+			rest = f1
+		} else {
+			mut j = min
+			mut acc = frag{i: 0, out: []i64{}, nullable: true}
+			for j < max {
+				let f1 = c.quest(c.compile(re.sub[0]), re.flags&nonGreedy != 0)
+				if j == min {
+					acc = f1
+				} else {
+					acc = c.cat(acc, f1)
+				}
+				j += 1
+			}
+			rest = acc
+		}
+		if min == 0 {
+			return rest
+		}
+		return c.cat(f, rest)
+	}
+	if re.op == opConcat {
+		if len(re.sub) == 0 {
+			return c.nop()
+		}
+		mut f = frag{}
+		for i in 0..len(re.sub) {
+			if i == 0 {
+				f = c.compile(re.sub[i])
+			} else {
+				f = c.cat(f, c.compile(re.sub[i]))
+			}
+		}
+		return f
+	}
+	if re.op == opAlternate {
+		mut f = frag{i: 0, out: []i64{}, nullable: false}
+		for _, sub in re.sub {
+			f = c.alt(f, c.compile(sub))
+		}
+		return f
+	}
+	// Unreachable.
+	return c.nop()
+}
+
+// nop makes an InstNop.
+fn (c mut compiler) nop() frag {
+	mut f = c.inst(instNop)
+	f.out = []i64{f.i << 1}
+	return f
+}
+
+// cap makes an InstCapture for slot arg.
+fn (c mut compiler) cap(arg i64) frag {
+	mut f = c.inst(instCapture)
+	f.out = []i64{f.i << 1}
+	c.p.insts[f.i].arg = arg
+	if c.p.ncap < arg+1 {
+		c.p.ncap = arg + 1
+	}
+	return f
+}
+
+// cat chains f2 after f1.
+fn (c mut compiler) cat(f1 frag, f2 frag) frag {
+	if f1.i == 0 || f2.i == 0 {
+		return frag{i: 0, out: []i64{}, nullable: false}
+	}
+	c.patch(f1.out, f2.i)
+	return frag{i: f1.i, out: f2.out, nullable: f1.nullable && f2.nullable}
+}
+
+// alt joins two alternatives.
+fn (c mut compiler) alt(f1 frag, f2 frag) frag {
+	if f1.i == 0 {
+		return f2
+	}
+	if f2.i == 0 {
+		return f1
+	}
+	let f = c.inst(instAlt)
+	c.p.insts[f.i].out = f1.i
+	c.p.insts[f.i].arg = f2.i
+	mut out = c.appendPatch(f1.out, f2.out)
+	return frag{i: f.i, out: out, nullable: f1.nullable || f2.nullable}
+}
+
+// quest makes f1 optional.
+fn (c mut compiler) quest(f1 frag, nongreedy bool) frag {
+	let f = c.inst(instAlt)
+	if nongreedy {
+		c.p.insts[f.i].arg = f1.i
+	} else {
+		c.p.insts[f.i].out = f1.i
+	}
+	mut out = []i64{}
+	if nongreedy {
+		out = []i64{f.i << 1}
+	} else {
+		out = []i64{f.i<<1 | 1}
+	}
+	out = c.appendPatch(out, f1.out)
+	return frag{i: f.i, out: out, nullable: true}
+}
+
+// loop makes the main loop of a plus or star.
+fn (c mut compiler) loop(f1 frag, nongreedy bool) frag {
+	let f = c.inst(instAlt)
+	if nongreedy {
+		c.p.insts[f.i].arg = f1.i
+	} else {
+		c.p.insts[f.i].out = f1.i
+	}
+	mut out = []i64{}
+	if nongreedy {
+		out = []i64{f.i << 1}
+	} else {
+		out = []i64{f.i<<1 | 1}
+	}
+	c.patch(f1.out, f.i)
+	return frag{i: f.i, out: out, nullable: true}
+}
+
+// star makes f1*.
+fn (c mut compiler) star(f1 frag, nongreedy bool) frag {
+	if f1.nullable {
+		// (f1+)? keeps the priority order right (Go's issue 46123).
+		return c.quest(c.plus(f1, nongreedy), nongreedy)
+	}
+	return c.loop(f1, nongreedy)
+}
+
+// plus makes f1+.
+fn (c mut compiler) plus(f1 frag, nongreedy bool) frag {
+	let l = c.loop(f1, nongreedy)
+	return frag{i: f1.i, out: l.out, nullable: f1.nullable}
+}
+
+// empty makes an empty-width instruction.
+fn (c mut compiler) empty(op i64) frag {
+	mut f = c.inst(instEmptyWidth)
+	c.p.insts[f.i].arg = op
+	f.out = []i64{f.i << 1}
+	return f
+}
+
+// rune makes an InstRune matching the rune pairs, with case folding when the flags say so. The
+// matcher folds: a folded class also matches any rune in the input rune's simple-fold orbit.
+fn (c mut compiler) rune(runes []i64, flags i64) frag {
+	mut f = c.inst(instRune)
+	f.nullable = false
+	c.p.classes = append(c.p.classes, class{runes: runes, fold: flags&foldCase != 0})
+	c.p.insts[f.i].arg = i64(len(c.p.classes) - 1)
+	f.out = []i64{f.i << 1}
+	return f
+}

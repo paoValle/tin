@@ -246,6 +246,721 @@ type Table enum {
 	White_Space
 }
 
+// TableOf returns the table with a Unicode name: a general category (Lu, Nd, P), a script
+// (Latin, Han, Arabic) or a property (White_Space, Dash). It returns nil for a name with no
+// table, so a pattern like \p{Greek} can be refused.
+fn TableOf(name str) ?Table {
+	if name == "C" {
+		return Table.C
+	}
+	if name == "Cc" {
+		return Table.Cc
+	}
+	if name == "Cf" {
+		return Table.Cf
+	}
+	if name == "Cn" {
+		return Table.Cn
+	}
+	if name == "Co" {
+		return Table.Co
+	}
+	if name == "Cs" {
+		return Table.Cs
+	}
+	if name == "L" {
+		return Table.L
+	}
+	if name == "LC" {
+		return Table.LC
+	}
+	if name == "Ll" {
+		return Table.Ll
+	}
+	if name == "Lm" {
+		return Table.Lm
+	}
+	if name == "Lo" {
+		return Table.Lo
+	}
+	if name == "Lt" {
+		return Table.Lt
+	}
+	if name == "Lu" {
+		return Table.Lu
+	}
+	if name == "M" {
+		return Table.M
+	}
+	if name == "Mc" {
+		return Table.Mc
+	}
+	if name == "Me" {
+		return Table.Me
+	}
+	if name == "Mn" {
+		return Table.Mn
+	}
+	if name == "N" {
+		return Table.N
+	}
+	if name == "Nd" {
+		return Table.Nd
+	}
+	if name == "Nl" {
+		return Table.Nl
+	}
+	if name == "No" {
+		return Table.No
+	}
+	if name == "P" {
+		return Table.P
+	}
+	if name == "Pc" {
+		return Table.Pc
+	}
+	if name == "Pd" {
+		return Table.Pd
+	}
+	if name == "Pe" {
+		return Table.Pe
+	}
+	if name == "Pf" {
+		return Table.Pf
+	}
+	if name == "Pi" {
+		return Table.Pi
+	}
+	if name == "Po" {
+		return Table.Po
+	}
+	if name == "Ps" {
+		return Table.Ps
+	}
+	if name == "S" {
+		return Table.S
+	}
+	if name == "Sc" {
+		return Table.Sc
+	}
+	if name == "Sk" {
+		return Table.Sk
+	}
+	if name == "Sm" {
+		return Table.Sm
+	}
+	if name == "So" {
+		return Table.So
+	}
+	if name == "Z" {
+		return Table.Z
+	}
+	if name == "Zl" {
+		return Table.Zl
+	}
+	if name == "Zp" {
+		return Table.Zp
+	}
+	if name == "Zs" {
+		return Table.Zs
+	}
+	if name == "Adlam" {
+		return Table.Adlam
+	}
+	if name == "Ahom" {
+		return Table.Ahom
+	}
+	if name == "Anatolian_Hieroglyphs" {
+		return Table.Anatolian_Hieroglyphs
+	}
+	if name == "Arabic" {
+		return Table.Arabic
+	}
+	if name == "Armenian" {
+		return Table.Armenian
+	}
+	if name == "Avestan" {
+		return Table.Avestan
+	}
+	if name == "Balinese" {
+		return Table.Balinese
+	}
+	if name == "Bamum" {
+		return Table.Bamum
+	}
+	if name == "Bassa_Vah" {
+		return Table.Bassa_Vah
+	}
+	if name == "Batak" {
+		return Table.Batak
+	}
+	if name == "Bengali" {
+		return Table.Bengali
+	}
+	if name == "Bhaiksuki" {
+		return Table.Bhaiksuki
+	}
+	if name == "Bopomofo" {
+		return Table.Bopomofo
+	}
+	if name == "Brahmi" {
+		return Table.Brahmi
+	}
+	if name == "Braille" {
+		return Table.Braille
+	}
+	if name == "Buginese" {
+		return Table.Buginese
+	}
+	if name == "Buhid" {
+		return Table.Buhid
+	}
+	if name == "Canadian_Aboriginal" {
+		return Table.Canadian_Aboriginal
+	}
+	if name == "Carian" {
+		return Table.Carian
+	}
+	if name == "Caucasian_Albanian" {
+		return Table.Caucasian_Albanian
+	}
+	if name == "Chakma" {
+		return Table.Chakma
+	}
+	if name == "Cham" {
+		return Table.Cham
+	}
+	if name == "Cherokee" {
+		return Table.Cherokee
+	}
+	if name == "Chorasmian" {
+		return Table.Chorasmian
+	}
+	if name == "Common" {
+		return Table.Common
+	}
+	if name == "Coptic" {
+		return Table.Coptic
+	}
+	if name == "Cuneiform" {
+		return Table.Cuneiform
+	}
+	if name == "Cypriot" {
+		return Table.Cypriot
+	}
+	if name == "Cypro_Minoan" {
+		return Table.Cypro_Minoan
+	}
+	if name == "Cyrillic" {
+		return Table.Cyrillic
+	}
+	if name == "Deseret" {
+		return Table.Deseret
+	}
+	if name == "Devanagari" {
+		return Table.Devanagari
+	}
+	if name == "Dives_Akuru" {
+		return Table.Dives_Akuru
+	}
+	if name == "Dogra" {
+		return Table.Dogra
+	}
+	if name == "Duployan" {
+		return Table.Duployan
+	}
+	if name == "Egyptian_Hieroglyphs" {
+		return Table.Egyptian_Hieroglyphs
+	}
+	if name == "Elbasan" {
+		return Table.Elbasan
+	}
+	if name == "Elymaic" {
+		return Table.Elymaic
+	}
+	if name == "Ethiopic" {
+		return Table.Ethiopic
+	}
+	if name == "Georgian" {
+		return Table.Georgian
+	}
+	if name == "Glagolitic" {
+		return Table.Glagolitic
+	}
+	if name == "Gothic" {
+		return Table.Gothic
+	}
+	if name == "Grantha" {
+		return Table.Grantha
+	}
+	if name == "Greek" {
+		return Table.Greek
+	}
+	if name == "Gujarati" {
+		return Table.Gujarati
+	}
+	if name == "Gunjala_Gondi" {
+		return Table.Gunjala_Gondi
+	}
+	if name == "Gurmukhi" {
+		return Table.Gurmukhi
+	}
+	if name == "Han" {
+		return Table.Han
+	}
+	if name == "Hangul" {
+		return Table.Hangul
+	}
+	if name == "Hanifi_Rohingya" {
+		return Table.Hanifi_Rohingya
+	}
+	if name == "Hanunoo" {
+		return Table.Hanunoo
+	}
+	if name == "Hatran" {
+		return Table.Hatran
+	}
+	if name == "Hebrew" {
+		return Table.Hebrew
+	}
+	if name == "Hiragana" {
+		return Table.Hiragana
+	}
+	if name == "Imperial_Aramaic" {
+		return Table.Imperial_Aramaic
+	}
+	if name == "Inherited" {
+		return Table.Inherited
+	}
+	if name == "Inscriptional_Pahlavi" {
+		return Table.Inscriptional_Pahlavi
+	}
+	if name == "Inscriptional_Parthian" {
+		return Table.Inscriptional_Parthian
+	}
+	if name == "Javanese" {
+		return Table.Javanese
+	}
+	if name == "Kaithi" {
+		return Table.Kaithi
+	}
+	if name == "Kannada" {
+		return Table.Kannada
+	}
+	if name == "Katakana" {
+		return Table.Katakana
+	}
+	if name == "Kawi" {
+		return Table.Kawi
+	}
+	if name == "Kayah_Li" {
+		return Table.Kayah_Li
+	}
+	if name == "Kharoshthi" {
+		return Table.Kharoshthi
+	}
+	if name == "Khitan_Small_Script" {
+		return Table.Khitan_Small_Script
+	}
+	if name == "Khmer" {
+		return Table.Khmer
+	}
+	if name == "Khojki" {
+		return Table.Khojki
+	}
+	if name == "Khudawadi" {
+		return Table.Khudawadi
+	}
+	if name == "Lao" {
+		return Table.Lao
+	}
+	if name == "Latin" {
+		return Table.Latin
+	}
+	if name == "Lepcha" {
+		return Table.Lepcha
+	}
+	if name == "Limbu" {
+		return Table.Limbu
+	}
+	if name == "Linear_A" {
+		return Table.Linear_A
+	}
+	if name == "Linear_B" {
+		return Table.Linear_B
+	}
+	if name == "Lisu" {
+		return Table.Lisu
+	}
+	if name == "Lycian" {
+		return Table.Lycian
+	}
+	if name == "Lydian" {
+		return Table.Lydian
+	}
+	if name == "Mahajani" {
+		return Table.Mahajani
+	}
+	if name == "Makasar" {
+		return Table.Makasar
+	}
+	if name == "Malayalam" {
+		return Table.Malayalam
+	}
+	if name == "Mandaic" {
+		return Table.Mandaic
+	}
+	if name == "Manichaean" {
+		return Table.Manichaean
+	}
+	if name == "Marchen" {
+		return Table.Marchen
+	}
+	if name == "Masaram_Gondi" {
+		return Table.Masaram_Gondi
+	}
+	if name == "Medefaidrin" {
+		return Table.Medefaidrin
+	}
+	if name == "Meetei_Mayek" {
+		return Table.Meetei_Mayek
+	}
+	if name == "Mende_Kikakui" {
+		return Table.Mende_Kikakui
+	}
+	if name == "Meroitic_Cursive" {
+		return Table.Meroitic_Cursive
+	}
+	if name == "Meroitic_Hieroglyphs" {
+		return Table.Meroitic_Hieroglyphs
+	}
+	if name == "Miao" {
+		return Table.Miao
+	}
+	if name == "Modi" {
+		return Table.Modi
+	}
+	if name == "Mongolian" {
+		return Table.Mongolian
+	}
+	if name == "Mro" {
+		return Table.Mro
+	}
+	if name == "Multani" {
+		return Table.Multani
+	}
+	if name == "Myanmar" {
+		return Table.Myanmar
+	}
+	if name == "Nabataean" {
+		return Table.Nabataean
+	}
+	if name == "Nag_Mundari" {
+		return Table.Nag_Mundari
+	}
+	if name == "Nandinagari" {
+		return Table.Nandinagari
+	}
+	if name == "New_Tai_Lue" {
+		return Table.New_Tai_Lue
+	}
+	if name == "Newa" {
+		return Table.Newa
+	}
+	if name == "Nko" {
+		return Table.Nko
+	}
+	if name == "Nushu" {
+		return Table.Nushu
+	}
+	if name == "Nyiakeng_Puachue_Hmong" {
+		return Table.Nyiakeng_Puachue_Hmong
+	}
+	if name == "Ogham" {
+		return Table.Ogham
+	}
+	if name == "Ol_Chiki" {
+		return Table.Ol_Chiki
+	}
+	if name == "Old_Hungarian" {
+		return Table.Old_Hungarian
+	}
+	if name == "Old_Italic" {
+		return Table.Old_Italic
+	}
+	if name == "Old_North_Arabian" {
+		return Table.Old_North_Arabian
+	}
+	if name == "Old_Permic" {
+		return Table.Old_Permic
+	}
+	if name == "Old_Persian" {
+		return Table.Old_Persian
+	}
+	if name == "Old_Sogdian" {
+		return Table.Old_Sogdian
+	}
+	if name == "Old_South_Arabian" {
+		return Table.Old_South_Arabian
+	}
+	if name == "Old_Turkic" {
+		return Table.Old_Turkic
+	}
+	if name == "Old_Uyghur" {
+		return Table.Old_Uyghur
+	}
+	if name == "Oriya" {
+		return Table.Oriya
+	}
+	if name == "Osage" {
+		return Table.Osage
+	}
+	if name == "Osmanya" {
+		return Table.Osmanya
+	}
+	if name == "Pahawh_Hmong" {
+		return Table.Pahawh_Hmong
+	}
+	if name == "Palmyrene" {
+		return Table.Palmyrene
+	}
+	if name == "Pau_Cin_Hau" {
+		return Table.Pau_Cin_Hau
+	}
+	if name == "Phags_Pa" {
+		return Table.Phags_Pa
+	}
+	if name == "Phoenician" {
+		return Table.Phoenician
+	}
+	if name == "Psalter_Pahlavi" {
+		return Table.Psalter_Pahlavi
+	}
+	if name == "Rejang" {
+		return Table.Rejang
+	}
+	if name == "Runic" {
+		return Table.Runic
+	}
+	if name == "Samaritan" {
+		return Table.Samaritan
+	}
+	if name == "Saurashtra" {
+		return Table.Saurashtra
+	}
+	if name == "Sharada" {
+		return Table.Sharada
+	}
+	if name == "Shavian" {
+		return Table.Shavian
+	}
+	if name == "Siddham" {
+		return Table.Siddham
+	}
+	if name == "SignWriting" {
+		return Table.SignWriting
+	}
+	if name == "Sinhala" {
+		return Table.Sinhala
+	}
+	if name == "Sogdian" {
+		return Table.Sogdian
+	}
+	if name == "Sora_Sompeng" {
+		return Table.Sora_Sompeng
+	}
+	if name == "Soyombo" {
+		return Table.Soyombo
+	}
+	if name == "Sundanese" {
+		return Table.Sundanese
+	}
+	if name == "Syloti_Nagri" {
+		return Table.Syloti_Nagri
+	}
+	if name == "Syriac" {
+		return Table.Syriac
+	}
+	if name == "Tagalog" {
+		return Table.Tagalog
+	}
+	if name == "Tagbanwa" {
+		return Table.Tagbanwa
+	}
+	if name == "Tai_Le" {
+		return Table.Tai_Le
+	}
+	if name == "Tai_Tham" {
+		return Table.Tai_Tham
+	}
+	if name == "Tai_Viet" {
+		return Table.Tai_Viet
+	}
+	if name == "Takri" {
+		return Table.Takri
+	}
+	if name == "Tamil" {
+		return Table.Tamil
+	}
+	if name == "Tangsa" {
+		return Table.Tangsa
+	}
+	if name == "Tangut" {
+		return Table.Tangut
+	}
+	if name == "Telugu" {
+		return Table.Telugu
+	}
+	if name == "Thaana" {
+		return Table.Thaana
+	}
+	if name == "Thai" {
+		return Table.Thai
+	}
+	if name == "Tibetan" {
+		return Table.Tibetan
+	}
+	if name == "Tifinagh" {
+		return Table.Tifinagh
+	}
+	if name == "Tirhuta" {
+		return Table.Tirhuta
+	}
+	if name == "Toto" {
+		return Table.Toto
+	}
+	if name == "Ugaritic" {
+		return Table.Ugaritic
+	}
+	if name == "Vai" {
+		return Table.Vai
+	}
+	if name == "Vithkuqi" {
+		return Table.Vithkuqi
+	}
+	if name == "Wancho" {
+		return Table.Wancho
+	}
+	if name == "Warang_Citi" {
+		return Table.Warang_Citi
+	}
+	if name == "Yezidi" {
+		return Table.Yezidi
+	}
+	if name == "Yi" {
+		return Table.Yi
+	}
+	if name == "Zanabazar_Square" {
+		return Table.Zanabazar_Square
+	}
+	if name == "ASCII_Hex_Digit" {
+		return Table.ASCII_Hex_Digit
+	}
+	if name == "Bidi_Control" {
+		return Table.Bidi_Control
+	}
+	if name == "Dash" {
+		return Table.Dash
+	}
+	if name == "Deprecated" {
+		return Table.Deprecated
+	}
+	if name == "Diacritic" {
+		return Table.Diacritic
+	}
+	if name == "Extender" {
+		return Table.Extender
+	}
+	if name == "Hex_Digit" {
+		return Table.Hex_Digit
+	}
+	if name == "Hyphen" {
+		return Table.Hyphen
+	}
+	if name == "IDS_Binary_Operator" {
+		return Table.IDS_Binary_Operator
+	}
+	if name == "IDS_Trinary_Operator" {
+		return Table.IDS_Trinary_Operator
+	}
+	if name == "Ideographic" {
+		return Table.Ideographic
+	}
+	if name == "Join_Control" {
+		return Table.Join_Control
+	}
+	if name == "Logical_Order_Exception" {
+		return Table.Logical_Order_Exception
+	}
+	if name == "Noncharacter_Code_Point" {
+		return Table.Noncharacter_Code_Point
+	}
+	if name == "Other_Alphabetic" {
+		return Table.Other_Alphabetic
+	}
+	if name == "Other_Default_Ignorable_Code_Point" {
+		return Table.Other_Default_Ignorable_Code_Point
+	}
+	if name == "Other_Grapheme_Extend" {
+		return Table.Other_Grapheme_Extend
+	}
+	if name == "Other_ID_Continue" {
+		return Table.Other_ID_Continue
+	}
+	if name == "Other_ID_Start" {
+		return Table.Other_ID_Start
+	}
+	if name == "Other_Lowercase" {
+		return Table.Other_Lowercase
+	}
+	if name == "Other_Math" {
+		return Table.Other_Math
+	}
+	if name == "Other_Uppercase" {
+		return Table.Other_Uppercase
+	}
+	if name == "Pattern_Syntax" {
+		return Table.Pattern_Syntax
+	}
+	if name == "Pattern_White_Space" {
+		return Table.Pattern_White_Space
+	}
+	if name == "Prepended_Concatenation_Mark" {
+		return Table.Prepended_Concatenation_Mark
+	}
+	if name == "Quotation_Mark" {
+		return Table.Quotation_Mark
+	}
+	if name == "Radical" {
+		return Table.Radical
+	}
+	if name == "Regional_Indicator" {
+		return Table.Regional_Indicator
+	}
+	if name == "STerm" {
+		return Table.STerm
+	}
+	if name == "Sentence_Terminal" {
+		return Table.Sentence_Terminal
+	}
+	if name == "Soft_Dotted" {
+		return Table.Soft_Dotted
+	}
+	if name == "Terminal_Punctuation" {
+		return Table.Terminal_Punctuation
+	}
+	if name == "Unified_Ideograph" {
+		return Table.Unified_Ideograph
+	}
+	if name == "Variation_Selector" {
+		return Table.Variation_Selector
+	}
+	if name == "White_Space" {
+		return Table.White_Space
+	}
+	return nil
+}
+
 // tableData returns the packed ranges of t: 8 bytes each (low, high, stride).
 fn tableData(t Table) str {
 	match t {

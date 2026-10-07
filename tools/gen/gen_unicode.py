@@ -140,6 +140,18 @@ def main():
             w.append("\t%s" % name)
     w.append("}")
     w.append("")
+    w.append("// TableOf returns the table with a Unicode name: a general category (Lu, Nd, P), a script")
+    w.append("// (Latin, Han, Arabic) or a property (White_Space, Dash). It returns nil for a name with no")
+    w.append("// table, so a pattern like \\p{Greek} can be refused.")
+    w.append("fn TableOf(name str) ?Table {")
+    for kind, tabs in groups:
+        for name in names[kind]:
+            w.append('\tif name == "%s" {' % name)
+            w.append("\t\treturn Table.%s" % name)
+            w.append("\t}")
+    w.append("\treturn nil")
+    w.append("}")
+    w.append("")
     w.append("// tableData returns the packed ranges of t: 8 bytes each (low, high, stride).")
     w.append("fn tableData(t Table) str {")
     w.append("\tswitch t {")

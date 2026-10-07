@@ -1,0 +1,61 @@
+package lasso
+
+// Simplification, following Go's regexp/syntax simplify.go: a counted repeat x{n,m} becomes the
+// concat of n copies and m-n nested optional copies (or a star when m is unbounded), so the
+// compiler sees only Star, Plus and Quest.
+
+// simplify rewrites the tree's repeats.
+fn simplify(re regexp) regexp {
+	if re.op == opRepeat {
+		let sub = simplify(re.sub[0])
+		mut subs = []regexp{}
+		for i in 0..re.min {
+			subs = append(subs, sub)
+		}
+		if re.max < 0 {
+			mut star = node(opStar)
+			star.flags = re.flags
+			star.sub = []regexp{sub}
+			subs = append(subs, star)
+		} else {
+			// The optional tail nests to the right, (x(x(x)?)?)?, as Go's simplify builds it.
+			mut opt = node(opEmptyMatch)
+			mut j = re.max - 1
+			for j >= re.min {
+				mut cat = node(opConcat)
+				cat.sub = []regexp{sub, opt}
+				mut q = node(opQuest)
+				q.flags = re.flags
+				q.sub = []regexp{cat}
+				opt = q
+				j -= 1
+			}
+			subs = append(subs, opt)
+		}
+		if len(subs) == 1 {
+			return subs[0]
+		}
+		mut c = node(opConcat)
+		c.sub = subs
+		return c
+	}
+	if re.op == opConcat || re.op == opAlternate {
+		mut out = node(re.op)
+		out.flags = re.flags
+		mut subs = []regexp{}
+		for _, sub in re.sub {
+			subs = append(subs, simplify(sub))
+		}
+		out.sub = subs
+		return out
+	}
+	if re.op == opStar || re.op == opPlus || re.op == opQuest || re.op == opCapture {
+		mut out = node(re.op)
+		out.flags = re.flags
+		out.cap = re.cap
+		out.name = re.name
+		out.sub = []regexp{simplify(re.sub[0])}
+		return out
+	}
+	return re
+}

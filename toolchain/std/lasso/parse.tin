@@ -1,0 +1,984 @@
+package lasso
+
+// The pattern parser and the syntax tree, following Go's regexp/syntax: the tree keeps the
+// original structure, simplify rewrites repeats, and compile turns it into a program for the
+// Pike VM.
+
+import "glyph"
+import "say"
+
+// Ops of the syntax tree, Go's regexp/syntax Ops.
+const opNoMatch = 0
+const opEmptyMatch = 1
+const opLiteral = 2
+const opCharClass = 3
+const opAnyCharNotNL = 4
+const opAnyChar = 5
+const opBeginLine = 6
+const opEndLine = 7
+const opBeginText = 8
+const opEndText = 9
+const opWordBoundary = 10
+const opNoWordBoundary = 11
+const opCapture = 12
+const opStar = 13
+const opPlus = 14
+const opQuest = 15
+const opRepeat = 16
+const opConcat = 17
+const opAlternate = 18
+
+// Flags of the syntax tree, Go's regexp/syntax Flags.
+const foldCase = 1
+const classNL = 2
+const dotNL = 4
+const oneLine = 8
+const nonGreedy = 16
+const perlX = 32
+const unicodeGroups = 64
+
+// perl is Go's syntax.Perl: the default flags of regexp.Compile.
+const perl = classNL | oneLine | perlX | unicodeGroups
+
+// maxRepeat is Go's repeat limit.
+const maxRepeat = 1000
+// maxHeight bounds the nesting depth while parsing.
+const maxHeight = 1000
+
+// regexp is one node of the syntax tree.
+type regexp struct {
+	op    i64
+	flags i64
+	sub   []regexp
+	runes []i64
+	min   i64
+	max   i64
+	cap   i64
+	name  str
+}
+
+// node makes a leaf node.
+fn node(op i64) regexp {
+	return regexp{op: op, flags: 0, sub: []regexp{}, runes: []i64{}, min: 0, max: 0, cap: 0, name: ""}
+}
+
+// literalNode makes a literal node with one rune, folded when the flags say so.
+fn literalNode(r i32, flags i64) regexp {
+	mut n = node(opLiteral)
+	mut v = r
+	if flags&foldCase != 0 {
+		v = glyph.SimpleFold(r)
+	}
+	n.runes = []i64{i64(v), i64(v)}
+	n.flags = flags & foldCase
+	return n
+}
+
+// parser is the pattern parser's state.
+type parser struct {
+	pattern str
+	pos     i64
+	flags   i64
+	stack   []i64
+	names   map[str]i64
+	ngroup  i64
+	height  i64
+}
+
+// parsed is a parsed pattern: its tree, the named captures and the group count.
+type parsed struct {
+	re     regexp
+	names  map[str]i64
+	ngroup i64
+}
+
+// parse parses a pattern into the syntax tree with Go's default Perl flags.
+fn parse(pattern str) !parsed {
+	mut p = parser{pattern: pattern, pos: 0, flags: perl, stack: []i64{}, names: map[str]i64{}, ngroup: 0, height: 0}
+	if !glyph.Valid(pattern) {
+		fail p.failAt("invalid UTF-8")
+	}
+	let re = try p.parseAlternate()
+	if p.pos < len(pattern) {
+		fail p.failAt("unexpected )")
+	}
+	return parsed{re: re, names: p.names, ngroup: p.ngroup}
+}
+
+// failAt makes a parse fault naming the byte offset.
+fn (p parser) failAt(msg str) ! {
+	fail say.Fault("lasso: pattern: at byte %d: %s", p.pos, msg)
+}
+
+// more reports whether there are more bytes.
+fn (p parser) more() bool {
+	return p.pos < len(p.pattern)
+}
+
+// peek returns the next byte, or 0 at the end.
+fn (p parser) peek() u8 {
+	if p.pos < len(p.pattern) {
+		return p.pattern[p.pos]
+	}
+	return 0
+}
+
+// parseAlternate parses re1|re2|... .
+fn (p mut parser) parseAlternate() !regexp {
+	mut subs = []regexp{}
+	let first = try p.parseConcat()
+	subs = append(subs, first)
+	for p.more() && p.peek() != ')' {
+		if p.peek() != '|' {
+			break
+		}
+		p.pos += 1
+		let next = try p.parseConcat()
+		subs = append(subs, next)
+	}
+	if len(subs) == 1 {
+		return subs[0]
+	}
+	mut n = node(opAlternate)
+	n.sub = subs
+	return n
+}
+
+// parseConcat parses a sequence of repeated terms.
+fn (p mut parser) parseConcat() !regexp {
+	mut subs = []regexp{}
+	for p.more() && p.peek() != '|' && p.peek() != ')' {
+		if p.peek() == '\\' && p.pos+1 < len(p.pattern) && p.pattern[p.pos+1] == 'Q' {
+			// \Q ... \E is literal text, and every rune is its own term: a following quantifier
+			// applies to the last one, as Go's parser does (\Qabc\E? is abc?).
+			let runes = try p.parseQuotedRunes()
+			if len(runes) == 0 {
+				continue
+			}
+			for i in 0..len(runes)-1 {
+				subs = append(subs, literalNode(runes[i], p.flags))
+			}
+			let last = literalNode(runes[len(runes)-1], p.flags)
+			let q = try p.maybeRepeat(last)
+			subs = append(subs, q)
+			continue
+		}
+		let r = try p.parseRepeat()
+		subs = append(subs, r)
+	}
+	if len(subs) == 1 {
+		return subs[0]
+	}
+	mut n = node(opConcat)
+	n.sub = subs
+	return n
+}
+
+// parseRepeat parses a term and its quantifier, if any.
+fn (p mut parser) parseRepeat() !regexp {
+	p.height += 1
+	if p.height > maxHeight {
+		p.height -= 1
+		fail p.failAt("expression nests too deeply")
+	}
+	let re = try p.parseTerm()
+	let out = try p.maybeRepeat(re)
+	p.height -= 1
+	return out
+}
+
+// maybeRepeat applies *, +, ?, {n}, {n,}, {n,m} and a lazy ? to re.
+fn (p mut parser) maybeRepeat(re regexp) !regexp {
+	if !p.more() {
+		return re
+	}
+	let c = p.peek()
+	mut op = i64(-1)
+	mut min = i64(0)
+	mut max = i64(0)
+	if c == '*' {
+		p.pos += 1
+		op, min, max = opStar, 0, -1
+	} else if c == '+' {
+		p.pos += 1
+		op, min, max = opPlus, 1, -1
+	} else if c == '?' {
+		p.pos += 1
+		op, min, max = opQuest, 0, 1
+	} else if c == '{' {
+		let (lo, hi, ok, next) = try p.parseRepeatRange()
+		if !ok {
+			return re
+		}
+		p.pos = next
+		if lo == hi {
+			// x{n} is x repeated exactly n times.
+			mut n = node(opConcat)
+			mut subs = []regexp{}
+			for i in 0..lo {
+				subs = append(subs, re)
+			}
+			n.sub = subs
+			return n
+		}
+		op, min, max = opRepeat, lo, hi
+	} else {
+		return re
+	}
+	mut flags = p.flags
+	if p.more() && p.peek() == '?' {
+		// The lazy marker flips the greediness, so under (?U) a ? makes it greedy, as Go does.
+		p.pos += 1
+		if flags&nonGreedy != 0 {
+			flags = flags & ~nonGreedy
+		} else {
+			flags = flags | nonGreedy
+		}
+	}
+	let n = regexp{op: op, flags: flags, sub: []regexp{re}, runes: []i64{}, min: min, max: max, cap: 0, name: ""}
+	return n
+}
+
+// parseRepeatRange parses {n}, {n,} or {n,m} at the current {, Go's parseRepeat: it reports
+// ok=false when the braces do not hold a repeat, which makes the { a literal, and fails for a
+// count that parses but is out of range.
+fn (p mut parser) parseRepeatRange() !(i64, i64, bool, i64) {
+	let (min0, rest0, ok0) = try p.parseInt(p.pos + 1)
+	if !ok0 {
+		return 0, 0, false, p.pos
+	}
+	mut min = min0
+	mut max = min
+	mut at = rest0
+	if at >= len(p.pattern) {
+		return 0, 0, false, p.pos
+	}
+	if p.pattern[at] == ',' {
+		at += 1
+		if at >= len(p.pattern) {
+			return 0, 0, false, p.pos
+		}
+		if p.pattern[at] == '}' {
+			max = -1
+		} else {
+			let (hi, rest1, ok1) = try p.parseInt(at)
+			if !ok1 {
+				return 0, 0, false, p.pos
+			}
+			max = hi
+			at = rest1
+			if max < 0 {
+				// parseInt found too big a number.
+				min = -1
+			}
+		}
+	}
+	if at >= len(p.pattern) || p.pattern[at] != '}' {
+		return 0, 0, false, p.pos
+	}
+	if min < 0 || min > maxRepeat || max > maxRepeat || (max >= 0 && min > max) {
+		fail p.failAt("invalid repeat count")
+	}
+	return min, max, true, at + 1
+}
+
+// parseInt parses a decimal count at i, Go's parseInt: no leading zeros, -1 for a number too big
+// to matter, and ok=false when there are no digits (the { is then a literal).
+fn (p parser) parseInt(i i64) !(i64, i64, bool) {
+	if i >= len(p.pattern) || p.pattern[i] < '0' || p.pattern[i] > '9' {
+		return 0, i, false
+	}
+	if i+1 < len(p.pattern) && p.pattern[i] == '0' && p.pattern[i+1] >= '0' && p.pattern[i+1] <= '9' {
+		return 0, i, false
+	}
+	mut j = i
+	mut n i64 = 0
+	for j < len(p.pattern) && p.pattern[j] >= '0' && p.pattern[j] <= '9' {
+		if n >= 100000000 {
+			n = -1
+		} else {
+			n = n*10 + i64(p.pattern[j]) - '0'
+		}
+		j += 1
+	}
+	return n, j, true
+}
+
+// parseTerm parses one term: a group, a class, an escape, an anchor or a literal rune.
+fn (p mut parser) parseTerm() !regexp {
+	let c = p.peek()
+	if c == '(' {
+		return try p.parseGroup()
+	}
+	if c == '[' {
+		return try p.parseClass()
+	}
+	if c == '.' {
+		p.pos += 1
+		if p.flags&dotNL != 0 {
+			return node(opAnyChar)
+		}
+		return node(opAnyCharNotNL)
+	}
+	if c == '^' {
+		p.pos += 1
+		if p.flags&oneLine != 0 {
+			return node(opBeginText)
+		}
+		return node(opBeginLine)
+	}
+	if c == '$' {
+		p.pos += 1
+		if p.flags&oneLine != 0 {
+			return node(opEndText)
+		}
+		return node(opEndLine)
+	}
+	if c == '\\' {
+		return try p.parseEscape()
+	}
+	if c == '*' || c == '+' || c == '?' {
+		fail p.failAt("missing argument to repetition operator")
+	}
+	let (r, size) = glyph.DecodeRune(p.pattern, p.pos)
+	p.pos += size
+	return literalNode(r, p.flags)
+}
+
+// parseGroup parses (...) and its forms.
+fn (p mut parser) parseGroup() !regexp {
+	p.pos += 1 // (
+	mut flags = p.flags
+	mut cap = i64(0)
+	mut name = ""
+	mut capture = true
+	if p.more() && p.peek() == '?' {
+		p.pos += 1
+		if !p.more() {
+			fail p.failAt("missing closing )")
+		}
+		let c = p.peek()
+		if c == 'P' || c == '<' {
+			if c == 'P' {
+				p.pos += 1
+				if !p.more() || p.peek() != '<' {
+					fail p.failAt("invalid named capture")
+				}
+			}
+			p.pos += 1 // <
+			let start = p.pos
+			for p.more() && p.peek() != '>' {
+				let b = p.peek()
+				if !(b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9') {
+					fail p.failAt("invalid named capture")
+				}
+				p.pos += 1
+			}
+			if !p.more() {
+				fail p.failAt("invalid named capture")
+			}
+			name = p.pattern[start:p.pos]
+			if len(name) == 0 {
+				fail p.failAt("invalid named capture")
+			}
+			p.pos += 1 // >
+		} else if c == ':' {
+			p.pos += 1
+			capture = false
+		} else {
+			// (?flags) or (?flags:re)
+			let (f, scoped, ok) = try p.parseFlags()
+			if !ok {
+				fail p.failAt("invalid or unsupported Perl syntax")
+			}
+			flags = f
+			if !scoped {
+				// (?flags) sets the flags for the rest of the group: parseFlags stopped at its
+				// ), which is consumed here, and the form matches the empty string.
+				p.pos += 1
+				p.flags = flags
+				return node(opEmptyMatch)
+			}
+			capture = false
+		}
+	}
+	if capture {
+		p.ngroup += 1
+		cap = p.ngroup
+		if len(name) > 0 {
+			let (_, have) = p.names[name]
+			if !have {
+				p.names[name] = cap
+			}
+		}
+	}
+	p.stack = append(p.stack, p.flags)
+	p.flags = flags
+	let re = try p.parseAlternate()
+	p.flags = p.stack[len(p.stack)-1]
+	p.stack = p.stack[:len(p.stack)-1]
+	if !p.more() || p.peek() != ')' {
+		fail p.failAt("missing closing )")
+	}
+	p.pos += 1
+	if !capture {
+		return re
+	}
+	mut n = node(opCapture)
+	n.cap = cap
+	n.name = name
+	n.sub = []regexp{re}
+	return n
+}
+
+// parseFlags parses the flag letters of (?flags) or (?flags:re) and reports the flags, whether a
+// scope follows (the colon) and whether the form was valid.
+fn (p mut parser) parseFlags() !(i64, bool, bool) {
+	mut flags = p.flags
+	mut negate = false
+	for p.more() {
+		let c = p.peek()
+		p.pos += 1
+		if c == 'i' {
+			if negate {
+				flags = flags & ~foldCase
+			} else {
+				flags = flags | foldCase
+			}
+		} else if c == 'm' {
+			if negate {
+				flags = flags | oneLine
+			} else {
+				flags = flags & ~oneLine
+			}
+		} else if c == 's' {
+			if negate {
+				flags = flags & ~dotNL
+			} else {
+				flags = flags | dotNL
+			}
+		} else if c == 'U' {
+			if negate {
+				flags = flags & ~nonGreedy
+			} else {
+				flags = flags | nonGreedy
+			}
+		} else if c == '-' {
+			if negate {
+				return 0, false, false
+			}
+			negate = true
+		} else if c == ':' {
+			return flags, true, true
+		} else if c == ')' {
+			p.pos -= 1
+			return flags, false, true
+		} else {
+			return 0, false, false
+		}
+	}
+	return 0, false, false
+}
+
+// parseEscape parses an escape after the backslash.
+fn (p mut parser) parseEscape() !regexp {
+	p.pos += 1 // backslash
+	if !p.more() {
+		fail p.failAt("trailing backslash at end of expression")
+	}
+	let c = p.peek()
+	if c < 0x80 {
+		p.pos += 1
+		if c == 'A' {
+			return node(opBeginText)
+		}
+		if c == 'z' {
+			return node(opEndText)
+		}
+		if c == 'b' {
+			return node(opWordBoundary)
+		}
+		if c == 'B' {
+			return node(opNoWordBoundary)
+		}
+		if c == 'd' || c == 'D' || c == 's' || c == 'S' || c == 'w' || c == 'W' {
+			mut n = node(opCharClass)
+			n.runes = perlClass(c)
+			if c == 'D' || c == 'S' || c == 'W' {
+				n.runes = negateClass(n.runes)
+			}
+			return n
+		}
+		if c == 'p' || c == 'P' {
+			return try p.parseUnicodeClass(c == 'P')
+		}
+		if c >= '1' && c <= '9' {
+			fail p.failAt("backreferences are not supported")
+		}
+		if c == '0' {
+			fail p.failAt("invalid escape sequence")
+		}
+		if c == 'x' {
+			return try p.parseHexEscape()
+		}
+		if c == 'Q' {
+			// parseConcat handles \Q itself; this is for a class context.
+			return try p.parseQuoted()
+		}
+		let lit = escapeChar(c)
+		if lit >= 0 {
+			return literalNode(i32(lit), p.flags)
+		}
+		if glyph.IsLetter(i32(c)) {
+			fail p.failAt("invalid escape sequence")
+		}
+		return literalNode(i32(c), p.flags)
+	}
+	// A non-ASCII rune after the backslash is the literal rune.
+	let (r, size) = glyph.DecodeRune(p.pattern, p.pos)
+	p.pos += size
+	return literalNode(r, p.flags)
+}
+
+// parseQuotedRunes parses \Q ... \E (or to the end) and returns its runes.
+fn (p mut parser) parseQuotedRunes() ![]i32 {
+	p.pos += 2 // \Q
+	let start = p.pos
+	mut end = len(p.pattern)
+	mut i = p.pos
+	for i+1 < len(p.pattern) {
+		if p.pattern[i] == '\\' && p.pattern[i+1] == 'E' {
+			end = i
+			break
+		}
+		i += 1
+	}
+	p.pos = end
+	if end < len(p.pattern) {
+		p.pos = end + 2
+	}
+	mut out = []i32{}
+	mut j = start
+	for j < end {
+		let (r, size) = glyph.DecodeRune(p.pattern, j)
+		out = append(out, r)
+		j += size
+	}
+	return out
+}
+
+// parseQuoted parses \Q ... \E (or to the end) as one literal node.
+fn (p mut parser) parseQuoted() !regexp {
+	let runes = try p.parseQuotedRunes()
+	mut n = node(opLiteral)
+	for _, r in runes {
+		mut v = r
+		if p.flags&foldCase != 0 {
+			v = glyph.SimpleFold(r)
+		}
+		n.runes = append(n.runes, i64(v), i64(v))
+	}
+	n.flags = p.flags & foldCase
+	return n
+}
+
+// escapeChar returns the rune of a letter escape, or -1.
+fn escapeChar(c u8) i64 {
+	if c == 'a' {
+		return 7
+	}
+	if c == 'f' {
+		return 12
+	}
+	if c == 'n' {
+		return 10
+	}
+	if c == 'r' {
+		return 13
+	}
+	if c == 't' {
+		return 9
+	}
+	if c == 'v' {
+		return 11
+	}
+	return -1
+}
+
+// parseHexEscape parses \x7f and \x{10FFFF} after the x.
+fn (p mut parser) parseHexEscape() !regexp {
+	mut v i64 = 0
+	if p.more() && p.peek() == '{' {
+		p.pos += 1
+		let start = p.pos
+		for p.more() && p.peek() != '}' {
+			v = try p.hexDigit(v)
+		}
+		if !p.more() || p.pos == start {
+			fail p.failAt("invalid escape sequence")
+		}
+		p.pos += 1
+	} else {
+		for i in 0..2 {
+			if !p.more() {
+				fail p.failAt("invalid escape sequence")
+			}
+			v = try p.hexDigit(v)
+		}
+	}
+	if v > 0x10FFFF {
+		fail p.failAt("invalid escape sequence")
+	}
+	return literalNode(i32(v), p.flags)
+}
+
+// hexDigit consumes one hex digit into v.
+fn (p mut parser) hexDigit(v i64) !i64 {
+	let c = p.peek()
+	p.pos += 1
+	mut d = i64(-1)
+	if c >= '0' && c <= '9' {
+		d = i64(c) - '0'
+	} else if c >= 'a' && c <= 'f' {
+		d = i64(c) - 'a' + 10
+	} else if c >= 'A' && c <= 'F' {
+		d = i64(c) - 'A' + 10
+	}
+	if d < 0 {
+		fail p.failAt("invalid escape sequence")
+	}
+	if v > (0x10FFFF - d) / 16 {
+		fail p.failAt("invalid escape sequence")
+	}
+	return v*16 + d
+}
+
+// perlClass returns the rune pairs of a Perl class (\d, \s, \w).
+fn perlClass(c u8) []i64 {
+	if c == 'd' || c == 'D' {
+		return []i64{0x30, 0x39}
+	}
+	if c == 's' || c == 'S' {
+		return []i64{0x09, 0x0A, 0x0C, 0x0D, 0x20, 0x20}
+	}
+	return []i64{0x30, 0x39, 0x41, 0x5A, 0x5F, 0x5F, 0x61, 0x7A}
+}
+
+// negateClass returns the complement of a rune-pair class over the whole rune space.
+fn negateClass(runes []i64) []i64 {
+	mut out = []i64{}
+	mut next i64 = 0
+	mut i = 0
+	for i+1 < len(runes) {
+		let lo = runes[i]
+		let hi = runes[i+1]
+		if lo > next {
+			out = append(out, next, lo-1)
+		}
+		if hi+1 > next {
+			next = hi + 1
+		}
+		i += 2
+	}
+	if next <= 0x10FFFF {
+		out = append(out, next, 0x10FFFF)
+	}
+	return out
+}
+
+// parseUnicodeClass parses \p{Name} and \pL (and the \P forms), mapping the name to a glyph
+// table.
+fn (p mut parser) parseUnicodeClass(negated bool) !regexp {
+	mut name = ""
+	if p.more() && p.peek() == '{' {
+		p.pos += 1
+		let start = p.pos
+		mut neg = false
+		if p.more() && p.peek() == '^' {
+			neg = true
+			p.pos += 1
+		}
+		let nstart = p.pos
+		for p.more() && p.peek() != '}' {
+			p.pos += 1
+		}
+		if !p.more() {
+			fail p.failAt("invalid character class range")
+		}
+		name = p.pattern[nstart:p.pos]
+		p.pos += 1
+		if neg {
+			negated = !negated
+		}
+	} else if p.more() && glyph.IsLetter(i32(p.peek())) {
+		let start = p.pos
+		p.pos += 1
+		name = p.pattern[start:p.pos]
+	} else {
+		fail p.failAt("invalid character class range")
+	}
+	let t = glyph.TableOf(name)
+	if t == nil {
+		fail p.failAt("invalid character class range")
+	}
+	let t2 = t
+	mut n = node(opCharClass)
+	if negated {
+		n.runes = negateClass(glyph.TableRanges(t2))
+	} else {
+		n.runes = glyph.TableRanges(t2)
+	}
+	return n
+}
+
+// parseClass parses [...] classes.
+fn (p mut parser) parseClass() !regexp {
+	p.pos += 1 // [
+	mut negated = false
+	if p.more() && p.peek() == '^' {
+		negated = true
+		p.pos += 1
+	}
+	mut runes = []i64{}
+	mut first = true
+	for {
+		if !p.more() {
+			fail p.failAt("missing closing ]")
+		}
+		if p.peek() == ']' && !first {
+			p.pos += 1
+			break
+		}
+		first = false
+		let lo = try p.parseClassChar()
+		if lo < 0 {
+			// A nested class like \d: its pairs are already ranges.
+			let pairs = try p.parseClassEscape()
+			for i in 0..len(pairs) {
+				runes = append(runes, pairs[i])
+			}
+			continue
+		}
+		// A range?
+		if p.more() && p.peek() == '-' && p.pos+1 < len(p.pattern) && p.pattern[p.pos+1] != ']' {
+			p.pos += 1
+			let hi = try p.parseClassChar()
+			if hi < 0 {
+				fail p.failAt("invalid character class range")
+			}
+			if hi < lo {
+				fail p.failAt("invalid character class range")
+			}
+			runes = append(runes, lo, hi)
+			continue
+		}
+		runes = append(runes, lo, lo)
+	}
+	if p.flags&foldCase != 0 {
+		// A case-insensitive class is expanded with the fold orbit of every rune before it is
+		// negated, as Go does, so a negated class excludes both cases. The class is then a plain
+		// set and the matcher does not fold it again.
+		mut expanded = []i64{}
+		mut k = 0
+		for k+1 < len(runes) {
+			expanded = foldRange(expanded, runes[k], runes[k+1])
+			k += 2
+		}
+		runes = expanded
+	}
+	runes = coalesceRunes(runes)
+	if negated {
+		runes = negateClass(runes)
+	}
+	mut n = node(opCharClass)
+	n.runes = runes
+	return n
+}
+
+// foldRange appends lo..hi and the simple-fold orbit of every rune in it, as Go's
+// appendFoldedRange does: the parts outside the foldable range need no folding, and the rest is
+// walked rune by rune.
+fn foldRange(out []i64, lo i64, hi i64) []i64 {
+	mut r = out
+	mut l = lo
+	mut h = hi
+	if l <= 0x41 && h >= 0x1E943 {
+		return append(r, l, h)
+	}
+	if h < 0x41 || l > 0x1E943 {
+		return append(r, l, h)
+	}
+	if l < 0x41 {
+		r = append(r, l, 0x40)
+		l = 0x41
+	}
+	if h > 0x1E943 {
+		r = append(r, 0x1E944, h)
+		h = 0x1E943
+	}
+	mut c = l
+	for c <= h {
+		r = append(r, c, c)
+		let f = glyph.SimpleFold(i32(c))
+		mut g = f
+		for g != i32(c) {
+			r = append(r, i64(g), i64(g))
+			g = glyph.SimpleFold(g)
+		}
+		c += 1
+	}
+	return r
+}
+
+// parseClassChar parses one rune of a class: a literal, an escape's single rune, or -1 for a
+// class escape (\d, \p{...}, [:alpha:]).
+fn (p mut parser) parseClassChar() !i64 {
+	if p.peek() == '\\' {
+		if p.pos+1 < len(p.pattern) {
+			let c = p.pattern[p.pos+1]
+			if c == 'd' || c == 'D' || c == 's' || c == 'S' || c == 'w' || c == 'W' || c == 'p' || c == 'P' {
+				return -1
+			}
+		}
+		let re = try p.parseEscape()
+		if re.op != opLiteral || len(re.runes) != 2 {
+			return -1
+		}
+		return re.runes[0]
+	}
+	if p.peek() == '[' && p.pos+1 < len(p.pattern) && p.pattern[p.pos+1] == ':' {
+		return -1
+	}
+	let (r, size) = glyph.DecodeRune(p.pattern, p.pos)
+	p.pos += size
+	return i64(r)
+}
+
+// parseClassEscape parses a class escape (\d, \p{...}, [:alpha:]) and returns its rune pairs.
+fn (p mut parser) parseClassEscape() ![]i64 {
+	if p.peek() == '[' {
+		// A POSIX class [:alpha:] (or [:^alpha:]).
+		p.pos += 2 // [:
+		mut neg = false
+		if p.more() && p.peek() == '^' {
+			neg = true
+			p.pos += 1
+		}
+		let start = p.pos
+		for p.more() && p.peek() != ':' {
+			p.pos += 1
+		}
+		if !p.more() || p.pos+1 >= len(p.pattern) || p.pattern[p.pos+1] != ']' {
+			fail p.failAt("invalid character class range")
+		}
+		let name = p.pattern[start:p.pos]
+		p.pos += 2 // :]
+		let pairs = try posixClass(name)
+		if neg {
+			return negateClass(pairs)
+		}
+		return pairs
+	}
+	// \d, \s, \w, \p{...}
+	p.pos += 1 // backslash
+	let c = p.peek()
+	if c == 'd' || c == 'D' || c == 's' || c == 'S' || c == 'w' || c == 'W' {
+		p.pos += 1
+		let pairs = perlClass(c)
+		if c == 'D' || c == 'S' || c == 'W' {
+			return negateClass(pairs)
+		}
+		return pairs
+	}
+	if c == 'p' || c == 'P' {
+		p.pos += 1
+		let re = try p.parseUnicodeClass(c == 'P')
+		return re.runes
+	}
+	fail p.failAt("invalid character class range")
+}
+
+// posixClass returns the rune pairs of a POSIX class name.
+fn posixClass(name str) ![]i64 {
+	if name == "alnum" {
+		return []i64{0x30, 0x39, 0x41, 0x5A, 0x61, 0x7A}
+	}
+	if name == "alpha" {
+		return []i64{0x41, 0x5A, 0x61, 0x7A}
+	}
+	if name == "ascii" {
+		return []i64{0, 0x7F}
+	}
+	if name == "blank" {
+		return []i64{0x09, 0x09, 0x20, 0x20}
+	}
+	if name == "cntrl" {
+		return []i64{0, 0x1F, 0x7F, 0x7F}
+	}
+	if name == "digit" {
+		return []i64{0x30, 0x39}
+	}
+	if name == "graph" {
+		return []i64{0x21, 0x7E}
+	}
+	if name == "lower" {
+		return []i64{0x61, 0x7A}
+	}
+	if name == "print" {
+		return []i64{0x20, 0x7E}
+	}
+	if name == "punct" {
+		return []i64{0x21, 0x2F, 0x3A, 0x40, 0x5B, 0x60, 0x7B, 0x7E}
+	}
+	if name == "space" {
+		return []i64{0x09, 0x0D, 0x20, 0x20}
+	}
+	if name == "upper" {
+		return []i64{0x41, 0x5A}
+	}
+	if name == "word" {
+		return []i64{0x30, 0x39, 0x41, 0x5A, 0x5F, 0x5F, 0x61, 0x7A}
+	}
+	if name == "xdigit" {
+		return []i64{0x30, 0x39, 0x41, 0x46, 0x61, 0x66}
+	}
+	fail say.Fault("lasso: pattern: invalid character class range")
+}
+
+// coalesceRunes sorts and merges a rune-pair list.
+fn coalesceRunes(runes []i64) []i64 {
+	mut n = len(runes) / 2
+	if n == 0 {
+		return runes
+	}
+	mut lo = make([]i64, n)
+	mut hi = make([]i64, n)
+	for i in 0..n {
+		lo[i] = runes[2*i]
+		hi[i] = runes[2*i+1]
+	}
+	// Insertion sort by low bound (classes are small).
+	for i in 1..n {
+		let l = lo[i]
+		let h = hi[i]
+		mut j = i - 1
+		for j >= 0 && lo[j] > l {
+			lo[j+1] = lo[j]
+			hi[j+1] = hi[j]
+			j -= 1
+		}
+		lo[j+1] = l
+		hi[j+1] = h
+	}
+	mut out = []i64{}
+	for i in 0..n {
+		if len(out) >= 2 && lo[i] <= out[len(out)-1]+1 {
+			if hi[i] > out[len(out)-1] {
+				out[len(out)-1] = hi[i]
+			}
+		} else {
+			out = append(out, lo[i], hi[i])
+		}
+	}
+	return out
+}

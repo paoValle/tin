@@ -1,0 +1,180 @@
+package main
+
+// lasso: RE2 syntax, linear-time matching, the API and the pathological case.
+
+import "say"
+import "tide"
+import "lasso"
+
+// find prints the leftmost match of pattern in s.
+fn find(pattern str, s str) {
+	let re = lasso.Compile(pattern) catch err {
+		say.Line("compile", pattern, err)
+		return
+	}
+	let (a, b, ok) = re.Find(s)
+	say.Line("find", pattern, s, a, b, ok)
+}
+
+// subs prints the submatch offsets of pattern's leftmost match in s.
+fn subs(pattern str, s str) {
+	let re = lasso.Compile(pattern) catch err {
+		say.Line("compile", pattern, err)
+		return
+	}
+	mut out = ""
+	for _, v in re.SubmatchIndex(s) {
+		out += say.Fmt(" %d", v)
+	}
+	say.Line("subs", pattern, s, out)
+}
+
+// texts prints the submatches of pattern's leftmost match in s, nil for a group that did not
+// take part.
+fn texts(pattern str, s str) {
+	let re = lasso.Compile(pattern) catch err {
+		say.Line("compile", pattern, err)
+		return
+	}
+	mut out = ""
+	for _, p in re.Submatch(s) {
+		if p == nil {
+			out += " nil"
+		} else {
+			out += say.Fmt(" %q", p)
+		}
+	}
+	say.Line("texts", pattern, s, out)
+}
+
+// all prints every match of pattern in s (n < 0 for all).
+fn all(pattern str, s str, n i64) {
+	let re = lasso.Compile(pattern) catch err {
+		say.Line("compile", pattern, err)
+		return
+	}
+	mut out = ""
+	for _, m in re.FindAll(s, n) {
+		out += say.Fmt(" %d-%d", m.Start, m.End)
+	}
+	mut sub = ""
+	for _, v in re.FindAllSubmatchIndex(s, n) {
+		sub += say.Fmt(" %d", v)
+	}
+	say.Line("all", pattern, s, n, out, "|", sub)
+}
+
+// digits is a package-level compiled pattern: a Regexp lives in long-lived memory, so this works
+// on every core.
+let digits = lasso.MustCompile(`\d+`)
+
+fn main() {
+	// The API: Match, Find, Named, Submatch and SubmatchIndex.
+	let re = lasso.MustCompile(`(?P<key>\w+)=(?P<val>[^&]*)`)
+	say.Line("match", re.Match("a=b&c=d"), re.Match("a="), re.Match("x"))
+	say.Line("string", re.String())
+	say.Line("groups", re.NumSubexp(), re.Named("key"), re.Named("val"), re.Named("nope"))
+	find(`(?P<key>\w+)=(?P<val>[^&]*)`, "k=v&x=y")
+	subs(`(?P<key>\w+)=(?P<val>[^&]*)`, "k=v&x=y")
+	texts(`(?P<key>\w+)=(?P<val>[^&]*)`, "k=v")
+	texts(`(a)|(b)`, "b")
+	texts(`(a)?b`, "b")
+
+	// FindAll and FindAllSubmatchIndex, with n and with empty matches.
+	all(`a`, "bababaab", -1)
+	all(`a`, "bababaab", 3)
+	all(`a*`, "baaab", -1)
+	all(`\B`, "ab", -1)
+	all(`(?P<k>\w+)`, "one two", -1)
+
+	// Replace, ReplaceFunc, Split and QuoteMeta.
+	let words = lasso.MustCompile(`(?P<key>\w+)=(?P<val>[^ ]*)`)
+	say.Line("replace", words.Replace("one=two three=four", "${{val}}:${{key}}"), words.Replace("x", "$$"))
+	say.Line("replace func", words.ReplaceFunc("a=b c=d", fn(s str) str {
+		return "<" + s + ">"
+	}))
+	say.Line("split", splitOf(words, "a=b c=d", -1))
+	say.Line("split n", splitOf(words, "a=b c=d e=f", 2))
+	say.Line("quote", lasso.QuoteMeta(`a.b*c(d)[e]{f}|g^h$i\j`))
+
+	// A package-level Regexp.
+	mut offs = ""
+	for _, m in digits.FindAll("a1b22c333", -1) {
+		offs += say.Fmt(" %d-%d", m.Start, m.End)
+	}
+	say.Line("global", offs)
+
+	// The syntax: literals, classes, POSIX and Unicode classes, anchors and boundaries.
+	find(`abc`, "xxabcxx")
+	find(`a.c`, "xabc")
+	find(`[a-c]+`, "zzabcabz")
+	find(`[^a-c]+`, "abcxyzabc")
+	find(`[\d]+`, "ab123cd")
+	find(`[\w]+`, " a_b-c")
+	find(`[[:alpha:]]+`, "12abc34")
+	find(`[[:^digit:]]+`, "123abc")
+	find(`\p{Greek}+`, "xαβγy")
+	find(`\P{L}+`, "ab12cd")
+	find(`\pL+`, "12abc")
+	find(`^abc`, "abc")
+	find(`^abc`, "xabc")
+	find(`abc$`, "xabc")
+	find(`\bword\b`, "a word here")
+	find(`\Bord`, "word")
+	find(`\Aabc\z`, "abc")
+	find(`\Aabc\z`, "xabc")
+	find(`\x41+`, "xAAA")
+	find(`\x{3B1}+`, "xαα")
+	find(`\Qa+b\E`, "xa+b")
+	find(`\Qa+b\E`, "xab")
+
+	// Groups, alternation, quantifiers, lazy quantifiers and the {n,m} forms.
+	find(`(ab)+`, "xababab")
+	find(`a|bc`, "xbcd")
+	find(`(a|b)c`, "xbac")
+	find(`a{2,3}`, "aaaa")
+	find(`a{2,3}`, "xa")
+	find(`a{2,}`, "xaaaa")
+	find(`a{3}`, "aaaa")
+	find(`a+?`, "aaa")
+	find(`a+?b`, "aaab")
+	find(`a*?b`, "aaab")
+	find(`a??b`, "ab")
+	find(`(?:ab)+?`, "abab")
+
+	// Flags: (?i), (?s), (?m), (?U) and a scoped (?i:...).
+	find(`(?i)abc`, "xABC")
+	find(`(?i)[a-c]+`, "xABC")
+	find(`(?s).+`, "a\nb")
+	find(`.`, "a\nb")
+	find(`(?m)^b`, "a\nb")
+	find(`(?m)a$`, "a\nb")
+	find(`(?U)a+`, "xaaa")
+	find(`(?U)a+?`, "xaaa")
+	find(`(?i:ab)c`, "ABc")
+	find(`(?i:ab)c`, "ABC")
+
+	// The pathological case: (a*)*b against a long run of a's, which must stay linear.
+	mut s = ""
+	for i in 0..100000 {
+		s += "a"
+	}
+	let slow = lasso.MustCompile(`(a*)*b`)
+	let t0 = tide.Now()
+	let matched = slow.Match(s)
+	let ms = (tide.Now() - t0) / 1000000
+	say.Line("pathological", matched, ms < 50)
+	let nested = lasso.MustCompile(`(x+x+)+y`)
+	let t1 = tide.Now()
+	let m2 = nested.Match(s)
+	say.Line("nested", m2, (tide.Now()-t1)/1000000 < 50)
+}
+
+// splitOf renders Split's pieces, quoted.
+fn splitOf(re lasso.Regexp, s str, n i64) str {
+	mut out = ""
+	for _, p in re.Split(s, n) {
+		out += say.Fmt(" %q", p)
+	}
+	return out
+}

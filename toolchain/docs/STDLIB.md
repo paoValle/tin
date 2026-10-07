@@ -51,6 +51,7 @@ Generated from the comments in `toolchain/std/*/` and `packages/*/` by `tools/ge
 | [replay](#replay) | recording and reading request capsules for tin replay |
 | [stencil](#stencil) | text templates loaded at run time (text/template) |
 | [scroll](#scroll) | XML tokenizer and writer (encoding/xml) |
+| [lasso](#lasso) | regular expressions with linear-time matching (regexp) |
 | [appkit](#appkit) | macOS frameworks for the Tinland editor (Cocoa, WebKit) |
 | [textedit](#textedit) | the editing model behind Tinland (buffer, cursor, undo, highlighting) |
 
@@ -487,6 +488,8 @@ Package glyph is UTF-8 (like Go's unicode/utf8) and Unicode: general categories,
 - `Valid(s str) bool`: Valid reports whether s is entirely valid UTF-8.
 - `const UnicodeVersion = "15.0.0"`: UnicodeVersion is the version of the Unicode Character Database the tables come from.
 - `type Table enum`: Table names a set of code points by Unicode's own name: a general category (Lu, Nd, P), a script (Latin, Han, Arabic) or a property (White_Space, Dash). Use it with Is.
+- `TableOf(name str) ?Table`: TableOf returns the table with a Unicode name: a general category (Lu, Nd, P), a script (Latin, Han, Arabic) or a property (White_Space, Dash). It returns nil for a name with no table, so a pattern like \p{Greek} can be refused.
+- `TableRanges(t Table) []i64`: TableRanges returns the table's code points as low, high pairs, with strides expanded, for a caller that builds its own classes (lasso's \p{...}).
 - `Is(t Table, r i32) bool`: Is reports whether r is in the set t.
 - `IsOneOf(sets []Table, r i32) bool`: IsOneOf reports whether r is in any of the sets.
 - `IsLetter(r i32) bool`: IsLetter reports whether r is a letter (category L).
@@ -1832,6 +1835,26 @@ Package scroll is a safe, streaming XML tokenizer and writer, like Go's encoding
 - `(w mut Writer) ProcInst(target str, inst str) !`: ProcInst writes a processing instruction.
 - `(w mut Writer) Directive(s str)`: Directive writes a directive such as a doctype, passed through unchanged.
 - `(w mut Writer) WriteToken(t Token) !`: WriteToken writes one token, which must nest correctly.
+
+## lasso
+
+- `type Match struct`: Match is one match's byte offsets: Start is the first byte and End is one past the last.
+- `type Regexp struct`: Regexp is a compiled pattern.
+- `Compile(pattern str) !Regexp`: Compile parses and compiles pattern, like Go's regexp.Compile. A bad pattern fails with a fault naming the byte offset.
+- `MustCompile(pattern str) Regexp`: MustCompile is Compile for a pattern that must be valid (a package-level global, say): it panics when the pattern is bad.
+- `(re Regexp) String() str`: String returns the pattern the Regexp was compiled from.
+- `(re Regexp) NumSubexp() i64`: NumSubexp returns the number of capturing groups, like Go's NumSubexp.
+- `(re Regexp) Named(name str) i64`: Named returns the group index of a named capture, or -1, like Go's SubexpIndex.
+- `(re Regexp) Match(s str) bool`: Match reports whether the pattern matches anywhere in s.
+- `(re Regexp) Find(s str) (i64, i64, bool)`: Find returns the byte offsets of the leftmost match, like Go's FindStringIndex.
+- `(re Regexp) FindAll(s str, n i64) []Match`: FindAll returns up to n matches (n < 0 for all), like Go's FindAllStringIndex.
+- `(re Regexp) FindAllSubmatchIndex(s str, n i64) []i64`: FindAllSubmatchIndex returns up to n matches (n < 0 for all) with their groups, flattened: 2*(groups+1) offsets per match, -1 for a group that did not take part, like Go's FindAllStringSubmatchIndex.
+- `(re Regexp) SubmatchIndex(s str) []i64`: SubmatchIndex returns the byte offsets of the leftmost match and its groups: 2*(n+1) values, -1 for a group that did not take part, like Go's FindStringSubmatchIndex.
+- `(re Regexp) Submatch(s str) []?str`: Submatch returns the text of the leftmost match and its groups, nil for a group that did not take part, like Go's FindStringSubmatch.
+- `(re Regexp) Replace(s str, tmpl str) str`: Replace returns a copy of s with every match replaced by tmpl, where $1, ${name} and $$ are expanded, like Go's ReplaceAllString.
+- `(re Regexp) ReplaceFunc(s str, f fn(str) str) str`: ReplaceFunc returns a copy of s with every match replaced by f(match), like Go's ReplaceAllStringFunc.
+- `(re Regexp) Split(s str, n i64) []str`: Split slices s around every match, like Go's Split: n < 0 returns every piece, n == 0 returns nothing, and n > 0 at most n pieces.
+- `QuoteMeta(s str) str`: QuoteMeta returns s with the metacharacters escaped, like Go's QuoteMeta.
 
 ## textedit
 

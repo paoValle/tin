@@ -1,0 +1,33 @@
+bad (a)\1 lasso: pattern: at byte 5: backreferences are not supported
+bad (?=a) lasso: pattern: at byte 3: invalid or unsupported Perl syntax
+bad (?!a) lasso: pattern: at byte 3: invalid or unsupported Perl syntax
+bad (?<=a) lasso: pattern: at byte 3: invalid named capture
+bad (?<!a) lasso: pattern: at byte 3: invalid named capture
+bad [a lasso: pattern: at byte 2: missing closing ]
+bad [^] lasso: pattern: at byte 3: missing closing ]
+bad [z-a] lasso: pattern: at byte 4: invalid character class range
+bad [a-\d] lasso: pattern: at byte 3: invalid character class range
+bad [[:foo:]] lasso: pattern: invalid character class range
+bad \p{Nope} lasso: pattern: at byte 8: invalid character class range
+bad \q lasso: pattern: at byte 2: invalid escape sequence
+bad \0 lasso: pattern: at byte 2: invalid escape sequence
+bad \x lasso: pattern: at byte 2: invalid escape sequence
+bad \x{} lasso: pattern: at byte 3: invalid escape sequence
+bad \x{110000} lasso: pattern: at byte 9: invalid escape sequence
+bad a\ lasso: pattern: at byte 2: trailing backslash at end of expression
+bad \C lasso: pattern: at byte 2: invalid escape sequence
+bad *a lasso: pattern: at byte 0: missing argument to repetition operator
+bad +a lasso: pattern: at byte 0: missing argument to repetition operator
+bad ?a lasso: pattern: at byte 0: missing argument to repetition operator
+bad a** lasso: pattern: at byte 2: missing argument to repetition operator
+bad a{2,1} lasso: pattern: at byte 1: invalid repeat count
+bad a{1001} lasso: pattern: at byte 1: invalid repeat count
+bad (?P<name>a lasso: pattern: at byte 10: missing closing )
+bad (?P<>a) lasso: pattern: at byte 4: invalid named capture
+bad (?x)a lasso: pattern: at byte 3: invalid or unsupported Perl syntax
+bad (?i lasso: pattern: at byte 3: invalid or unsupported Perl syntax
+bad a) lasso: pattern: at byte 1: unexpected )
+bad ( lasso: pattern: at byte 1: missing closing )
+bad ) lasso: pattern: at byte 0: unexpected )
+ok a{1000} a{1000}
+bad ((((((((((((((((...)))))))) lasso: pattern: at byte 1000: expression nests too deeply

@@ -1,0 +1,99 @@
+package main
+
+// The lasso twin, Tin side: read pattern/input pairs (hex-encoded, one pair per line) on stdin
+// and print what lasso says for each, in the same format as bench/ref/lasso (Go's regexp):
+// "compile" for a pattern that does not compile, else "match ... find ... subs ... all ...".
+// tools/ci/lasso_check.py feeds both sides the same corpus and compares the lines (#571).
+
+import "say"
+import "seal"
+import "lasso"
+import "mint"
+import "quarry"
+
+fn main() {
+	let body = quarry.ReadStdin() catch err {
+		say.Line("fault", err)
+		return
+	}
+	mut start = i64(0)
+	mut i = i64(0)
+	for i <= i64(len(body)) {
+		if i < i64(len(body)) && body[i] != '\n' {
+			i += 1
+			continue
+		}
+		let line = body[start:i]
+		start = i + 1
+		i += 1
+		if len(line) == 0 {
+			continue
+		}
+		let tab = indexOfByte(line, '\t')
+		if tab < 0 {
+			say.Line("fault", "no tab")
+			return
+		}
+		mut rest = line[tab+1:len(line)]
+		mut n = i64(-1)
+		let tab2 = indexOfByte(rest, '\t')
+		if tab2 >= 0 {
+			let v = mint.Atoi(rest[tab2+1:len(rest)]) catch _ {
+				say.Line("fault", "bad n")
+				return
+			}
+			n = v
+			rest = rest[0:tab2]
+		}
+		let pattern = unhex(line[0:tab]) catch err {
+			say.Line("fault", err)
+			return
+		}
+		let input = unhex(rest) catch err {
+			say.Line("fault", err)
+			return
+		}
+		let re = lasso.Compile(pattern) catch _ {
+			say.Line("compile")
+			continue
+		}
+		let s = input
+		mut out = ""
+		out += say.Fmt("match %t", re.Match(s))
+		let (fs, fe, ok) = re.Find(s)
+		if ok {
+			out += say.Fmt(" find %d %d", fs, fe)
+		} else {
+			out += " find -1 -1"
+		}
+		out += " subs"
+		for _, v in re.SubmatchIndex(s) {
+			out += say.Fmt(" %d", v)
+		}
+		out += " all"
+		for _, m in re.FindAll(s, n) {
+			out += say.Fmt(" %d %d", m.Start, m.End)
+		}
+		out += " allsubs"
+		for _, v in re.FindAllSubmatchIndex(s, n) {
+			out += say.Fmt(" %d", v)
+		}
+		say.Line(out)
+	}
+}
+
+// indexOfByte returns the first index of c in s, or -1.
+fn indexOfByte(s str, c u8) i64 {
+	for i in 0..len(s) {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+
+// unhex decodes a lowercase hex string.
+fn unhex(s str) !str {
+	let b = try seal.HexDecode(s)
+	return str(b)
+}

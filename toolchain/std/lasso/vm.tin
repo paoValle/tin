@@ -1,0 +1,310 @@
+package lasso
+
+// The Pike VM, Go's regexp machine: one thread list per input position, so matching is linear in
+// the input and the pattern. Captures travel with the threads.
+
+import "glyph"
+
+// endOfText marks "no rune" before the input's start and after its end.
+const endOfText = -1
+
+// thread is one VM thread: its program counter, the position the match started at, and its
+// capture slots (only when the pattern has capturing groups).
+type thread struct {
+	pc    i64
+	start i64
+	cap   []i64
+}
+
+// queue is one thread list: the threads, a generation mark per program counter that keeps a pc
+// out twice, and the generation the marks belong to.
+type queue struct {
+	dense []thread
+	mark  []i64
+	gen   i64
+}
+
+// machine is one match's state. The cap slices of finished threads go back to pool, so matching
+// allocates its state once per call and not per input byte.
+type machine struct {
+	p        prog
+	input    str
+	matched  bool
+	matchcap []i64
+	qs       []queue
+	pool     [][]i64
+	hasEmpty bool
+	gen      i64
+}
+
+// newMachine makes a machine for the program.
+fn newMachine(p prog) machine {
+	let n = i64(len(p.insts))
+	mut m = machine{p: p, input: "", matched: false, matchcap: make([]i64, p.ncap), qs: []queue{}, pool: [][]i64{}, hasEmpty: false, gen: 3}
+	for _, inst in p.insts {
+		if inst.op == instEmptyWidth {
+			m.hasEmpty = true
+		}
+	}
+	m.qs = append(m.qs, queue{dense: []thread{}, mark: make([]i64, n), gen: 1})
+	m.qs = append(m.qs, queue{dense: []thread{}, mark: make([]i64, n), gen: 2})
+	return m
+}
+
+// cond is the empty-width context at a position: the rune before it and the rune after it.
+type cond struct {
+	before i32
+	after  i32
+}
+
+// isWord reports whether r is a word character ([0-9A-Za-z_]), as Go's syntax.IsWordChar.
+fn isWord(r i32) bool {
+	return r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
+}
+
+// matchEmpty reports whether the empty-width condition op holds at c.
+fn matchEmpty(op i64, c cond) bool {
+	if op == 0 {
+		return true
+	}
+	if op&emptyBeginLine != 0 {
+		if c.before != endOfText && c.before != '\n' {
+			return false
+		}
+		return true
+	}
+	if op&emptyBeginText != 0 {
+		if c.before != endOfText {
+			return false
+		}
+		return true
+	}
+	if op&emptyEndLine != 0 {
+		if c.after != endOfText && c.after != '\n' {
+			return false
+		}
+		return true
+	}
+	if op&emptyEndText != 0 {
+		if c.after != endOfText {
+			return false
+		}
+		return true
+	}
+	if isWord(c.before) != isWord(c.after) {
+		return op&emptyWordBoundary != 0
+	}
+	return op&emptyNoWordBoundary != 0
+}
+
+// inClass reports whether r is in the sorted rune pairs.
+fn inClass(runes []i64, r i64) bool {
+	mut lo = 0
+	mut hi = len(runes) / 2
+	for lo < hi {
+		let mid = (lo + hi) / 2
+		if r < runes[2*mid] {
+			hi = mid
+		} else if r > runes[2*mid+1] {
+			lo = mid + 1
+		} else {
+			return true
+		}
+	}
+	return false
+}
+
+// classMatch reports whether r matches the class, folding through its simple-fold orbit when the
+// class is case-insensitive.
+fn classMatch(c class, r i32) bool {
+	if inClass(c.runes, i64(r)) {
+		return true
+	}
+	if !c.fold {
+		return false
+	}
+	mut f = glyph.SimpleFold(r)
+	for f != r {
+		if inClass(c.runes, i64(f)) {
+			return true
+		}
+		f = glyph.SimpleFold(f)
+	}
+	return false
+}
+
+// add adds a thread for pc to queue which at pos, following epsilon instructions. start is the
+// position the match began at and cap its capture slots (used only with capturing groups).
+// Capture instructions recurse so the slot can be restored for the other alternatives, as Go's
+// add does.
+fn (m mut machine) add(which i64, pc0 i64, pos i64, start i64, cap []i64, c cond) {
+	mut pc = pc0
+	for {
+		if pc == 0 {
+			return
+		}
+		if m.qs[which].mark[pc] == m.qs[which].gen {
+			return
+		}
+		m.qs[which].mark[pc] = m.qs[which].gen
+		let inst = m.p.insts[pc]
+		if inst.op == instFail {
+			return
+		}
+		if inst.op == instAlt {
+			m.add(which, inst.out, pos, start, cap, c)
+			pc = inst.arg
+			continue
+		}
+		if inst.op == instEmptyWidth {
+			if matchEmpty(inst.arg, c) {
+				pc = inst.out
+				continue
+			}
+			return
+		}
+		if inst.op == instNop {
+			pc = inst.out
+			continue
+		}
+		if inst.op == instCapture {
+			if inst.arg < i64(len(cap)) {
+				let old = cap[inst.arg]
+				cap[inst.arg] = pos
+				m.add(which, inst.out, pos, start, cap, c)
+				cap[inst.arg] = old
+				return
+			}
+			pc = inst.out
+			continue
+		}
+		// instRune or instMatch: a real thread. Without capturing groups the start position is
+		// all the thread needs, so no slice is allocated or copied.
+		mut t = thread{pc: pc, start: start, cap: []i64{}}
+		if len(m.matchcap) > 2 {
+			let saved = m.takeCap(len(cap))
+			copy(saved, cap)
+			t.cap = saved
+		}
+		m.qs[which].dense = append(m.qs[which].dense, t)
+		return
+	}
+}
+
+// takeCap returns a capture slice of n slots from the pool, or a new one.
+fn (m mut machine) takeCap(n i64) []i64 {
+	if len(m.pool) > 0 {
+		let c = m.pool[len(m.pool)-1]
+		m.pool = m.pool[:len(m.pool)-1]
+		return c
+	}
+	return make([]i64, n)
+}
+
+// putCap returns a capture slice to the pool.
+fn (m mut machine) putCap(c []i64) {
+	m.pool = append(m.pool, c)
+}
+
+// step moves every runnable thread of queue run to queue next at the rune c.
+fn (m mut machine) step(run, next i64, pos i64, nextPos i64, c i32, nc cond) {
+	mut j = i64(0)
+	for j < i64(len(m.qs[run].dense)) {
+		let t = m.qs[run].dense[j]
+		let inst = m.p.insts[t.pc]
+		if inst.op == instMatch {
+			if len(m.matchcap) > 2 {
+				if len(t.cap) > 0 && m.matchcap[1] < pos {
+					t.cap[1] = pos
+					copy(m.matchcap, t.cap)
+				}
+			} else if m.matchcap[1] < pos {
+				m.matchcap[0] = t.start
+				m.matchcap[1] = pos
+			}
+			// First-match mode: cut off every lower-priority thread.
+			mut k = j + 1
+			for k < i64(len(m.qs[run].dense)) {
+				if len(m.qs[run].dense[k].cap) > 0 {
+					m.putCap(m.qs[run].dense[k].cap)
+				}
+				k += 1
+			}
+			if len(t.cap) > 0 {
+				m.putCap(t.cap)
+			}
+			m.qs[run].dense = m.qs[run].dense[:j]
+			m.matched = true
+			break
+		}
+		let cls = m.p.classes[inst.arg]
+		if classMatch(cls, c) {
+			m.add(next, inst.out, nextPos, t.start, t.cap, nc)
+		}
+		if len(t.cap) > 0 {
+			m.putCap(t.cap)
+		}
+		j += 1
+	}
+	// The queue is empty for its next fill: give it a fresh generation.
+	m.qs[run].dense = m.qs[run].dense[:0]
+	m.qs[run].gen = m.gen
+	m.gen += 1
+}
+
+// decodeAt decodes the rune at pos, or endOfText.
+fn decodeAt(input str, pos i64) (i32, i64) {
+	if pos >= len(input) {
+		return endOfText, 0
+	}
+	return glyph.DecodeRune(input, pos)
+}
+
+// run searches input from startPos and reports whether the pattern matched, with the capture
+// slots in m.matchcap.
+fn (m mut machine) run(input str, startPos i64) bool {
+	m.input = input
+	m.matched = false
+	for i in 0..len(m.matchcap) {
+		m.matchcap[i] = -1
+	}
+	m.qs[0].dense = m.qs[0].dense[:0]
+	m.qs[1].dense = m.qs[1].dense[:0]
+	mut which = i64(0)
+	mut pos = startPos
+	let (r0, w0) = decodeAt(input, pos)
+	mut r = r0
+	mut width = w0
+	let (r10, w10) = decodeAt(input, pos+width)
+	mut r1 = r10
+	mut width1 = w10
+	mut before = i32(endOfText)
+	if startPos > 0 {
+		let (rb, _) = glyph.DecodeLastRune(input, startPos)
+		before = rb
+	}
+	for {
+		if i64(len(m.qs[which].dense)) == 0 {
+			if m.matched {
+				break
+			}
+		}
+		if !m.matched {
+			m.matchcap[0] = pos
+			m.add(which, m.p.start, pos, pos, m.matchcap, cond{before: before, after: r})
+		}
+		m.step(which, 1-which, pos, pos+width, r, cond{before: r, after: r1})
+		if width == 0 {
+			break
+		}
+		before = r
+		pos += width
+		r = r1
+		width = width1
+		let (rn, wn) = decodeAt(input, pos+width)
+		r1 = rn
+		width1 = wn
+		which = 1 - which
+	}
+	return m.matched
+}

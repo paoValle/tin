@@ -1,0 +1,69 @@
+match true true false
+string (?P<key>\w+)=(?P<val>[^&]*)
+groups 2 1 2 -1
+find (?P<key>\w+)=(?P<val>[^&]*) k=v&x=y 0 3 true
+subs (?P<key>\w+)=(?P<val>[^&]*) k=v&x=y  0 3 0 1 2 3
+texts (?P<key>\w+)=(?P<val>[^&]*) k=v  "k=v" "k" "v"
+texts (a)|(b) b  "b" nil "b"
+texts (a)?b b  "b" nil
+all a bababaab -1  1-2 3-4 5-6 6-7 |  1 2 3 4 5 6 6 7
+all a bababaab 3  1-2 3-4 5-6 |  1 2 3 4 5 6
+all a* baaab -1  0-0 1-4 5-5 |  0 0 1 4 5 5
+all \B ab -1  1-1 |  1 1
+all (?P<k>\w+) one two -1  0-3 4-7 |  0 3 0 3 4 7 4 7
+replace two:one four:three x
+replace func <a=b> <c=d>
+split  "" " " ""
+split n  "" " c=d e=f"
+quote a\.b\*c\(d\)\[e\]\{f\}\|g\^h\$i\\j
+global  1-2 3-5 6-9
+find abc xxabcxx 2 5 true
+find a.c xabc 1 4 true
+find [a-c]+ zzabcabz 2 7 true
+find [^a-c]+ abcxyzabc 3 6 true
+find [\d]+ ab123cd 2 5 true
+find [\w]+  a_b-c 1 4 true
+find [[:alpha:]]+ 12abc34 2 5 true
+find [[:^digit:]]+ 123abc 3 6 true
+find \p{Greek}+ xαβγy 1 7 true
+find \P{L}+ ab12cd 2 4 true
+find \pL+ 12abc 2 5 true
+find ^abc abc 0 3 true
+find ^abc xabc 0 0 false
+find abc$ xabc 1 4 true
+find \bword\b a word here 2 6 true
+find \Bord word 1 4 true
+find \Aabc\z abc 0 3 true
+find \Aabc\z xabc 0 0 false
+find \x41+ xAAA 1 4 true
+find \x{3B1}+ xαα 1 5 true
+find \Qa+b\E xa+b 1 4 true
+find \Qa+b\E xab 0 0 false
+find (ab)+ xababab 1 7 true
+find a|bc xbcd 1 3 true
+find (a|b)c xbac 2 4 true
+find a{2,3} aaaa 0 3 true
+find a{2,3} xa 0 0 false
+find a{2,} xaaaa 1 5 true
+find a{3} aaaa 0 3 true
+find a+? aaa 0 1 true
+find a+?b aaab 0 4 true
+find a*?b aaab 0 4 true
+find a??b ab 0 2 true
+find (?:ab)+? abab 0 2 true
+find (?i)abc xABC 1 4 true
+find (?i)[a-c]+ xABC 1 4 true
+find (?s).+ a
+b 0 3 true
+find . a
+b 0 1 true
+find (?m)^b a
+b 2 3 true
+find (?m)a$ a
+b 0 1 true
+find (?U)a+ xaaa 1 2 true
+find (?U)a+? xaaa 1 4 true
+find (?i:ab)c ABc 0 3 true
+find (?i:ab)c ABC 0 0 false
+pathological false true
+nested false true

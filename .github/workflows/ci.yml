@@ -60,6 +60,8 @@ jobs:
         run: python3 tools/ci/abacus_check.py
       - name: XML token streams against Go's encoding/xml (RSS, SOAP, S3, SVG)
         run: python3 tools/ci/scroll_check.py
+      - name: Regular expressions against Go's regexp (12,000 pairs and the ported tables)
+        run: python3 tools/ci/lasso_check.py
       - name: Child processes start, wait, signal and are cut by a deadline (Docker)
         if: runner.os == 'Linux'
         run: python3 tools/ci/spawn_check.py
