@@ -1,0 +1,166 @@
+package main
+
+import "constraints"
+import "hearth"
+import "say"
+
+// #632: ?i64, ?f64, ?bool and the other number optionals are two-word values (a tag and the
+// number), never allocated: they live in registers, frame slots, fields, slice elements, map
+// cells, closure cells and globals, and a global holds one with no keep.
+
+type Reading struct {
+	at   i64
+	temp ?f32
+	low  ?i32
+	seen ?bool
+}
+
+type Slot enum {
+	Empty
+	Held(n ?i64, tag str)
+}
+
+type Box[T constraints.Any] struct {
+	v ?T
+}
+
+mut last ?i64 = nil
+mut totals = map[str]?i64{}
+
+// Built once and read by every core: a constant initializer sets both words.
+shared let ceiling ?i64 = 7
+shared let unset ?f64 = nil
+shared let picks = []?i64{1, nil, 3}
+
+fn lookup(xs []i64, v i64) ?i64 {
+	for i in 0..len(xs) {
+		if xs[i] == v {
+			return i
+		}
+	}
+	return nil
+}
+
+fn both(a ?i64, b ?i64) (?i64, bool) {
+	if a != nil && b != nil {
+		return a + b, true
+	}
+	return nil, false
+}
+
+fn parse_digit(c u8) !?i64 {
+	if c == '-' {
+		return nil
+	}
+	if c < '0' || c > '9' {
+		fail "not a digit"
+	}
+	return i64(c - '0')
+}
+
+fn held(s Slot) ?i64 {
+	match s {
+		Held(n, _) => {
+			return n
+		}
+		Empty => {
+			return nil
+		}
+	}
+}
+
+fn unwrap[T constraints.Any](b Box[T], d T) T {
+	return b.v ?? d
+}
+
+fn record(name str, v ?i64) {
+	// A global and a long-lived map take the value as it is: no keep (#632).
+	last = v
+	totals[name] = v
+}
+
+fn main() {
+	// No allocation: making, passing, returning and testing optional numbers.
+	let xs = []i64{3, 1, 4, 1, 5, 9, 2, 6}
+	let u0 = rt_pool_used()
+	mut hits = 0
+	mut sum = 0
+	for i in 0..100000 {
+		let r = lookup(xs, i % 12)
+		if r != nil {
+			hits += 1
+			sum += r
+		}
+		let (s, ok) = both(r, lookup(xs, 9))
+		if ok && s != nil {
+			sum += s
+		}
+	}
+	let u1 = rt_pool_used()
+	say.Line(hits, sum, u1 - u0)
+
+	// Narrow types and floats keep their values, including the extremes.
+	let r1 = Reading{at: 1, temp: f32(-2.5), low: -2147483648, seen: false}
+	let r2 = Reading{at: 2}
+	say.Line(r1, r2, r1.seen == nil, r1.seen ?? true, r2.temp == nil)
+	let big ?u64 = 18446744073709551615
+	let neg ?i8 = -128
+	let b ?u8 = 255
+	say.Line(big, neg, b, big != nil && big == 18446744073709551615)
+	let nan ?f64 = 0.0 / 0.0
+	let z1 ?f64 = 0.0
+	let z2 ?f64 = -0.0
+	say.Line(nan == nan, z1 == z2, nan != nil)
+
+	// Closures capture an optional number in a cell of its own.
+	mut count ?i64 = nil
+	let bump = fn() {
+		// A captured variable is not narrowed: ?? reads it.
+		count = (count ?? 0) + 1
+	}
+	bump()
+	bump()
+	bump()
+	let peek = fn() ?i64 {
+		return count
+	}
+	say.Line(count, peek())
+
+	// Faults, enums, generics and ??.
+	for c in []u8{'7', '-', 'x'} {
+		let d = parse_digit(c) catch err {
+			say.Line("fault:", err)
+			continue
+		}
+		say.Line("digit", d, d ?? -1)
+	}
+	say.Line(held(Slot.Held(42, "a")), held(Slot.Held(nil, "b")), held(Slot.Empty))
+	let bx = Box[f64]{v: 1.25}
+	let by = Box[f64]{}
+	say.Line(unwrap(bx, 9.0), unwrap(by, 9.0))
+
+	// Slices: make, append, append ..., copy, and elements set to nil.
+	mut ys = make([]?i64, 3)
+	ys[1] = 7
+	ys = append(ys, 8)
+	ys = append(ys, nil)
+	ys = append(ys, []?i64{10, nil}...)
+	mut zs = make([]?i64, len(ys))
+	copy(zs, ys)
+	zs[0] = -1
+	ys[1] = nil
+	say.Line(ys, zs, len(zs))
+
+	// A global and a long-lived map hold optional numbers across the end of a request.
+	record("a", 5)
+	record("b", nil)
+	record("c", lookup(xs, 6))
+	hearth.Reset()
+	say.Line(last, totals["a"], totals["b"], totals["c"], totals["zz"], len(totals))
+	let (got, found) = totals["b"]
+	say.Line(got, found)
+	let lim = ceiling
+	if lim != nil {
+		say.Line("ceiling", lim + 1, unset, picks)
+	}
+}

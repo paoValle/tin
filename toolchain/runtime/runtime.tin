@@ -1807,6 +1807,20 @@ fn rt_append_dyn(s i64, object i64, table i64) i64 {
 	return s
 }
 
+// rt_append_pair appends a two-word optional number (#632), which holds no reference.
+fn rt_append_pair(s i64, w0 i64, w1 i64) i64 {
+	s = rt_own(s, 16)
+	let n = s[0]
+	if n >= s[1] {
+		rt_slice_grow(s, n+1, 16)
+	}
+	let p = s[2] + n*16
+	p[0] = w0
+	p[1] = w1
+	s[0] = n + 1
+	return s
+}
+
 fn rt_slice_appendn(s i64, t i64, esz i64) i64 {
 	if t[0] == 0 {
 		return s
@@ -2340,6 +2354,25 @@ fn rt_map_set_dyn(m i64, k i64, object i64, table i64, ck i64, di i64) {
 	}
 	c[0] = object
 	c[1] = table
+	if ck != 0 {
+		rt_map_setk(m, cast(str, k), c)
+	} else {
+		rt_map_set(m, k, c, 1)
+	}
+}
+
+// rt_map_set_pair is m[k] = v in a map of optional numbers (#632): the value's two words go
+// in a cell of the map's memory, as a dyn value's do, with no object to count.
+fn rt_map_set_pair(m i64, k i64, w0 i64, w1 i64, ck i64) {
+	if m == 0 {
+		rt_panic("assignment to entry in nil map")
+	}
+	mut c = rt_map_get(m, k)
+	if c == 0 {
+		c = rt_region_alloc(m[9], 24)
+	}
+	c[0] = w0
+	c[1] = w1
 	if ck != 0 {
 		rt_map_setk(m, cast(str, k), c)
 	} else {

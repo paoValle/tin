@@ -135,7 +135,7 @@ fn chk_kind(e i64, want i64) i64 {
 // the fallback, which is evaluated only then. With a ?T fallback the result stays ?T. It
 // becomes a hidden local holding the optional and an if:
 //   a reference (or a ?T result): $x = opt; if $x == nil { $x = fallback }; $x as the result
-//   a boxed number:               $x = opt; $r = 0; if $x == nil { $r = fallback } else { $r = *$x }
+//   an optional number (#632):    $x = opt; $r = 0; if $x == nil { $r = fallback } else { $r = payload($x) }
 fn chk_coalesce(e i64) i64 {
 	let pos = cast(Node, e).pos
 	let x = cast(Coalesce, e).x
@@ -174,7 +174,7 @@ fn chk_coalesce(e i64) i64 {
 	ifs.cond = mk_bin(pos, "==", sym_ref_node(pos, xs), mk_int(pos, 0, cast(i64, xt)), ty_bool)
 	ifs.then = empty_block(pos)
 	if scalar == 0 || rt == cast(i64, xt) {
-		// One word (a reference or a box) either way: nil takes the fallback's.
+		// The optional's own representation either way: nil takes the fallback's.
 		mut then1 = cast([]i64, cast(Block, ifs.then).stmts)
 		then1 = append(then1, assign_stmt(pos, sym_ref_node(pos, xs), fb))
 		cast(Block, ifs.then).stmts = then1
@@ -190,11 +190,9 @@ fn chk_coalesce(e i64) i64 {
 	mut then2 = cast([]i64, cast(Block, ifs.then).stmts)
 	then2 = append(then2, assign_stmt(pos, sym_ref_node(pos, rs), fb))
 	cast(Block, ifs.then).stmts = then2
-	let base = sym_ref_node(pos, xs)
-	cast(Node, base).type_ = ty_int
 	let els = cast(Block, empty_block(pos))
 	mut st3 = cast([]i64, els.stmts)
-	st3 = append(st3, assign_stmt(pos, sym_ref_node(pos, rs), mk_mem(pos, base, 0, 0, 0, scalar)))
+	st3 = append(st3, assign_stmt(pos, sym_ref_node(pos, rs), opt_payload(pos, sym_ref_node(pos, xs), scalar)))
 	els.stmts = st3
 	ifs.else_ = cast(i64, els)
 	stmts = append(stmts, cast(i64, ifs))
@@ -560,10 +558,10 @@ fn use_sym(e i64, s Sym, want i64) i64 {
 		return ty_int
 	}
 	if s.unbox != 0 {
-		// A narrowed ?number: the variable holds the box.
+		// A narrowed ?number: the variable holds the optional's two words; read the payload.
 		let base = sym_ref_node(cast(Node, e).pos, s)
-		cast(Node, base).type_ = ty_int
-		replace_node(e, mk_mem(cast(Node, e).pos, base, 0, 0, 0, s.type_))
+		cast(Node, base).type_ = opt_of(s.type_)
+		replace_node(e, opt_payload(cast(Node, e).pos, base, s.type_))
 	}
 	return s.type_
 }
@@ -1150,8 +1148,8 @@ fn lower_optnum_eq(e Node, op str, l i64, r i64, t Ty) i64 {
 	let ar = sym_ref_node(pos, cast(Sym, a.sym))
 	let br = sym_ref_node(pos, cast(Sym, b.sym))
 	let both_nil = mk_bin(pos, "&&", mk_bin(pos, "==", ar, mk_int(pos, 0, cast(i64, t)), ty_bool), mk_bin(pos, "==", br, mk_int(pos, 0, cast(i64, t)), ty_bool), ty_bool)
-	let sa = mk_mem(pos, sym_ref_node(pos, cast(Sym, a.sym)), 0, 0, 0, opt_scalar(t))
-	let sb = mk_mem(pos, sym_ref_node(pos, cast(Sym, b.sym)), 0, 0, 0, opt_scalar(t))
+	let sa = opt_payload(pos, sym_ref_node(pos, cast(Sym, a.sym)), opt_scalar(t))
+	let sb = opt_payload(pos, sym_ref_node(pos, cast(Sym, b.sym)), opt_scalar(t))
 	let both_set = mk_bin(pos, "&&", mk_bin(pos, "!=", sym_ref_node(pos, cast(Sym, a.sym)), mk_int(pos, 0, cast(i64, t)), ty_bool), mk_bin(pos, "&&", mk_bin(pos, "!=", sym_ref_node(pos, cast(Sym, b.sym)), mk_int(pos, 0, cast(i64, t)), ty_bool), mk_bin(pos, "==", sa, sb, ty_bool), ty_bool), ty_bool)
 	mut x = mk_seq(pos, cast(i64, stmts), mk_bin(pos, "||", both_nil, both_set, ty_bool), ty_bool)
 	if op == "!=" {
@@ -1390,6 +1388,10 @@ fn map_set_dyn(pos i64, m i64, k i64, v i64, ck i64) i64 {
 	args = append(args, object)
 	args = append(args, table)
 	args = append(args, mk_int(pos, ck, ty_int))
+	if is_shape_value(cast(Ty, cast(Node, v).type_)) == 0 {
+		// An optional number: two words in the cell and no object to count (#632).
+		return mk_seq(pos, cast(i64, stmts), rt_call(pos, "rt_map_set_pair", cast(i64, args), ty_void), ty_void)
+	}
 	// The cell keeps the table entry of the object's drop (#618).
 	args = append(args, mk_int(pos, dyn_drop_index(cast(Node, v).type_), ty_int))
 	let call = rt_call(pos, "rt_map_set_dyn", cast(i64, args), ty_void)
@@ -2033,7 +2035,7 @@ fn method_value(e i64, x i64, xt i64, name str, ps []i64, ms []i64, rs []i64, fl
 	give_cell(rsym, pos, "$mv")
 	let csym = cast(Sym, rsym.cell_sym)
 	mut hs = []i64{}
-	hs = append(hs, let_stmt(pos, csym, rt_call(pos, "rt_alloc", args1(mk_int(pos, 8, ty_int)), ty_int)))
+	hs = append(hs, let_stmt(pos, csym, rt_call(pos, "rt_alloc", args1(mk_int(pos, cell_bytes(xt), ty_int)), ty_int)))
 	hs = append(hs, assign_stmt(pos, mk_mem(pos, sym_ref_node(pos, csym), 0, 0, 0, xt), x))
 	let f = fn_new(pos, "func")
 	// The signature's types are resolved already; the closure names them through type
@@ -2414,7 +2416,7 @@ fn closure_keeper(pos i64, cf Fn) i64 {
 	i = 0
 	for i < k {
 		let ct = cast(Sym, caps[i]).type_
-		let cell = temp(pos, rt_call(pos, "rt_ingot_alloc", args1(mk_int(pos, 8, ty_int)), ty_int), ty_int)
+		let cell = temp(pos, rt_call(pos, "rt_ingot_alloc", args1(mk_int(pos, cell_bytes(ct), ty_int)), ty_int), ty_int)
 		body = append(body, cast(i64, cell))
 		let old = mk_mem(pos, mk_mem(pos, sym_ref_node(pos, d), 0, 0, 8 * (2 + i), ty_int), 0, 0, 0, ct)
 		mut val = old
@@ -4008,7 +4010,12 @@ fn lower_append_dyn(pos i64, slice i64, value i64, st Ty) i64 {
 	let ref_ = sym_ref_node(pos, cast(Sym, saved.sym))
 	let object = mk_conv(pos, ref_, CV_DYN_OBJECT, ty_int)
 	let table = mk_conv(pos, ref_, CV_DYN_TABLE_WORD, ty_int)
-	let call = rt_call(pos, "rt_append_dyn", args3(slice, object, table), cast(i64, st))
+	mut fname = "rt_append_dyn"
+	if is_shape_value(cast(Ty, et)) == 0 {
+		// An optional number's two words, with no object to count (#632).
+		fname = "rt_append_pair"
+	}
+	let call = rt_call(pos, fname, args3(slice, object, table), cast(i64, st))
 	mut stmts = []i64{}
 	stmts = append(stmts, cast(i64, saved))
 	return mk_seq(pos, cast(i64, stmts), call, cast(i64, st))
@@ -4179,7 +4186,7 @@ fn chk_builtin(e i64, name str, want i64) i64 {
 						// The elements' new slots own them (#176): a long-lived slice counts them.
 						appendn = "rt_slice_appendn_rc"
 					}
-					if is_dyn_value(cast(Ty, et)) != 0 {
+					if is_shape_value(cast(Ty, et)) != 0 {
 						// Their objects, for dyn elements (#618).
 						acc = rt_call(pos, "rt_slice_appendn_dyn", args2(acc, cast(Unary, a).x), cast(i64, st))
 					} else {
@@ -4336,7 +4343,7 @@ fn chk_builtin(e i64, name str, want i64) i64 {
 		}
 		if kind_of(st) == K_STRING {
 			replace_node(e, rt_call(pos, "rt_copy_str", args2(arg0(cast(Call, e)), args[1]), ty_int))
-		} else if kind_of(dt) == K_SLICE && is_dyn_value(cast(Ty, dt.elem)) != 0 {
+		} else if kind_of(dt) == K_SLICE && is_shape_value(cast(Ty, dt.elem)) != 0 {
 			// The objects of dyn elements, released through their tables (#618).
 			replace_node(e, rt_call(pos, "rt_slice_copy_dyn", args3(arg0(cast(Call, e)), args[1], mk_int(pos, dyn_drop_index(dt.elem), ty_int)), ty_int))
 		} else if kind_of(dt) == K_SLICE && rc_counted(cast(Ty, dt.elem)) != 0 {
@@ -4546,21 +4553,6 @@ fn lower_keep(e Node, want i64) i64 {
 		cast(Node, c).region = R_OWNED
 		replace_node(cast(i64, e), c)
 		return t
-	}
-	if is_ref(t) == 0 && kind_of(cast(Ty, want)) == K_OPT && opt_scalar(cast(Ty, want)) != 0 && assignable(cast(Ty, t), cast(Ty, opt_scalar(cast(Ty, want)))) != 0 {
-		// keep(n) where ?number is wanted: the box lives in long-lived memory.
-		let bx = cast(Ty, cast(Ty, want).elem)
-		mut stmts = []i64{}
-		let obj = temp(pos, rt_call(pos, "rt_ingot_alloc", args1(mk_int(pos, bx.size, ty_int)), cast(i64, bx)), cast(i64, bx))
-		stmts = append(stmts, cast(i64, obj))
-		if is_untyped(t) != 0 {
-			reconvert(cast(Node, x), opt_scalar(cast(Ty, want)))
-		}
-		stmts = append(stmts, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, obj.sym)), cast(i64, bx), 0), x))
-		let seq = mk_seq(pos, cast(i64, stmts), sym_ref_node(pos, cast(Sym, obj.sym)), want)
-		cast(Node, seq).region = R_OWNED
-		replace_node(cast(i64, e), seq)
-		return want
 	}
 	if is_ref(t) == 0 {
 		replace_node(cast(i64, e), x)
@@ -4804,7 +4796,7 @@ fn argo_fn(pos i64, t Ty) i64 {
 		if k == K_ERROR {
 			argo_emit(pos, els.stmts, cast(i64, b), mk_conv(pos, sym_ref_node(pos, x), CV_SAME, ty_string), cast(Ty, ty_string))
 		} else if opt_scalar(t) != 0 {
-			argo_emit(pos, els.stmts, cast(i64, b), mk_mem(pos, sym_ref_node(pos, x), 0, 0, 0, opt_scalar(t)), cast(Ty, opt_scalar(t)))
+			argo_emit(pos, els.stmts, cast(i64, b), opt_payload(pos, sym_ref_node(pos, x), opt_scalar(t)), cast(Ty, opt_scalar(t)))
 		} else {
 			argo_emit(pos, els.stmts, cast(i64, b), mk_conv(pos, sym_ref_node(pos, x), CV_SAME, t.elem), cast(Ty, t.elem))
 		}
@@ -4867,7 +4859,7 @@ fn argo_fn(pos i64, t Ty) i64 {
 		}
 		argo_raw(pos, lb, cast(i64, b), ":")
 		let vt = t.elem
-		let vv = from_bits(cast(Node, rt_call(pos, "rt_map_val", args2(sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, j2))), ty_int)), vt)
+		let vv = map_val(pos, sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, j2)), vt)
 		argo_emit(pos, lb, cast(i64, b), vv, cast(Ty, vt))
 		wb2.stmts = append(wb2.stmts, cast(i64, live))
 		body = append(body, cast(i64, w2))
@@ -5111,8 +5103,7 @@ fn argo_value(pos i64, body []i64, p i64, t Ty) i64 {
 		return sym_ref_node(pos, cast(Sym, obj.sym))
 	}
 	if k == K_OPT && opt_scalar(t) != 0 {
-		// ?number and ?bool: null is nil, else the number goes in a box.
-		let bx = cast(Ty, t.elem)
+		// ?number and ?bool: null is nil, else the number is the optional's payload (#632).
 		let out = declare_local(pos, "$", cast(i64, t))
 		body = append(body, let_stmt(pos, cast(Sym, out), mk_int(pos, 0, cast(i64, t))))
 		let ifs = cast(IfStmt, node_new(ST_IF, pos))
@@ -5122,13 +5113,8 @@ fn argo_value(pos i64, body []i64, p i64, t Ty) i64 {
 		if inner == 0 {
 			return 0
 		}
-		let obj = temp(pos, rt_call(pos, "rt_alloc", args1(mk_int(pos, bx.size, ty_int)), cast(i64, bx)), cast(i64, bx))
-		mut vp1 = cast(Block, ifs.then).stmts
-		vp1 = append(vp1, cast(i64, obj))
-		mut vp2 = cast(Block, ifs.then).stmts
-		vp2 = append(vp2, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, obj.sym)), cast(i64, bx), 0), inner))
 		mut vp3 = cast(Block, ifs.then).stmts
-		vp3 = append(vp3, assign_stmt(pos, sym_ref_node(pos, cast(Sym, out)), mk_conv(pos, sym_ref_node(pos, cast(Sym, obj.sym)), CV_SAME, cast(i64, t))))
+		vp3 = append(vp3, assign_stmt(pos, sym_ref_node(pos, cast(Sym, out)), mk_conv(pos, to_bits(cast(Node, inner)), CV_OPT_SOME, cast(i64, t))))
 		body = append(body, cast(i64, ifs))
 		return sym_ref_node(pos, cast(Sym, out))
 	}
@@ -5455,7 +5441,10 @@ fn argo_dfn(pos i64, t Ty) i64 {
 		mut wb2 = cast(Block, w2.body).stmts
 		argo_bound(pos, wb2, cast(i64, p), cast(i64, x), t)
 		let ev = argo_value(pos, wb2, cast(i64, p), cast(Ty, et))
-		if ev != 0 {
+		if ev != 0 && is_dyn_value(cast(Ty, et)) != 0 {
+			// A two-word element (#632).
+			wb2 = append(wb2, expr_stmt(cast(Node, lower_append_dyn(pos, sym_ref_node(pos, x), ev, t))))
+		} else if ev != 0 {
 			wb2 = append(wb2, expr_stmt(cast(Node, rt_call(pos, "rt_append", args3(sym_ref_node(pos, x), elem_bits(cast(Node, ev), t.elem), mk_int(pos, elem_size(t), ty_int)), cast(i64, t)))))
 		}
 		argo_err_return(pos, wb2, cast(i64, p))
@@ -5475,7 +5464,10 @@ fn argo_dfn(pos i64, t Ty) i64 {
 		wb3 = append(wb3, cast(i64, mk))
 		argo_err_return(pos, wb3, cast(i64, p))
 		let mv = argo_value(pos, wb3, cast(i64, p), cast(Ty, t.elem))
-		if mv != 0 {
+		if mv != 0 && is_dyn_value(cast(Ty, t.elem)) != 0 {
+			// Two-word values go in cells of the map's own (#632).
+			wb3 = append(wb3, expr_stmt(cast(Node, map_set_dyn(pos, sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, mk.sym)), mv, 0))))
+		} else if mv != 0 {
 			wb3 = append(wb3, expr_stmt(cast(Node, rt_call(pos, "rt_map_set", args4(sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, mk.sym)), to_bits(cast(Node, mv)), mk_int(pos, 1, ty_int)), ty_void))))
 		}
 		argo_err_return(pos, wb3, cast(i64, p))
@@ -5850,7 +5842,13 @@ fn say_opt_dyn(a Node, t Ty, prefix str) i64 {
 fn say_opt(a Node, t Ty, prefix str) i64 {
 	let pos = a.pos
 	mut stmts = []i64{}
-	let obj = temp(pos, mk_conv(pos, cast(i64, a), CV_SAME, ty_int), ty_int)
+	mut obj = cast(LetStmt, 0)
+	if opt_scalar(t) != 0 {
+		// An optional number keeps its two words: nil is tag 0 (#632).
+		obj = temp(pos, cast(i64, a), cast(i64, t))
+	} else {
+		obj = temp(pos, mk_conv(pos, cast(i64, a), CV_SAME, ty_int), ty_int)
+	}
 	stmts = append(stmts, cast(i64, obj))
 	let ifs = cast(IfStmt, node_new(ST_IF, pos))
 	ifs.cond = mk_bin(pos, "==", sym_ref_node(pos, cast(Sym, obj.sym)), mk_int(pos, 0, ty_int), ty_bool)
@@ -5864,7 +5862,7 @@ fn say_opt(a Node, t Ty, prefix str) i64 {
 	ifs.else_ = empty_block(pos)
 	mut vs4 = cast(Block, ifs.else_).stmts
 	if opt_scalar(t) != 0 {
-		vs4 = append(vs4, expr_stmt(say_arg(cast(Node, mk_mem(pos, sym_ref_node(pos, cast(Sym, obj.sym)), 0, 0, 0, opt_scalar(t))), prefix)))
+		vs4 = append(vs4, expr_stmt(say_arg(cast(Node, opt_payload(pos, sym_ref_node(pos, cast(Sym, obj.sym)), opt_scalar(t))), prefix)))
 	} else {
 		vs4 = append(vs4, expr_stmt(say_arg(cast(Node, mk_conv(pos, sym_ref_node(pos, cast(Sym, obj.sym)), CV_SAME, t.elem)), prefix)))
 	}
@@ -6264,7 +6262,7 @@ fn say_optnum_fn(t Ty, prefix str) Fn {
 	vp8 = append(vp8, expr_stmt(cast(Node, rt_call(pos, prefix + "raw", args1(lit_string(pos, "<nil>")), ty_void))))
 	ifs.else_ = empty_block(pos)
 	mut vp9 = cast(Block, ifs.else_).stmts
-	vp9 = append(vp9, expr_stmt(say_arg(cast(Node, mk_mem(pos, sym_ref_node(pos, cast(Sym, x)), 0, 0, 0, opt_scalar(t))), prefix)))
+	vp9 = append(vp9, expr_stmt(say_arg(cast(Node, opt_payload(pos, sym_ref_node(pos, cast(Sym, x)), opt_scalar(t))), prefix)))
 	body = append(body, cast(i64, ifs))
 	ck_fn = saved_fn
 	return cast(Fn, f)

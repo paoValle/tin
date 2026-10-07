@@ -7,7 +7,7 @@ import "say"
 
 // #353: ?i64, ?f64, ?bool and the other numbers are optionals too: nil is "no value", a number
 // converts to the optional where one is wanted, and a variable checked with != nil reads as the
-// number inside the branch (the optional is a box holding it).
+// number inside the branch (the optional is two words, a tag and the number, #632).
 
 type Item struct {
 	name  str
@@ -98,7 +98,7 @@ fn main() {
 	if u != nil {
 		say.Line(u + 1)
 	}
-	// Assigning inside a branch that checked != nil replaces the box: a copy made before is unchanged.
+	// Assigning inside a branch that checked != nil replaces the value: a copy made before is unchanged.
 	mut acc ?i64 = nil
 	for i in 0..3 {
 		if acc != nil {
@@ -130,7 +130,7 @@ fn main() {
 	say.Line(got.name, got.price, got.qty, got.ok, got.tags, got.by["k"], got.by["j"])
 	let bad = Item{name: "", by: map[str]?i64{}}
 	say.Line(argo.Get(`{"qty":"x"}`, mut bad), argo.Get(`{"qty":1.5}`, mut bad))
-	// A value stored in a global outlives the request: keep() puts its box in long-lived memory.
+	// A value stored in a global outlives the request; keep() of an optional number is the value itself.
 	remember(5)
 	hearth.Reset()
 	let held = cache

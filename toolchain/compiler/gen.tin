@@ -895,6 +895,13 @@ fn gen_dyn_pair(e i64, obj i64, tab i64, d i64) {
 		emit3(I_ADDLO, tab, tab, sym)
 		return
 	}
+	if k == EX_CONV && cast(Conv, e).kind == CV_OPT_SOME {
+		// An optional number holding a value (#632): tag 1, the bits as the payload.
+		gen_to(cast(Conv, e).x, obj, d)
+		mov(tab, obj)
+		load_imm(obj, 1)
+		return
+	}
 	if k == EX_CONV && cast(Conv, e).kind == CV_DYN_KEEP {
 		gen_dyn_pair(cast(Conv, e).x, obj, tab, d)
 		let done = new_label()
@@ -1004,7 +1011,7 @@ fn gen_to(e i64, dst i64, d i64) {
 		gen_binary(cast(Binary, e), dst, d)
 	} else if k == EX_INDEX {
 		gen_index_load(cast(IndexExpr, e), dst, d)
-	} else if k == EX_CONV && (cast(Conv, e).kind == CV_DYN || cast(Conv, e).kind == CV_DYN_KEEP || cast(Conv, e).kind == CV_DYN_OBJECT || cast(Conv, e).kind == CV_DYN_DESC) {
+	} else if k == EX_CONV && (cast(Conv, e).kind == CV_DYN || cast(Conv, e).kind == CV_DYN_KEEP || cast(Conv, e).kind == CV_DYN_OBJECT || cast(Conv, e).kind == CV_DYN_DESC || cast(Conv, e).kind == CV_OPT_SOME) {
 		gen_dyn_pair(e, dst, X17, d)
 	} else if k == EX_CONV && cast(Conv, e).kind == CV_DYN_TABLE_WORD {
 		mut spare = X16

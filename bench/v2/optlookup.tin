@@ -1,0 +1,46 @@
+package main
+
+import "say"
+
+// find returns the index of v in xs, or nil: an optional number is two words in registers,
+// never allocated (#632).
+fn find(xs []i64, v i64) ?i64 {
+	for i in 0..len(xs) {
+		if xs[i] == v {
+			return i
+		}
+	}
+	return nil
+}
+
+fn main() {
+	let xs = make([]i64, 64)
+	for i in 0..len(xs) {
+		xs[i] = (i * 37) % 101
+	}
+	mut total = 0
+	for round in 0..2000000 {
+		let r = find(xs, round % 101)
+		if r != nil {
+			total += r
+		} else {
+			total -= 1
+		}
+	}
+	// A slice of optional numbers: 16 bytes per element, no allocation per value.
+	mut opts = make([]?i64, 0, 1000000)
+	for i in 0..1000000 {
+		if i % 3 == 0 {
+			opts = append(opts, nil)
+		} else {
+			opts = append(opts, i)
+		}
+	}
+	mut sum = 0
+	for rep in 0..20 {
+		for o in opts {
+			sum += o ?? rep
+		}
+	}
+	say.Line(total, sum)
+}

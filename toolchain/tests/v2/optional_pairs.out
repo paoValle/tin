@@ -1,0 +1,14 @@
+58334 708334 0
+{1 -2.5 -2147483648 false} {2 <nil> <nil> <nil>} false false true
+18446744073709551615 -128 255 true
+false true true
+3 3
+digit 7 7
+digit <nil> -1
+fault: not a digit
+42 <nil> <nil>
+1.25 9
+[<nil> <nil> <nil> 8 <nil> 10 <nil>] [-1 7 <nil> 8 <nil> 10 <nil>] 7
+7 5 <nil> 7 <nil> 3
+<nil> true
+ceiling 8 <nil> [1 <nil> 3]

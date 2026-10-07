@@ -1908,7 +1908,9 @@ fn check_var(v Decl) {
 		}
 		return
 	}
-	if (is_int_const_expr(init) != 0) && s.tls == 0 {
+	// A constant fills the global's one data word; an optional number (two words, #632) is set
+	// at startup like any other value.
+	if (is_int_const_expr(init) != 0) && s.tls == 0 && (s.type_ == 0 || is_dyn_value(cast(Ty, s.type_)) == 0) {
 		v.val = const_value(init, 0)
 		if s.type_ == 0 {
 			s.type_ = ty_int
@@ -2843,7 +2845,7 @@ fn check_fn(f Fn) {
 	for i < len(params) {
 		let ps = cast(Sym, cast([]i64, f.locals)[i])
 		if ps.cell != 0 {
-			let alloc_call = rt_call(f.pos, "rt_alloc", args1(mk_int(f.pos, 8, ty_int)), ty_int)
+			let alloc_call = rt_call(f.pos, "rt_alloc", args1(mk_int(f.pos, cell_bytes(ps.type_), ty_int)), ty_int)
 			let let_cell = let_stmt(f.pos, cast(Sym, cast(Sym, ps).cell_sym), alloc_call)
 			let store_cell = assign_stmt(f.pos, mk_mem(f.pos, sym_ref_node(f.pos, cast(Sym, cast(Sym, ps).cell_sym)), 0, 0, 0, ps.type_), sym_ref_node(f.pos, cast(Sym, ps)))
 			cell_inits = append(cell_inits, let_cell)
@@ -3354,6 +3356,7 @@ const CV_DYN_KEEP = 13 // call the table's keep entry and preserve its table wor
 const CV_DYN_OBJECT = 14 // the object word of a checked dyn value
 const CV_DYN_DESC = 15 // a method descriptor loaded from a dyn value's table
 const CV_DYN_TABLE_WORD = 16 // the table word of a checked dyn value
+const CV_OPT_SOME = 17 // a number's bits as the payload of an optional number, tag 1 (#632)
 
 fn intrinsic_call(pos i64, name str, args i64, t i64) i64 {
 	let c = node_new(EX_CALL, pos)
@@ -6443,7 +6446,7 @@ fn check_let(s i64) {
 	if cast(Sym, cast(LetStmt, s).sym).cell != 0 {
 		let sym = cast(Sym, cast(LetStmt, s).sym)
 		let csym = sym.cell_sym
-		let alloc_call = rt_call(pos, "rt_alloc", args1(mk_int(pos, 8, ty_int)), ty_int)
+		let alloc_call = rt_call(pos, "rt_alloc", args1(mk_int(pos, cell_bytes(t), ty_int)), ty_int)
 		mut stmts = []i64{}
 		stmts = append(stmts, let_stmt(pos, cast(Sym, csym), alloc_call))
 		stmts = append(stmts, assign_stmt(pos, mk_mem(pos, sym_ref_node(pos, cast(Sym, csym)), 0, 0, 0, t), cast(LetStmt, s).init))
@@ -6501,8 +6504,8 @@ fn check_target(t i64) i64 {
 		cast(IdentExpr, t).ref = cast(i64, s)
 		cast(Node, t).type_ = s.type_
 		if s.unbox != 0 {
-			// the variable holds a box pointer, whatever the narrowed type says
-			cast(Node, t).type_ = ty_int
+			// the variable holds the optional's two words, whatever the narrowed type says
+			cast(Node, t).type_ = opt_of(s.type_)
 		}
 		return s.type_
 	}
@@ -6646,7 +6649,7 @@ fn check_assignable(e Node, from i64, to Ty) {
 	}
 	// Concrete objects convert to dyn S implicitly where they satisfy the shape. A dyn
 	// value keeps its exact shape; optionality can be added, but never removed.
-	if is_dyn_value(to) != 0 && is_dyn_value(cast(Ty, from)) != 0 {
+	if is_shape_value(to) != 0 && is_shape_value(cast(Ty, from)) != 0 {
 		if dyn_type(cast(Ty, from)) != dyn_type(to) {
 			err_code_at(e.pos, "E514 DYN_WIDENING", "dyn values do not widen (no downcast, no dyn-to-dyn): convert from the concrete value")
 		}
@@ -6705,16 +6708,26 @@ fn check_assignable(e Node, from i64, to Ty) {
 	}
 }
 
-// box_value replaces the number or bool e with a new box holding it, of the optional type to.
+// box_value replaces the number or bool e with the optional number of type to holding it: the
+// two-word value [1, bits] (#632), with no allocation.
 fn box_value(e Node, to Ty) {
-	let pos = e.pos
-	let bt = cast(Ty, to.elem)
-	let inner = expr_clone(cast(i64, e))
-	mut stmts = []i64{}
-	let obj = temp(pos, rt_call(pos, "rt_alloc", args1(mk_int(pos, bt.size, ty_int)), cast(i64, bt)), cast(i64, bt))
-	stmts = append(stmts, cast(i64, obj))
-	stmts = append(stmts, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, obj.sym)), cast(i64, bt), 0), inner))
-	replace_node(cast(i64, e), mk_seq(pos, cast(i64, stmts), sym_ref_node(pos, cast(Sym, obj.sym)), cast(i64, to)))
+	let inner = cast(Node, expr_clone(cast(i64, e)))
+	replace_node(cast(i64, e), mk_conv(e.pos, to_bits(inner), CV_OPT_SOME, cast(i64, to)))
+}
+
+// opt_payload is the value inside the optional number x (two words, already known to be set)
+// as its number type t (#632).
+fn opt_payload(pos i64, x i64, t i64) i64 {
+	return from_bits(cast(Node, mk_conv(pos, x, CV_DYN_TABLE_WORD, ty_int)), t)
+}
+
+// cell_bytes is the size of the cell that holds a captured variable of type t: two words for a
+// two-word value (dyn, optional numbers).
+fn cell_bytes(t i64) i64 {
+	if is_dyn_value(cast(Ty, t)) != 0 {
+		return 16
+	}
+	return 8
 }
 
 // check_value rejects a call with no result, or several, where one value is needed.
@@ -6908,7 +6921,7 @@ fn bind_targets(pos i64, targets []i64, temps []Sym, define i64, stmts []i64) {
 				sym.fixed = bind_fixed
 				if sym.cell != 0 {
 					let csym = sym.cell_sym
-					let alloc_call = rt_call(pos, "rt_alloc", args1(mk_int(pos, 8, ty_int)), ty_int)
+					let alloc_call = rt_call(pos, "rt_alloc", args1(mk_int(pos, cell_bytes(ts.type_), ty_int)), ty_int)
 					stmts = append(stmts, let_stmt(pos, cast(Sym, csym), alloc_call))
 					stmts = append(stmts, assign_stmt(pos, mk_mem(pos, sym_ref_node(pos, cast(Sym, csym)), 0, 0, 0, ts.type_), sym_ref_node(pos, ts)))
 					i = i + 1
@@ -7187,7 +7200,7 @@ fn lower_try_stmt(s i64, tr_in i64, mode i64, declared i64) {
 		if lsym.cell != 0 {
 			// A closure captures it: the value lives in a cell, as check_let makes it (#494).
 			let csym = lsym.cell_sym
-			let alloc_call = rt_call(pos, "rt_alloc", args1(mk_int(pos, 8, ty_int)), ty_int)
+			let alloc_call = rt_call(pos, "rt_alloc", args1(mk_int(pos, cell_bytes(vs.type_), ty_int)), ty_int)
 			stmts = append(stmts, let_stmt(pos, cast(Sym, csym), alloc_call))
 			stmts = append(stmts, assign_stmt(pos, mk_mem(pos, sym_ref_node(pos, cast(Sym, csym)), 0, 0, 0, vs.type_), sym_ref_node(pos, vs)))
 		} else {
@@ -7552,7 +7565,7 @@ fn range_bind(pos i64, target i64, value i64, t i64, define i64) i64 {
 			cast(Fn, ck_fn).slots = cast(Fn, ck_fn).slots + 1
 			cast(Fn, ck_fn).locals = append(cast(Fn, ck_fn).locals, cast(Sym, csym))
 			sym.cell_sym = cast(i64, csym)
-			let alloc_call = rt_call(pos, "rt_alloc", args1(mk_int(pos, 8, ty_int)), ty_int)
+			let alloc_call = rt_call(pos, "rt_alloc", args1(mk_int(pos, cell_bytes(t), ty_int)), ty_int)
 			let blk = cast(Block, node_new(ST_BLOCK, pos))
 			blk.stmts = []i64{}
 			blk.stmts = append(blk.stmts, let_stmt(pos, csym, alloc_call))
@@ -9435,7 +9448,7 @@ fn lower_for_init(s i64) {
 				nb.stmts = []i64{}
 				nb.flat = 1
 				nb.stmts = append(nb.stmts, cast(i64, old_val))
-				nb.stmts = append(nb.stmts, assign_stmt(pos, sym_ref_node(pos, cast(Sym, csym)), rt_call(pos, "rt_alloc", args1(mk_int(pos, 8, ty_int)), ty_int)))
+				nb.stmts = append(nb.stmts, assign_stmt(pos, sym_ref_node(pos, cast(Sym, csym)), rt_call(pos, "rt_alloc", args1(mk_int(pos, cell_bytes(t), ty_int)), ty_int)))
 				nb.stmts = append(nb.stmts, assign_stmt(pos, mk_mem(pos, sym_ref_node(pos, cast(Sym, csym)), 0, 0, 0, t), sym_ref_node(pos, cast(Sym, old_val.sym))))
 				nb.stmts = append(nb.stmts, inner.post)
 				inner.post = cast(i64, nb)
@@ -9929,7 +9942,7 @@ fn keep_fn(t Ty) Fn {
 	} else if k == K_FUNC {
 		// A closure: its descriptor and captured variables, deep (rt_keep_closure, #170).
 		ret.value = rt_call(pos, "rt_keep_closure", args1(sym_ref_node(pos, x)), cast(i64, t))
-	} else if k == K_OPT {
+	} else if k == K_OPT && opt_scalar(t) == 0 {
 		let ifs = cast(IfStmt, node_new(ST_IF, pos))
 		ifs.cond = mk_bin(pos, "==", sym_ref_node(pos, x), mk_int(pos, 0, cast(i64, t)), ty_bool)
 		ifs.then = empty_block(pos)
@@ -10049,6 +10062,10 @@ fn keep_fn(t Ty) Fn {
 }
 
 fn keep_call(pos i64, f Fn, arg i64, t i64) i64 {
+	if opt_scalar(cast(Ty, t)) != 0 {
+		// An optional number holds no reference: it is kept as it is (#632).
+		return arg
+	}
 	let c = node_new(EX_CALL, pos)
 	cast(Call, c).name = f.qname
 	cast(Call, c).args = cast([]i64, args1(arg))
@@ -10091,7 +10108,7 @@ fn fn_ref_node(pos i64, f Fn) i64 {
 
 // rc_inc_call emits rt_rc_inc(v); a dyn value counts its object (#618).
 fn rc_inc_call(pos i64, v i64) Node {
-	if is_dyn_value(cast(Ty, cast(Node, v).type_)) != 0 {
+	if is_shape_value(cast(Ty, cast(Node, v).type_)) != 0 {
 		v = mk_conv(pos, v, CV_DYN_OBJECT, ty_int)
 	}
 	let c = cast(Call, rt_call(pos, "rt_rc_inc", args1(v), ty_void))
@@ -10105,7 +10122,7 @@ fn rc_inc_call(pos i64, v i64) Node {
 // rt_rc_dec_dyn instead (#618; drop is unused).
 fn rc_dec_call(pos i64, v i64, drop i64) Node {
 	let vt = cast(Node, v).type_
-	if is_dyn_value(cast(Ty, vt)) != 0 {
+	if is_shape_value(cast(Ty, vt)) != 0 {
 		let held = temp(pos, v, vt)
 		let object = mk_conv(pos, sym_ref_node(pos, cast(Sym, held.sym)), CV_DYN_OBJECT, ty_int)
 		let table = mk_conv(pos, sym_ref_node(pos, cast(Sym, held.sym)), CV_DYN_TABLE_WORD, ty_int)
@@ -10139,7 +10156,7 @@ fn rc_map_bits(t Ty) i64 {
 	if rc_counted(cast(Ty, t.elem)) != 0 {
 		b = b | 2
 	}
-	if is_dyn_value(cast(Ty, t.elem)) != 0 {
+	if is_shape_value(cast(Ty, t.elem)) != 0 {
 		// Each value is a cell of the map's own (#567).
 		b = b | 2
 	}
@@ -10149,7 +10166,7 @@ fn rc_map_bits(t Ty) i64 {
 // rc_map_drop is the value side's drop of a map type (the runtime's no-op when that
 // side is not counted).
 fn rc_map_drop(t Ty) i64 {
-	if is_dyn_value(cast(Ty, t.elem)) != 0 {
+	if is_shape_value(cast(Ty, t.elem)) != 0 {
 		// A cell releases its object (#618).
 		return cast(i64, find_fn("rt_map_cell_drop"))
 	}
@@ -10172,7 +10189,7 @@ fn drop_fn(t i64) i64 {
 	if kind_of(cast(Ty, t)) == K_STRING {
 		return rc_none()
 	}
-	if is_dyn_value(cast(Ty, t)) != 0 {
+	if is_shape_value(cast(Ty, t)) != 0 {
 		// rc_dec_call takes a dyn value's drop from its table (#618).
 		return rc_none()
 	}
@@ -10232,7 +10249,7 @@ fn rc_drop_body(pos i64, body []i64, x i64, t Ty) {
 			mut vs1 = cast(Block, live.then).stmts
 			vs1 = append(vs1, expr_stmt(rc_dec_call(pos, from_bits(cast(Node, rt_call(pos, "rt_map_key", args2(x, sym_ref_node(pos, cast(Sym, j))), ty_int)), kt), rc_none())))
 		}
-		if is_dyn_value(cast(Ty, t.elem)) != 0 {
+		if is_shape_value(cast(Ty, t.elem)) != 0 {
 			// The entry's dyn cell (#567), which releases its object (#618).
 			mut vs12 = cast(Block, live.then).stmts
 			vs12 = append(vs12, expr_stmt(rc_dec_call(pos, rt_call(pos, "rt_map_val", args2(x, sym_ref_node(pos, cast(Sym, j))), ty_int), rc_map_drop(t))))
@@ -10441,7 +10458,7 @@ fn arenacopy_fn(t Ty) Fn {
 		ret.value = rt_call(pos, "rt_arena_fault", args1(sym_ref_node(pos, x)), cast(i64, t))
 	} else if k == K_STRING {
 		ret.value = rt_call(pos, "rt_arena_str", args1(sym_ref_node(pos, x)), cast(i64, t))
-	} else if k == K_OPT {
+	} else if k == K_OPT && opt_scalar(t) == 0 {
 		let ifs = cast(IfStmt, node_new(ST_IF, pos))
 		ifs.cond = mk_bin(pos, "==", sym_ref_node(pos, x), mk_int(pos, 0, cast(i64, t)), ty_bool)
 		ifs.then = empty_block(pos)
@@ -10544,7 +10561,12 @@ fn arenacopy_fn(t Ty) Fn {
 			setname = "rt_map_setk"
 		}
 		mut vs9 = cast(Block, live.then).stmts
-		vs9 = append(vs9, expr_stmt(cast(Node, rt_call(pos, setname, args3(sym_ref_node(pos, cast(Sym, out.sym)), to_bits(cast(Node, kv)), to_bits(cast(Node, vv))), ty_void))))
+		if is_dyn_value(cast(Ty, t.elem)) != 0 {
+			// A two-word value goes into a cell of the new map (#567, #632).
+			vs9 = append(vs9, expr_stmt(cast(Node, map_set_dyn(pos, sym_ref_node(pos, cast(Sym, out.sym)), to_bits(cast(Node, kv)), vv, kc))))
+		} else {
+			vs9 = append(vs9, expr_stmt(cast(Node, rt_call(pos, setname, args3(sym_ref_node(pos, cast(Sym, out.sym)), to_bits(cast(Node, kv)), to_bits(cast(Node, vv))), ty_void))))
+		}
 		wb.stmts = append(wb.stmts, cast(i64, live))
 		body = append(body, cast(i64, w))
 		ret.value = sym_ref_node(pos, cast(Sym, out.sym))

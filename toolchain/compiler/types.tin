@@ -158,18 +158,14 @@ fn chan_of(elem i64) i64 {
 }
 
 fn opt_of(elem i64) i64 {
-	if scalar_optionable(cast(Ty, elem)) != 0 {
-		return interned(K_OPT, box_of(elem), 0, cast([]i64, 0), cast([]i64, 0), 0)
-	}
 	return interned(K_OPT, elem, 0, cast([]i64, 0), cast([]i64, 0), 0)
 }
 
-// ---- optional numbers and bools (#353) ----
-// ?i64, ?f64, ?bool and the like are an optional of a hidden one-field struct, the box that holds
-// the value: nil is no box. A number converts to the optional by making a box (check_assignable),
-// and a variable narrowed by `x != nil` reads the box's field back (Sym.unbox).
-shared mut box_scalars []i64
-shared mut box_structs []i64
+// ---- optional numbers and bools (#353, #632) ----
+// ?i64, ?f64, ?bool and the like are two-word values, never allocated: a tag word (0 for nil,
+// 1 for a value) and a payload word holding the number's bits (a float's f64 bits). They travel
+// on the two-word paths of dyn values (is_dyn_value); a variable narrowed by `x != nil` keeps
+// the pair and reads its payload (Sym.unbox, opt_payload).
 
 // scalar_optionable reports whether ?t is an optional number or bool.
 fn scalar_optionable(t Ty) i64 {
@@ -177,54 +173,12 @@ fn scalar_optionable(t Ty) i64 {
 	return i64((k == K_INT || k == K_FLOAT || k == K_BOOL) && is_secret(t) == 0 && t.bound == 0)
 }
 
-// box_of is the struct that holds a value of the number or bool type s.
-fn box_of(s i64) i64 {
-	if cast(i64, box_scalars) == 0 {
-		box_scalars = []i64{}
-		box_structs = []i64{}
-	}
-	mut i = 0
-	for i < len(box_scalars) {
-		if box_scalars[i] == s {
-			return box_structs[i]
-		}
-		i = i + 1
-	}
-	let t = cast(Ty, ty_new(K_STRUCT, cast(Ty, s).name))
-	mut fs = []i64{}
-	let rec = cast(Field, calloc(6, 8))
-	rec.name = "v"
-	rec.ty = s
-	rec.json = ""
-	fs = append(fs, cast(i64, rec))
-	t.fields = fs
-	layout_struct(t)
-	box_scalars = append(box_scalars, s)
-	box_structs = append(box_structs, cast(i64, t))
-	return cast(i64, t)
-}
-
-// box_scalar is the number or bool type that the struct t boxes, or 0.
-fn box_scalar(t Ty) i64 {
-	if cast(i64, box_structs) == 0 {
-		return 0
-	}
-	mut i = 0
-	for i < len(box_structs) {
-		if box_structs[i] == cast(i64, t) {
-			return box_scalars[i]
-		}
-		i = i + 1
-	}
-	return 0
-}
-
 // opt_scalar is s in the optional ?s of a number or bool, else 0.
 fn opt_scalar(t Ty) i64 {
-	if cast(i64, t) == 0 || kind_of(t) != K_OPT {
+	if cast(i64, t) == 0 || kind_of(t) != K_OPT || scalar_optionable(cast(Ty, t.elem)) == 0 {
 		return 0
 	}
-	return box_scalar(cast(Ty, t.elem))
+	return t.elem
 }
 
 // dyn_of is the type of a dyn S value: the shape declaration in gdecl and the
@@ -283,8 +237,15 @@ fn kind_of(t Ty) i64 {
 	return t.kind
 }
 
-// dyn values, including optionals, occupy an object word and a table word.
+// is_dyn_value reports a two-word value: a dyn value or ?dyn (an object word and a table
+// word), or an optional number (a tag word and a payload word, #632). Code that reads the
+// second word as a table asks is_shape_value.
 fn is_dyn_value(t Ty) i64 {
+	return i64(is_shape_value(t) != 0 || opt_scalar(t) != 0)
+}
+
+// is_shape_value reports a dyn S or ?dyn S value: its second word is a method table.
+fn is_shape_value(t Ty) i64 {
 	let k = kind_of(t)
 	return i64(k == K_DYN || (k == K_OPT && kind_of(cast(Ty, t.elem)) == K_DYN))
 }
@@ -423,7 +384,8 @@ fn nilable(t i64) i64 {
 // is_ref reports whether values of t are pointers to heap or static memory.
 fn is_ref(t i64) i64 {
 	let k = kind_of(cast(Ty, t))
-	return i64(k == K_STRING || k == K_STRUCT || k == K_SLICE || k == K_MAP || k == K_FUNC || k == K_ERROR || k == K_CHAN || k == K_OPT)
+	// An optional number holds no reference (#632).
+	return i64(k == K_STRING || k == K_STRUCT || k == K_SLICE || k == K_MAP || k == K_FUNC || k == K_ERROR || k == K_CHAN || (k == K_OPT && opt_scalar(cast(Ty, t)) == 0))
 }
 
 // default_type is the type an untyped constant gets when nothing else decides it.

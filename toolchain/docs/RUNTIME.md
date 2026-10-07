@@ -16,7 +16,8 @@ JSON (`argo`) are ordinary library packages built on it.
 | slice | pointer to a 32-byte header `[len, cap, data pointer, region]`; `region` is 1 when the data lives in the ingot heap |
 | map | pointer to a 192-byte header (count, index slots, keys, values, index, string keys?, shift, tombstones, hashes, region, entries used, entry capacity, live bytes, ...); entries in insertion order found through an open-addressing index, in chunks of 4096 past that many entries (see Maps) |
 | struct | pointer to its fields, laid out widest first with natural alignment, size rounded to 8 |
-| `?T` | the T pointer, or 0 for nil |
+| `?T` | the T pointer, or 0 for nil; `?dyn S` is the dyn value's two words, nil when the object word is 0 |
+| `?T` over a number or `bool` | two words, `[tag, payload]`: tag 0 is nil (payload 0), tag 1 holds the number's bits in the payload (an `f32` or `f64` as its f64 bits); passed and returned in two registers like a `dyn` value, 16 bytes in fields and slice elements, a 24-byte cell in a map, never allocated (#632) |
 | fault | a pointer to a str holding the full message (`outer: inner` when wrapped), or 0 for nil; four words before the str hold the record `[trace, joined, identity, cause]` (design/interface_faults.md) |
 | func value | the code address |
 
