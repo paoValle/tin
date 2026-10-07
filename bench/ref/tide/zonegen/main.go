@@ -205,6 +205,38 @@ func main() {
 				}
 			}
 		}
+		arithBases := []int64{0, 1735603200, 1759190400, 2222121600}
+		if len(trs) > 0 {
+			arithBases = append(arithBases, trs[0], trs[len(trs)/2], trs[len(trs)-1])
+		}
+		for _, sec := range arithBases {
+			t := time.Unix(sec, 0).In(loc)
+			for _, y := range []int{0, 1, -1} {
+				for _, mo := range []int{0, 1, -1, 13, -13} {
+					for _, d := range []int{0, 1, -1, 28, -28, 31, -31} {
+						fmt.Fprintf(in, "ADDDATE %d %d %d %d\n", sec, y, mo, d)
+						expF("adddate %s %d %d %d %d %d\n", name, sec, y, mo, d, t.AddDate(y, mo, d).UnixNano())
+					}
+				}
+			}
+		}
+		truncBases := []int64{0, 1735603200, 1759317725, 2222121600}
+		durs := []int64{1, 3, 7, 500, 1000, 1000000, 1500000, 1000000000, 90000000000, 3600000000000, 86400000000000, 604800000000000, 1234567, -5}
+		for _, sec := range truncBases {
+			t := time.Unix(sec, 0).In(loc)
+			for _, d := range durs {
+				fmt.Fprintf(in, "TRUNC %d %d\n", sec, d)
+				expF("trunc %s %d %d %d\n", name, sec, d, t.Truncate(time.Duration(d)).UnixNano())
+				fmt.Fprintf(in, "ROUND %d %d\n", sec, d)
+				expF("round %s %d %d %d\n", name, sec, d, t.Round(time.Duration(d)).UnixNano())
+			}
+		}
+		for _, sec := range append(append([]int64{}, arithBases...), truncBases...) {
+			t := time.Unix(sec, 0).In(loc)
+			iy, iw := t.ISOWeek()
+			fmt.Fprintf(in, "ISOWEEK %d\n", sec)
+			expF("isoweek %s %d %d %d\n", name, sec, iy, iw)
+		}
 		for _, tr := range trs {
 			formatAt(tr, 0)
 			for _, d := range []int64{-7200, -3600, -1800, -900, -1, 0, 1, 900, 1800, 3600, 7200} {

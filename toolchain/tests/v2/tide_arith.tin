@@ -1,0 +1,107 @@
+package main
+
+import "say"
+import "fault"
+import "quarry"
+import "tide"
+
+// zone loads a committed TZif fixture, as the other tide tests do.
+fn zone(name str) !tide.Zone {
+	let (data, err) = quarry.ReadFile("toolchain/tests/data/tzdata/" + name)
+	if err != nil {
+		fail err
+	}
+	return try tide.LoadZoneData(name, data)
+}
+
+// isoTests are civil dates whose ISO year and week are checked.
+type IsoCase struct {
+	y  i64
+	mo i64
+	d  i64
+}
+
+fn main() {
+	let names = []str{"Europe/Paris", "America/New_York", "Asia/Kathmandu", "Etc/GMT+5"}
+	mut zones = make([]tide.Zone, 0, 4)
+	for _, name in names {
+		let z = zone(name) catch err {
+			say.Line("fixture fault", name, err)
+			return
+		}
+		zones = append(zones, z)
+	}
+	let paris = zones[0]
+	let ny = zones[1]
+	let kat = zones[2]
+
+	// AddDate keeps the wall-clock fields and normalizes like DateIn: Jan 31 + 1 month is early
+	// March, month 13 is next year, negative days go back.
+	let bases = []i64{0, 1735603200, 1759190400, 2222121600}
+	let years = []i64{0, 1, -1}
+	let months = []i64{0, 1, -1, 13, -13}
+	let days = []i64{0, 1, -1, 28, -28, 31, -31}
+	for _, z in zones {
+		for _, sec in bases {
+			for _, y in years {
+				for _, mo in months {
+					for _, d in days {
+						let ns = tide.AddDate(sec*1000000000, z, y, mo, d)
+						say.Line("adddate", z.Name(), sec, y, mo, d, ns)
+					}
+				}
+			}
+		}
+	}
+	// January 31 + 1 month in a leap year and a common year, and the month-end cases.
+	let wall = []i64{1738281600, 1706659200, 1675123200}
+	for _, sec in wall {
+		say.Line("adddate special", sec, tide.AddDate(sec*1000000000, paris, 0, 1, 0), tide.AddDate(sec*1000000000, paris, 0, 0, 31))
+	}
+
+	// Truncate and Round measure from the zero time (0001-01-01), not the Unix epoch.
+	let durs = []i64{1, 3, 7, 500, 1000, 1000000, 1500000, 1000000000, 90000000000, 3600000000000, 86400000000000, 604800000000000, 1234567, 0, -5}
+	for _, sec in []i64{0, 1735603200, 1759317725, 2222121600} {
+		for _, d in durs {
+			say.Line("trunc", paris.Name(), sec, d, tide.Truncate(sec*1000000000, d))
+			say.Line("round", paris.Name(), sec, d, tide.Round(sec*1000000000, d))
+		}
+	}
+	// Halfway rounds up: the absolute instant is 62135596800000000001 (r = 1 of d = 2).
+	say.Line("half", tide.Round(1, 2), tide.Round(3, 4), tide.Round(-1, 2), tide.Round(-3, 4))
+	// The result of a truncation below 1677-09-21 panics (a guard turns it into fault.Panic).
+	let ok = guard {
+		let t = tide.Truncate(-9223372036854775807 - 1, 3600000000000)
+		t != 0
+	} catch err {
+		fault.Is(err, fault.Panic)
+	}
+	say.Line("trunc panic", ok)
+	let ok2 = guard {
+		let t = tide.Round(-9223372036854775807 - 1, 86400000000000)
+		t != 0
+	} catch err {
+		fault.Is(err, fault.Panic)
+	}
+	say.Line("round panic", ok2)
+
+	// ISOWeek: week 1 holds the first Thursday; Jan 1-3 can belong to the previous ISO year.
+	let isos = []IsoCase{
+		IsoCase{y: 2025, mo: 1, d: 1}, IsoCase{y: 2024, mo: 12, d: 31}, IsoCase{y: 2021, mo: 1, d: 1},
+		IsoCase{y: 2020, mo: 12, d: 31}, IsoCase{y: 2019, mo: 12, d: 30}, IsoCase{y: 2021, mo: 1, d: 4},
+		IsoCase{y: 2016, mo: 2, d: 29}, IsoCase{y: 1970, mo: 1, d: 1}, IsoCase{y: 2000, mo: 1, d: 1},
+		IsoCase{y: 1999, mo: 12, d: 31}, IsoCase{y: 2015, mo: 12, d: 28}, IsoCase{y: 2016, mo: 1, d: 3},
+		IsoCase{y: 1, mo: 1, d: 1}, IsoCase{y: 9999, mo: 12, d: 31},
+	}
+	for _, c in isos {
+		let (iy, iw) = tide.ISOWeek(tide.Civil{Year: c.y, Month: c.mo, Day: c.d})
+		say.Line("isoweek", c.y, c.mo, c.d, iy, iw)
+	}
+	// ISOWeek in a zone comes from the civil date there (near a date boundary UTC differs).
+	let c = tide.In(1759317725000000000, kat)
+	let (ky, kw) = tide.ISOWeek(c)
+	say.Line("isoweek zone", kat.Name(), ky, kw, c.Year, c.Month, c.Day)
+	let cn = tide.In(1759317725000000000, ny)
+	let (nyw, nww) = tide.ISOWeek(cn)
+	say.Line("isoweek zone", ny.Name(), nyw, nww, cn.Year, cn.Month, cn.Day)
+}

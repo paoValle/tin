@@ -110,6 +110,19 @@ fn main() {
 				res = "out"
 			}
 			say.Line("parsebad", z.Name(), sec, nano, idx, v, res)
+		} else if p[0] == "ADDDATE" {
+			let sec = num(p[1])
+			say.Line("adddate", z.Name(), sec, num(p[2]), num(p[3]), num(p[4]), tide.AddDate(sec*1000000000, z, num(p[2]), num(p[3]), num(p[4])))
+		} else if p[0] == "TRUNC" {
+			let sec = num(p[1])
+			say.Line("trunc", z.Name(), sec, num(p[2]), tide.Truncate(sec*1000000000, num(p[2])))
+		} else if p[0] == "ROUND" {
+			let sec = num(p[1])
+			say.Line("round", z.Name(), sec, num(p[2]), tide.Round(sec*1000000000, num(p[2])))
+		} else if p[0] == "ISOWEEK" {
+			let sec = num(p[1])
+			let (iy, iw) = tide.ISOWeek(tide.In(sec*1000000000, z))
+			say.Line("isoweek", z.Name(), sec, iy, iw)
 		} else if p[0] == "DATE" {
 			let ns = tide.DateIn(num(p[1]), num(p[2]), num(p[3]), num(p[4]), num(p[5]), num(p[6]), num(p[7]), z)
 			say.Line("date", z.Name(), num(p[1]), num(p[2]), num(p[3]), num(p[4]), num(p[5]), num(p[6]), num(p[7]), ns)

@@ -1,0 +1,148 @@
+package tide
+
+// arith.tin is civil-time arithmetic: AddDate, and Truncate and Round of an instant in a
+// duration. Truncate and Round follow Go's time package and measure from the zero time
+// (0001-01-01), not the Unix epoch; the remainder math here needs no 128-bit intermediate.
+
+// unixToInternal is the seconds from the zero time (0001-01-01) to the Unix epoch.
+const unixToInternal = 62135596800
+
+// absSec splits a Unix instant into Go's absolute seconds (since the zero time) and nanoseconds
+// in [0, 1e9).
+fn absSec(ns i64) (i64, i64) {
+	mut sec = ns / Second
+	mut nsec = ns - sec*Second
+	if nsec < 0 {
+		nsec += Second
+		sec -= 1
+	}
+	return sec + unixToInternal, nsec
+}
+
+// absToUnix is the inverse of absSec; a negative or large nanosecond borrows. It panics when the
+// result does not fit Unix nanoseconds (1677-09-21 to 2262-04-11), like Date.
+fn absToUnix(sec i64, nsec i64) i64 {
+	mut s = sec
+	mut n = nsec
+	if n < 0 {
+		n += Second
+		s -= 1
+	}
+	return (s - unixToInternal)*Second + n
+}
+
+// addMod returns (a + b) % d for a and b in [0, d), without overflowing.
+fn addMod(a i64, b i64, d i64) i64 {
+	let s = u64(a) + u64(b)
+	if s >= u64(d) {
+		return i64(s - u64(d))
+	}
+	return i64(s)
+}
+
+// mulMod returns (a * b) % d for a in [0, d) and b >= 0, by double-and-add.
+fn mulMod(a i64, b i64, d i64) i64 {
+	mut result = u64(0)
+	mut x = u64(a)
+	let dd = u64(d)
+	mut y = u64(b)
+	for y > 0 {
+		if y&1 == 1 {
+			let s = result + x
+			if s >= dd {
+				result = s - dd
+			} else {
+				result = s
+			}
+		}
+		let x2 = x + x
+		if x2 >= dd {
+			x = x2 - dd
+		} else {
+			x = x2
+		}
+		y >>= 1
+	}
+	return i64(result)
+}
+
+// remAbs returns (sec*1e9 + nsec) % d for sec, nsec >= 0.
+fn remAbs(sec i64, nsec i64, d i64) i64 {
+	return addMod(mulMod(sec%d, 1000000000, d), nsec%d, d)
+}
+
+// divRem returns the remainder of the absolute time (sec, nsec) in d as Go's Time.div does: in
+// [0, d), with a negative instant kept in the same interval.
+fn divRem(sec i64, nsec i64, d i64) i64 {
+	mut s = sec
+	mut ns = nsec
+	let neg = s < 0
+	if neg {
+		s = -s
+		ns = -ns
+		if ns < 0 {
+			ns += Second
+			s -= 1
+		}
+	}
+	let r = remAbs(s, ns, d)
+	if neg && r != 0 {
+		return d - r
+	}
+	return r
+}
+
+// Truncate returns ns rounded down to a multiple of d since the zero time (0001-01-01), like
+// Go's Time.Truncate; d <= 0 returns ns unchanged. A result outside Unix nanoseconds panics.
+fn Truncate(ns i64, d i64) i64 {
+	if d <= 0 {
+		return ns
+	}
+	let (sec, nsec) = absSec(ns)
+	let r = divRem(sec, nsec, d)
+	return absToUnix(sec, nsec - r)
+}
+
+// Round returns ns rounded to the nearest multiple of d since the zero time, with halfway values
+// rounding up, like Go's Time.Round; d <= 0 returns ns unchanged. A result outside Unix
+// nanoseconds panics.
+fn Round(ns i64, d i64) i64 {
+	if d <= 0 {
+		return ns
+	}
+	let (sec, nsec) = absSec(ns)
+	let r = divRem(sec, nsec, d)
+	// Halfway rounds up: r >= d-r means 2*r >= d.
+	if r < d-r {
+		return absToUnix(sec, nsec-r)
+	}
+	return absToUnix(sec, nsec+(d-r))
+}
+
+// AddDate returns the instant years, months and days after ns in zone z, keeping the wall-clock
+// fields like Go's Time.AddDate: January 31 plus one month lands in early March. Out-of-range
+// fields carry the way DateIn does.
+fn AddDate(ns i64, z Zone, years i64, months i64, days i64) i64 {
+	let c = In(ns, z)
+	return DateIn(c.Year+years, c.Month+months, c.Day+days, c.Hour, c.Min, c.Sec, c.Nano, z)
+}
+
+// ISOWeek returns the ISO 8601 year and week (1 to 53) of the civil date, like Go's
+// Time.ISOWeek: week 1 is the week holding the first Thursday of the year.
+fn ISOWeek(c Civil) (i64, i64) {
+	let days = DaysFromCivil(c.Year, c.Month, c.Day)
+	// The Thursday of the week containing the date; ISO weekdays are Monday=1..Sunday=7, and
+	// 1970-01-01 was a Thursday.
+	mut wd = (days + 3) % 7
+	if wd < 0 {
+		wd += 7
+	}
+	wd += 1
+	let thu = days + 4 - wd
+	let (y, mo, d) = CivilFromDays(thu)
+	mut yday = daysBefore(mo) + d
+	if mo > 2 && IsLeap(y) {
+		yday += 1
+	}
+	return y, (yday-1)/7 + 1
+}

@@ -814,6 +814,10 @@ Package lever parses command-line flags (like Go's flag): register handles, Pars
 
 Package tide is clocks, durations and civil (calendar) time in UTC, like Go's time package.
 
+- `Truncate(ns i64, d i64) i64`: Truncate returns ns rounded down to a multiple of d since the zero time (0001-01-01), like Go's Time.Truncate; d <= 0 returns ns unchanged. A result outside Unix nanoseconds panics.
+- `Round(ns i64, d i64) i64`: Round returns ns rounded to the nearest multiple of d since the zero time, with halfway values rounding up, like Go's Time.Round; d <= 0 returns ns unchanged. A result outside Unix nanoseconds panics.
+- `AddDate(ns i64, z Zone, years i64, months i64, days i64) i64`: AddDate returns the instant years, months and days after ns in zone z, keeping the wall-clock fields like Go's Time.AddDate: January 31 plus one month lands in early March. Out-of-range fields carry the way DateIn does.
+- `ISOWeek(c Civil) (i64, i64)`: ISOWeek returns the ISO 8601 year and week (1 to 53) of the civil date, like Go's Time.ISOWeek: week 1 is the week holding the first Thursday of the year.
 - `const Layout = "01/02 03:04:05PM '06 -0700"`: The standard layouts, as Go's time package names them.
 - `const ANSIC = "Mon Jan _2 15:04:05 2006"`
 - `const UnixDate = "Mon Jan _2 15:04:05 MST 2006"`
