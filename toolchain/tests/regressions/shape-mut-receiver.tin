@@ -1,0 +1,20 @@
+package main
+
+import "say"
+
+shape Namer {
+	Name() str
+}
+
+type Dog struct {
+	n str
+}
+
+fn (d mut Dog) Name() str { return "dog {d.n}" }
+
+// #644: accepted, and a dyn parameter version failed with E701 inside an unrelated callee.
+fn main() {
+	let d = Dog{n: "rex"}
+	let v dyn Namer = d
+	say.Line(v.Name())
+}

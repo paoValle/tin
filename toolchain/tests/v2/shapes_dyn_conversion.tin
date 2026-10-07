@@ -9,12 +9,12 @@ fn (b Buf) Write(data []u8) !i64 {
 	return len(data)
 }
 
-fn Emit(w dyn io.Writer) !i64 {
+fn Emit(w mut dyn io.Writer) !i64 {
 	return try w.Write([]u8{4, 5})
 }
 
 fn main() {
 	let b = Buf{n: 1}
-	let n = Emit(b) catch _ { -1 }
+	let n = Emit(mut b) catch _ { -1 }
 	say.Line("write: {n}")
 }

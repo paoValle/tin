@@ -994,7 +994,7 @@ fn find_crlf2(b []u8) i64 {
 }
 
 // stream is what the response reader needs from a connection: a TCP Conn or a tls.Conn.
-shape stream { Read(buf mut []u8, max i64) !i64 }
+shape stream { mut Read(buf mut []u8, max i64) !i64 }
 
 // read_head reads until buf holds a complete header block and returns its length.
 fn read_head[S stream](c mut S, buf mut []u8) !i64 {

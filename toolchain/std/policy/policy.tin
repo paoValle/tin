@@ -8,7 +8,8 @@ import "say"
 import "tide"
 
 // Policy is what with p { body } needs of p: Run runs body (any number of times) and gives the block's value. Run may only call body, or pass it to a function that only calls it.
-shape Policy[T constraints.Any] { Run(body fn() !T) !T }
+// Run is mut (#644): a policy may keep state between runs (CachedPolicy).
+shape Policy[T constraints.Any] { mut Run(body fn() !T) !T }
 
 // ---- slots ----
 

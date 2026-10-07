@@ -530,7 +530,8 @@ shape Seq[T constraints.Any] {   // a shape with type parameters
 
 A member is a method signature or the name of another shape, one per line. A method
 signature is an `fn` signature without `fn`, receiver and body: the same `mut` marks and
-`!T` results apply, and a method's receiver is implicit.
+`!T` results apply, and a method's receiver is implicit. `mut` before the name
+(`mut Write(data []u8) !i64`) says the method may modify its receiver (#644).
 
 A shape is used in two ways:
 
@@ -538,9 +539,12 @@ A shape is used in two ways:
   `fn copyAll[R Reader, W Writer](dst mut W, src mut R) !i64`. This is the default; it is
   monomorphized, with no dispatch and no allocation. A type satisfies it by having the
   methods: same names, parameter types and `mut` marks, result types (including `!T`),
-  and variadic mark. Receiver mutability is not part of satisfaction — a `mut` receiver is
-  a property of the concrete method, so a call to one takes the call-site `mut`, and a
-  generic body that makes such a call declares its parameter `mut`.
+  and variadic mark. A method with a `mut` receiver satisfies only a `mut` shape method
+  (E513 at the conversion or the call that picks the type); a method without one satisfies
+  either. A call of a `mut` shape method needs a receiver that may be modified, as a call of
+  a `mut`-receiver method does: a `mut` parameter (`w mut dyn io.Writer`, `dst mut W`) or a
+  local. `io.Reader`, `Writer`, `Closer`, `Seeker` and `WriterAt` and `policy.Policy` declare
+  their methods `mut`.
 - **Dynamically**, as `dyn S`: the object pointer plus a static table of its methods for
   `S`, converting from a concrete type where a `dyn S` is expected. Conversion allocates
   nothing, and a method call uses one indirect call. A `dyn S` is never nil; `?dyn S` is
@@ -2198,7 +2202,7 @@ TypeParams  = "[" TypeParam { "," TypeParam } "]" .
 TypeParam   = Name [ Constraint ] .
 Constraint  = Type { "|" Type } .
 ShapeDecl   = "shape" Name [ TypeParams ] ( "{" { ShapeMember NL } "}" | "=" Constraint ) .
-ShapeMember = Name [ TypeArgs ] | Name Params [ Result ] .
+ShapeMember = Name [ TypeArgs ] | [ "mut" ] Name Params [ Result ] .
 FnDecl      = { Attribute } "fn" [ Receiver ] Name [ TypeParams ] Params [ Result ] Block .
 Receiver    = "(" Name [ "mut" ] Type ")" .
 Params      = "(" [ Param { "," Param } ] ")" .

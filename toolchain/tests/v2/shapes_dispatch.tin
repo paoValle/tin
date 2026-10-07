@@ -76,7 +76,7 @@ fn Copy[R io.Reader, W io.Writer](dst W, src R) !i64 {
 
 // Log opts into the dynamic path explicitly. A concrete value converts to dyn at the call
 // site, and method dispatch uses the shape table.
-fn Log(w dyn io.Writer, msg []u8) !i64 {
+fn Log(w mut dyn io.Writer, msg []u8) !i64 {
 	return try w.Write(msg)
 }
 
@@ -104,7 +104,7 @@ fn main() {
 	say.Line("both: {both}")
 	let copied = Copy(b, b) catch _ { -1 }
 	say.Line("copy: {copied}")
-	let logged = Log(b, []u8{4, 5, 6}) catch _ { -1 }
+	let logged = Log(mut b, []u8{4, 5, 6}) catch _ { -1 }
 	say.Line("log: {logged}")
 	say.Line("i64: {InOrder(1, 2)}")
 	let so = InOrder("b", "a")

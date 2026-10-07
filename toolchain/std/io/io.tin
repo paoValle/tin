@@ -3,26 +3,28 @@
 // ReadWriteCloser by satisfying every listed shape. The helpers (Copy, ReadAll, Pipe,
 // MultiWriter, ...) and EOF as a sentinel fault land with the io port (roadmap #141);
 // the byte, rune and string shapes (ByteReader, RuneReader, StringWriter, ...) and Go's
-// ReaderFrom and WriterTo (which need dyn) are not declared yet.
+// ReaderFrom and WriterTo (which need dyn) are not declared yet. Reading, writing, closing and
+// seeking change the stream, so those methods are mut (#644): a type's method may take its
+// receiver mut, and a call through a dyn value needs a mut one (w mut dyn io.Writer).
 package io
 
 // Reader is anything with Read: it fills buf and returns how many bytes it wrote.
-shape Reader { Read(buf mut []u8) !i64 }
+shape Reader { mut Read(buf mut []u8) !i64 }
 
 // Writer is anything with Write: it takes data and returns how many bytes it took.
-shape Writer { Write(data []u8) !i64 }
+shape Writer { mut Write(data []u8) !i64 }
 
 // Closer is anything with Close.
-shape Closer { Close() !i64 }
+shape Closer { mut Close() !i64 }
 
 // Seeker is anything with Seek: offset is relative to whence (0 start, 1 current, 2 end).
-shape Seeker { Seek(offset i64, whence i64) !i64 }
+shape Seeker { mut Seek(offset i64, whence i64) !i64 }
 
 // ReaderAt is a reader that does not move a position: it reads at off.
 shape ReaderAt { ReadAt(buf mut []u8, off i64) !i64 }
 
 // WriterAt is a writer that does not move a position: it writes at off.
-shape WriterAt { WriteAt(data []u8, off i64) !i64 }
+shape WriterAt { mut WriteAt(data []u8, off i64) !i64 }
 
 // ReadWriter reads and writes.
 shape ReadWriter {

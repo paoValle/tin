@@ -1,6 +1,7 @@
 package main
 
-// A generic body that calls a mut-receiver method must declare its parameter mut.
+// A method with a mut receiver satisfies only a mut shape method (#644): the error is at the
+// call that picks Cursor, not an E701 inside the generic body, which is correct on its own.
 shape Reader { Read(buf mut []u8) !i64 }
 
 type Cursor struct { pos i64 }

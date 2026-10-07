@@ -1,0 +1,3 @@
+toolchain/tests/v2/shapes_mut_receiver_bad.tin:31:20: error E513 METHOD_SIGNATURE: type Dog does not satisfy shape Namer: Name has a mut receiver and Namer.Name does not; fix-it: declare it `mut Name(...)` in the shape, or take the receiver without mut
+toolchain/tests/v2/shapes_mut_receiver_bad.tin:32:27: error E513 METHOD_SIGNATURE: type Dog does not satisfy shape Namer: Name has a mut receiver and Namer.Name does not; fix-it: declare it `mut Name(...)` in the shape, or take the receiver without mut
+toolchain/tests/v2/shapes_mut_receiver_bad.tin:32:41: error E513 METHOD_SIGNATURE: type Dog does not satisfy shape Namer: Name has a mut receiver and Namer.Name does not; fix-it: declare it `mut Name(...)` in the shape, or take the receiver without mut

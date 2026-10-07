@@ -1018,5 +1018,14 @@
       "exit": 1,
       "stderr_contains": "edition-semicolon.tin:8:13: error E090 OLD_SYNTAX: edition 1 statements end at a newline, not a semicolon"
     }
+  },
+  {
+    "source": "shape-mut-receiver.tin",
+    "issue": 644,
+    "expected": {
+      "phase": "compile",
+      "exit": 1,
+      "stderr_contains": "E513 METHOD_SIGNATURE: type Dog does not satisfy shape Namer: Name has a mut receiver and Namer.Name does not"
+    }
   }
 ]

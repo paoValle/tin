@@ -1,0 +1,59 @@
+package main
+
+import "say"
+
+// #644: a mut shape method is called through a mut dyn parameter or a mut generic one; a
+// method with a mut receiver satisfies it, and so does one without.
+
+shape Sink {
+	mut Put(s str)
+	Size() i64
+}
+
+type Buf struct {
+	items []str
+}
+
+fn (b mut Buf) Put(s str) {
+	b.items = append(b.items, s)
+}
+
+fn (b Buf) Size() i64 {
+	return len(b.items)
+}
+
+type Count struct {
+	n i64
+}
+
+// A method without mut satisfies a mut shape method too.
+fn (c Count) Put(s str) {
+}
+
+fn (c Count) Size() i64 {
+	return 0
+}
+
+fn fill(x mut dyn Sink) {
+	x.Put("a")
+	x.Put("b")
+}
+
+fn size(x dyn Sink) i64 {
+	return x.Size()
+}
+
+fn fillT[T Sink](x mut T) {
+	x.Put("c")
+}
+
+fn main() {
+	let b = Buf{items: []str{}}
+	fill(mut b)
+	say.Line(size(b), b.items)
+	fillT(mut b)
+	say.Line(b.items)
+	let c = Count{n: 0}
+	fill(mut c)
+	say.Line(size(c))
+}

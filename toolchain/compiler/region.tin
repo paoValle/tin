@@ -1377,6 +1377,12 @@ fn rg_dyn_call(e i64, args []Node, b i64, pos i64) i64 {
 	cast(Call, e).dyn_shape = saved_shape
 	cast(Call, e).dyn_index = saved_index
 	args[0].type_ = saved_type
+	// A mut shape method modifies its receiver whichever type is behind it (#644), as a call
+	// of a method with a mut receiver does (rg_call).
+	let info = cast(Pair, dyn_shape_method(cast(Ty, shape_), cast(Call, e).name))
+	if cast(i64, info) != 0 && cast(ShapeSig, info.b).recvmut != 0 {
+		rg_store(cast([]i64, b)[0], rg_owner(cast(i64, args[0])), rg_key(args[0].type_), 0, 0, pos, "")
+	}
 	if found == 0 {
 		if has_ptr(cast(Ty, cast(Node, e).type_)) != 0 {
 			return RG_UNK | RG_EMB

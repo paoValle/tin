@@ -1,0 +1,33 @@
+package main
+
+import "say"
+
+// #644: a method with a mut receiver does not satisfy a shape method that is not mut, at the
+// conversion to dyn, at a dyn argument and at a generic constraint, so no E701 appears inside
+// greet or greetT, which modify nothing.
+
+shape Namer {
+	Name() str
+}
+
+type Dog struct {
+	n str
+}
+
+fn (d mut Dog) Name() str {
+	return "dog {d.n}"
+}
+
+fn greet(x dyn Namer) str {
+	return "hi " + x.Name()
+}
+
+fn greetT[T Namer](x T) str {
+	return x.Name()
+}
+
+fn main() {
+	let d = Dog{n: "rex"}
+	let v dyn Namer = d
+	say.Line(v.Name(), greet(Dog{n: "a"}), greetT(d))
+}

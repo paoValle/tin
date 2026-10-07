@@ -745,6 +745,7 @@ type ShapeSig struct {
 	variadic i64
 	mutres i64
 	bang i64
+	recvmut i64 // a shape method declared mut, or a method with a mut receiver (#644); not compared by shape_sig_same
 }
 
 // DynTable records the concrete methods behind one dyn shape: the concrete type, the dyn type, the keep

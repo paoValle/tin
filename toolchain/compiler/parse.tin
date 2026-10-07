@@ -623,8 +623,14 @@ fn parse_shape_decl() i64 {
 		}
 		let mpos = p_peek().pos
 		// Name( ... is a method signature; a bare name lists another shape (composition),
-		// and `=` above already took the union form.
-		if p_peek2().kind == TK_PUNCT && p_peek2().text == "(" {
+		// and `=` above already took the union form. `mut Name(...)` is a method that may
+		// modify its receiver (#644).
+		if p_is("mut") != 0 {
+			p_next()
+			let mm = cast(Fn, parse_shape_method(mpos))
+			mm.recvmut = 1
+			d.shape_ = append(d.shape_, cast(i64, mm))
+		} else if p_peek2().kind == TK_PUNCT && p_peek2().text == "(" {
 			d.shape_ = append(d.shape_, parse_shape_method(mpos))
 		} else {
 			d.union = append(d.union, parse_type())

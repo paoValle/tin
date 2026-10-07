@@ -1,1 +1,1 @@
-toolchain/tests/v2/shapes_mut_bad.tin:15:11: error E701 NOT_MUT: cannot modify parameter 'r': declare it mut
+toolchain/tests/v2/shapes_mut_bad.tin:22:2: error E513 METHOD_SIGNATURE: type Cursor does not satisfy shape Reader: Read has a mut receiver and Reader.Read does not; fix-it: declare it `mut Read(...)` in the shape, or take the receiver without mut

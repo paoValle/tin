@@ -1622,7 +1622,8 @@ fn shape_sig_of(f Fn, declared i64, bind_ []i64) ShapeSig {
 		rs = append(rs, shape_sig_type(cast(Node, rts[i]), bind_))
 		i = i + 1
 	}
-	let sig = cast(ShapeSig, calloc(7, 8))
+	let sig = cast(ShapeSig, calloc(8, 8))
+	sig.recvmut = f.recvmut
 	sig.names = ns
 	sig.types = ps
 	sig.muts = ms
@@ -1895,6 +1896,24 @@ fn check_shape_method(pos i64, t i64, sd Decl, want Fn, bind_ i64) i64 {
 		shape_sig_str(cast([]u8, m), want.name, wsig)
 		buf_str(m, "; fix-it: change the method signature to ")
 		shape_sig_str(cast([]u8, m), want.name, wsig)
+		err_end(cast([]u8, m))
+	} else if csig.recvmut != 0 && wsig.recvmut == 0 {
+		// A method that modifies its receiver satisfies only a mut shape method, so a call through
+		// the shape on a value the caller cannot modify never reaches it (#644).
+		let m = err_code(pos, "E513 METHOD_SIGNATURE")
+		buf_str(m, "type ")
+		type_name(cast([]u8, m), cast(Ty, t))
+		buf_str(m, " does not satisfy shape ")
+		buf_str(m, sd.name)
+		buf_str(m, ": ")
+		buf_str(m, want.name)
+		buf_str(m, " has a mut receiver and ")
+		buf_str(m, sd.name)
+		buf_byte(m, '.')
+		buf_str(m, want.name)
+		buf_str(m, " does not; fix-it: declare it `mut ")
+		buf_str(m, want.name)
+		buf_str(m, "(...)` in the shape, or take the receiver without mut")
 		err_end(cast([]u8, m))
 	}
 	return 1

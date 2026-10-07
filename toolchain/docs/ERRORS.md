@@ -3036,7 +3036,10 @@ Fix: add the method with the signature the message gives, or pass a type that ha
 ### E513 METHOD_SIGNATURE
 
 A method satisfies a shape only with exactly the shape's signature: the same parameter
-types, the same `mut` parameters and the same results, including `!`.
+types, the same `mut` parameters and the same results, including `!`. A method with a `mut`
+receiver satisfies only a shape method declared `mut` (#644): `type Dog does not satisfy shape
+Namer: Name has a mut receiver and Namer.Name does not`; declare the shape method `mut Name()
+str`, or take the receiver without `mut`.
 
 ```tin edition=1
 package main

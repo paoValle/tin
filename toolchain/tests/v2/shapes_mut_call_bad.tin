@@ -1,0 +1,22 @@
+package main
+
+// #644: calling a mut shape method needs a mut receiver, whichever type is behind the dyn value.
+
+shape Sink {
+	mut Put(s str)
+}
+
+type Buf struct {
+	items []str
+}
+
+fn (b Buf) Put(s str) {
+}
+
+fn fill(x dyn Sink) {
+	x.Put("a")
+}
+
+fn main() {
+	fill(Buf{items: []str{}})
+}

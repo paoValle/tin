@@ -7,7 +7,7 @@ import "constraints"
 
 type Item struct { N i64 }
 
-shape Reader { Read(buf mut []u8) !i64 }
+shape Reader { mut Read(buf mut []u8) !i64 }
 
 shape Writer { Write(data []u8) !i64 }
 
