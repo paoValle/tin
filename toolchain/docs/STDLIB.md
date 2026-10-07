@@ -50,6 +50,7 @@ Generated from the comments in `toolchain/std/*/` and `packages/*/` by `tools/ge
 | [lane](#lane) | a bounded queue between the tasks of one core (buffered channels) |
 | [replay](#replay) | recording and reading request capsules for tin replay |
 | [stencil](#stencil) | text templates loaded at run time (text/template) |
+| [scroll](#scroll) | XML tokenizer and writer (encoding/xml) |
 
 ## say
 
@@ -1249,6 +1250,10 @@ It is not constant-time: use seal for cryptography. There is no formatting hook 
 - `Parse(s str, base i64) !Int`: Parse returns the value of s, like Go's big.Int.SetString: base 2 to 36, or 0 to read a prefix (0x and 0X for 16, 0o and 0O for 8, 0b and 0B for 2, a leading 0 for 8, otherwise 10). The string may start with + or -.
 - `(a Int) Str() str`: Str returns the decimal value.
 - `(a Int) Text(base i64) str`: Text returns the value in the given base, 2 to 36.
+- `(a Int) QuoRem(b Int) (Int, Int)`: QuoRem returns the truncated quotient and remainder of a/b, like Go's QuoRem: the quotient is rounded toward zero and r = a - q*b, so the remainder has a's sign. Division by zero panics.
+- `(a Int) DivMod(b Int) (Int, Int)`: DivMod returns the Euclidean quotient and remainder, like Go's DivMod: q = a div b and r = a - q*b with 0 <= r < |b|. Division by zero panics.
+- `(a Int) Mod(b Int) Int`: Mod returns the Euclidean remainder of a/b, like Go's Mod (0 <= r < |b|).
+- `(a Int) Exp(e Int, m Int) Int`: Exp returns a**e, or a**e mod |m| when m is not zero, like Go's Exp: the sign of m is ignored and e <= 0 gives 1 for a plain power. A negative exponent with a modulus needs ModInverse, the third step of #577, and panics until then.
 
 ## seal
 
@@ -1784,3 +1789,16 @@ Value is a struct with constructor functions rather than the issue's enum: a com
 - `(t mut Template) Func(name str, f fn([]Value) !Value)`: Func registers f for {{name ...}} calls in this template.
 - `(t Template) Execute(data Value) !str`: Execute renders the template with data and returns the output.
 - `(t Template) ExecuteTo(w mut twine.Builder, data Value) !`: ExecuteTo renders the template with data into w. The data and the variables live in a cell bound to a runtime slot for the call (the pattern policy.Bind uses).
+
+## scroll
+
+Package scroll is a safe, streaming XML tokenizer and writer, like Go's encoding/xml without reflection: no DTD processing and no external entities, by design, so XXE and billion-laughs attacks cannot happen. Entities are the five predefined names and numeric references; anything else is an error. The tokenizer resolves namespaces into Name.Space and bounds nesting, the attribute count and the token size (fault.LimitExceeded). The writer and the Go twin are the next steps of #579.
+
+- `type Token enum`: Token is one piece of an XML document.
+- `type Name struct`: Name is a name with its namespace: space is the URI the prefix resolved to, empty when there is none; local is the part after the prefix.
+- `type Attr struct`: Attr is one attribute.
+- `type Decoder struct`: Decoder reads a document token by token.
+- `NewDecoder(text str) Decoder`: NewDecoder returns a decoder over text in strict mode: matching end tags, a single root, valid names, unique attributes and valid characters are enforced.
+- `(d mut Decoder) LimitToken(n i64)`: LimitToken lowers the token size limit (it cannot be raised above 16 MiB): a token longer than n bytes fails with fault.LimitExceeded.
+- `NewLenientDecoder(text str) Decoder`: NewLenientDecoder is NewDecoder without the well-formedness checks.
+- `(d mut Decoder) Next() !Token`: Next returns the next token, or Done at the end of the document.

@@ -1,0 +1,223 @@
+package main
+
+import "say"
+import "scroll"
+import "fault"
+
+// dump prints every token of a document, or the fault.
+fn dump(name str, xml str) {
+	mut d = scroll.NewDecoder(xml)
+	for i in 0..10000 {
+		let t = d.Next() catch err {
+			say.Line(name, "fault", err)
+			return
+		}
+		match t {
+			StartElement(n, attrs) => {
+				mut as = ""
+				for _, a in attrs {
+					as += " " + a.Name.Space + ":" + a.Name.Local + "=" + a.Value
+				}
+				say.Line(name, "start", n.Space, n.Local, as)
+			}
+			EndElement(n) => {
+				say.Line(name, "end", n.Space, n.Local)
+			}
+			CharData(text) => {
+				if len(text) > 0 {
+					say.Line(name, "text", text)
+				}
+			}
+			Comment(text) => {
+				say.Line(name, "comment", text)
+			}
+			ProcInst(target, inst) => {
+				say.Line(name, "pi", target, inst)
+			}
+			Directive(text) => {
+				say.Line(name, "directive", text)
+			}
+			Done => {
+				say.Line(name, "done")
+				return
+			}
+		}
+	}
+}
+
+// firstErr returns the first fault of a document, or "ok".
+fn firstErr(xml str) str {
+	mut d = scroll.NewDecoder(xml)
+	for i in 0..2000 {
+		let t = d.Next() catch err {
+			return say.Fmt("%s", err)
+		}
+		match t {
+			Done => {
+				return "ok"
+			}
+			_ => {}
+		}
+	}
+	return "too many tokens"
+}
+
+// limitErr reports whether a document fails with fault.LimitExceeded.
+fn limitErr(xml str) bool {
+	mut d = scroll.NewDecoder(xml)
+	for i in 0..2000 {
+		let t = d.Next() catch err {
+			return fault.Is(err, fault.LimitExceeded)
+		}
+		match t {
+			Done => {
+				return false
+			}
+			_ => {}
+		}
+	}
+	return false
+}
+
+// repeat concatenates s n times.
+fn repeat(s str, n i64) str {
+	mut out = ""
+	for i in 0..n {
+		out += s
+	}
+	return out
+}
+
+fn main() {
+	// A small RSS-like document: declaration, attributes, entities, CDATA, comments and a
+	// self-closing element.
+	dump("rss", `<?xml version="1.0" encoding="UTF-8"?>
+<!-- a feed -->
+<rss version="2.0">
+  <channel>
+    <title>Tom &amp; Jerry</title>
+    <item id="1" kind='x'/>
+    <item id="2"><![CDATA[a < b & c]]></item>
+    <description>1 &lt; 2 &#233; &#x1F600;</description>
+  </channel>
+</rss>`)
+
+	// Namespaces: the default, a prefix and xml:lang; the prefix stays in Name.Space.
+	dump("ns", `<r xmlns="urn:default" xmlns:p="urn:p" xml:lang="en"><p:c a="1" p:b="2"/></r>`)
+
+	// A directive is passed through, never processed: no DTD, no entities from it.
+	dump("doctype", `<!DOCTYPE r [<!ENTITY x "boom">]><r>&x;</r>`)
+
+	// Lenient mode skips the well-formedness checks.
+	mut lenient = scroll.NewLenientDecoder(`<a><b></a></b>`)
+	let t1 = lenient.Next() catch _ {
+		scroll.Token.Done
+	}
+	let t2 = lenient.Next() catch _ {
+		scroll.Token.Done
+	}
+	let t3 = lenient.Next() catch _ {
+		scroll.Token.Done
+	}
+	say.Line("lenient", lenientNames(t1), lenientNames(t2), lenientNames(t3))
+
+	// Well-formedness and character errors carry line and column.
+	let cases = []str{
+		`<a><b></a></b>`,
+		`<a></b>`,
+		`<a/><b/>`,
+		`<a`,
+		`<a x="1" x="2"/>`,
+		`<a>&unknown;</a>`,
+		`<a>&#x0;</a>`,
+		`<a>&#xD800;</a>`,
+		`<p:r/>`,
+		`<a>`,
+		`</a>`,
+		`<a>&#x1F600;</a>`,
+		"<a>\x01</a>",
+		"<a>\xc3\x28</a>",
+		"line1\n<a>\n<b></a>",
+		`<a>text</b>`,
+		`<a b=c/>`,
+		`<a:x xmlns:a="u" xmlns:b="u"></b:x>`,
+		`<a><!-- a -- b --></a>`,
+		`<a><!-- a ---></a>`,
+	}
+	for _, c in cases {
+		say.Line("err", c, firstErr(c))
+	}
+
+	// The depth limit: 600 nested elements against the 512 bound.
+	let deep = "<a>" + repeat("<b>", 600) + repeat("</b>", 600) + "</a>"
+	say.Line("depth", limitErr(deep), firstErr("<a>" + repeat("<b>", 500) + repeat("</b>", 500) + "</a>"))
+	// The attribute count limit (unique names, so the duplicate check does not fire first).
+	mut many = "<a"
+	for i in 0..1100 {
+		many += say.Fmt(` x%d="1"`, i)
+	}
+	many += "/>"
+	say.Line("attrs", limitErr(many))
+	// The token size limit (lowered to 1 KiB here): the limit passes, one byte more fails, in text,
+	// a comment, CDATA and an attribute value.
+	let ok = filler(1024)
+	let over = filler(1025)
+	say.Line("token ok", limitErr1k("<a>" + ok + "</a>"), limitErr1k("<a><!--" + ok + "--></a>"), limitErr1k(`<a x="` + ok + `"/>`),
+		limitErr1k("<a><![CDATA[" + ok + "]]></a>"))
+	say.Line("token over", limitErr1k("<a>" + over + "</a>"), limitErr1k("<a><!--" + over + "--></a>"), limitErr1k(`<a x="` + over + `"/>`),
+		limitErr1k("<a><![CDATA[" + over + "]]></a>"))
+}
+
+// limitErr1k is limitErr with the token limit lowered to 1 KiB.
+fn limitErr1k(xml str) bool {
+	mut d = scroll.NewDecoder(xml)
+	d.LimitToken(1024)
+	for i in 0..2000 {
+		let t = d.Next() catch err {
+			return fault.Is(err, fault.LimitExceeded)
+		}
+		match t {
+			Done => {
+				return false
+			}
+			_ => {}
+		}
+	}
+	return false
+}
+
+// filler is n bytes of "x".
+fn filler(n i64) str {
+	let b = make([]u8, n)
+	for i in 0..n {
+		b[i] = 'x'
+	}
+	return str(b)
+}
+
+// lenientNames names the token for the lenient probe.
+fn lenientNames(t scroll.Token) str {
+	match t {
+		StartElement(n, _) => {
+			return "start:" + n.Local
+		}
+		EndElement(n) => {
+			return "end:" + n.Local
+		}
+		CharData(s) => {
+			return "text:" + s
+		}
+		Done => {
+			return "done"
+		}
+		Comment(_) => {
+			return "comment"
+		}
+		ProcInst(_, _) => {
+			return "pi"
+		}
+		Directive(_) => {
+			return "directive"
+		}
+	}
+}

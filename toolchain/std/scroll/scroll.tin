@@ -1,0 +1,512 @@
+// Package scroll is a safe, streaming XML tokenizer and writer, like Go's encoding/xml without
+// reflection: no DTD processing and no external entities, by design, so XXE and billion-laughs
+// attacks cannot happen. Entities are the five predefined names and numeric references; anything
+// else is an error. The tokenizer resolves namespaces into Name.Space and bounds nesting, the
+// attribute count and the token size (fault.LimitExceeded). The writer and the Go twin are the
+// next steps of #579.
+package scroll
+
+import "fault"
+import "say"
+
+// Token is one piece of an XML document.
+type Token enum {
+	StartElement(Name, []Attr)
+	EndElement(Name)
+	CharData(str)
+	Comment(str)
+	ProcInst(str, str)
+	Directive(str)
+	Done
+}
+
+// Name is a name with its namespace: space is the URI the prefix resolved to, empty when there is
+// none; local is the part after the prefix.
+type Name struct {
+	Space str
+	Local str
+}
+
+// Attr is one attribute.
+type Attr struct {
+	Name  Name
+	Value str
+}
+
+// The limits a hostile document meets.
+const maxDepth = 512 // the same bound argo uses
+
+const maxAttrs = 1000
+
+const maxToken = 16 * 1024 * 1024
+
+// nsScope maps prefixes to URIs at one depth.
+type nsScope struct {
+	prefixes []str
+	uris     []str
+	depth    i64
+}
+
+// Decoder reads a document token by token.
+type Decoder struct {
+	text     str
+	pos      i64
+	line     i64
+	col      i64
+	stack    []Name
+	raw      []str // the open elements' qualified names as written, for matching end tags
+	ns       []nsScope
+	pending  []Token
+	rootSeen bool
+	done     bool
+	strict   bool
+	tokenMax i64 // the token size limit, maxToken unless lowered with LimitToken
+}
+
+// NewDecoder returns a decoder over text in strict mode: matching end tags, a single root, valid
+// names, unique attributes and valid characters are enforced.
+fn NewDecoder(text str) Decoder {
+	return Decoder{text: text, pos: 0, line: 1, col: 1, stack: []Name{}, raw: []str{}, ns: []nsScope{}, pending: []Token{}, rootSeen: false, done: false, strict: true, tokenMax: maxToken}
+}
+
+// LimitToken lowers the token size limit (it cannot be raised above 16 MiB): a token longer than n
+// bytes fails with fault.LimitExceeded.
+fn (d mut Decoder) LimitToken(n i64) {
+	if n < d.tokenMax {
+		d.tokenMax = n
+	}
+}
+
+// NewLenientDecoder is NewDecoder without the well-formedness checks.
+fn NewLenientDecoder(text str) Decoder {
+	mut d = NewDecoder(text)
+	d.strict = false
+	return d
+}
+
+// failAt makes a fault with the current position.
+fn (d Decoder) failAt(msg str) ! {
+	fail say.Fault("scroll: %d:%d: %s", d.line, d.col, msg)
+}
+
+// Next returns the next token, or Done at the end of the document.
+fn (d mut Decoder) Next() !Token {
+	if len(d.pending) > 0 {
+		let t = d.pending[0]
+		d.pending = d.pending[1:len(d.pending)]
+		return t
+	}
+	if d.done {
+		return Token.Done
+	}
+	let start = d.pos
+	let startLine = d.line
+	let startCol = d.col
+	for d.pos < len(d.text) && d.text[d.pos] != '<' {
+		d.advance()
+	}
+	if d.pos > start {
+		try d.checkToken(d.pos - start)
+		let text = d.text[start:d.pos]
+		let decoded = try decodeText(text, startLine, startCol)
+		return Token.CharData(decoded)
+	}
+	if d.pos >= len(d.text) {
+		try d.closeDocument()
+		return Token.Done
+	}
+	try d.expect('<')
+	if d.pos < len(d.text) && d.text[d.pos] == '/' {
+		return try d.readEnd()
+	}
+	if d.pos < len(d.text) && d.text[d.pos] == '!' {
+		d.advance()
+		if d.has("--") {
+			return try d.readComment()
+		}
+		if d.has("[CDATA[") {
+			return try d.readCDATA()
+		}
+		return try d.readDirective()
+	}
+	if d.pos < len(d.text) && d.text[d.pos] == '?' {
+		return try d.readProcInst()
+	}
+	return try d.readStart()
+}
+
+// has reports whether the text at pos starts with s.
+fn (d Decoder) has(s str) bool {
+	if d.pos+len(s) > len(d.text) {
+		return false
+	}
+	return d.text[d.pos:d.pos+len(s)] == s
+}
+
+// expect consumes the byte c or fails.
+fn (d mut Decoder) expect(c u8) ! {
+	if d.pos >= len(d.text) || d.text[d.pos] != c {
+		fail d.failAt(say.Fmt("expected %s", stringOf(c)))
+	}
+	d.advance()
+}
+
+// checkToken refuses a token over the size limit.
+fn (d Decoder) checkToken(n i64) ! {
+	if n > d.tokenMax {
+		fail fault.Wrap(fault.LimitExceeded, say.Fmt("scroll: a token over %d bytes at %d:%d", d.tokenMax, d.line, d.col))
+	}
+}
+
+// closeDocument checks that the document is complete.
+fn (d mut Decoder) closeDocument() ! {
+	if d.strict && len(d.stack) > 0 {
+		fail d.failAt(say.Fmt("unclosed element %s", d.stack[len(d.stack)-1].Local))
+	}
+	d.done = true
+}
+
+// advance moves one byte, tracking line and column.
+fn (d mut Decoder) advance() {
+	if d.pos < len(d.text) {
+		if d.text[d.pos] == '\n' {
+			d.line += 1
+			d.col = 1
+		} else {
+			d.col += 1
+		}
+	}
+	d.pos += 1
+}
+
+// stringOf is a one-character string.
+fn stringOf(c u8) str {
+	let b = []u8{c}
+	return rt_str_from_raw(cast(i64, b)[2], 1)
+}
+
+// nameStart is a valid first name byte.
+fn nameStart(c u8) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' || c == ':' || c >= 0x80
+}
+
+// nameByte is a valid name byte.
+fn nameByte(c u8) bool {
+	if nameStart(c) {
+		return true
+	}
+	return c >= '0' && c <= '9' || c == '-' || c == '.'
+}
+
+// readName reads an XML name.
+fn (d mut Decoder) readName() !str {
+	if d.pos >= len(d.text) || !nameStart(d.text[d.pos]) {
+		fail d.failAt("expected a name")
+	}
+	let start = d.pos
+	for d.pos < len(d.text) && nameByte(d.text[d.pos]) {
+		d.advance()
+	}
+	return d.text[start:d.pos]
+}
+
+// skipSpace skips XML whitespace.
+fn (d mut Decoder) skipSpace() {
+	for d.pos < len(d.text) {
+		let c = d.text[d.pos]
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			d.advance()
+		} else {
+			break
+		}
+	}
+}
+
+// readStart reads a start tag, its attributes and its namespaces, and pushes the element.
+fn (d mut Decoder) readStart() !Token {
+	let name = try d.readName()
+	let attrs = try d.readAttrs()
+	d.skipSpace()
+	mut selfClose = false
+	if d.pos < len(d.text) && d.text[d.pos] == '/' {
+		d.advance()
+		selfClose = true
+	}
+	try d.expect('>')
+	if d.strict && len(d.stack) == 0 && d.rootSeen {
+		fail d.failAt("a second root element")
+	}
+	if len(d.stack) == 0 {
+		d.rootSeen = true
+	}
+	if d.strict && len(d.stack) >= maxDepth {
+		fail fault.Wrap(fault.LimitExceeded, say.Fmt("scroll: nesting over %d", maxDepth))
+	}
+	// Resolve namespaces from the xmlns attributes.
+	let (element, out) = try d.pushNS(splitName(name), attrs)
+	d.stack = append(d.stack, element)
+	d.raw = append(d.raw, name)
+	if selfClose {
+		d.stack = d.stack[0:len(d.stack)-1]
+		d.raw = d.raw[0:len(d.raw)-1]
+		d.pending = append(d.pending, Token.EndElement(element))
+	}
+	return Token.StartElement(element, out)
+}
+
+// pushNS resolves the element's and attributes' namespaces from the xmlns declarations and
+// returns the element name and the resolved attributes.
+fn (d mut Decoder) pushNS(name Name, attrs []Attr) !(Name, []Attr) {
+	mut scope = nsScope{prefixes: []str{}, uris: []str{}, depth: len(d.stack)}
+	// The declarations first, so they apply to this element and its attributes.
+	for _, a in attrs {
+		if a.Name.Space == "xmlns" {
+			scope.prefixes = append(scope.prefixes, a.Name.Local)
+			scope.uris = append(scope.uris, a.Value)
+		} else if a.Name.Local == "xmlns" && a.Name.Space == "" {
+			scope.prefixes = append(scope.prefixes, "")
+			scope.uris = append(scope.uris, a.Value)
+		}
+	}
+	d.ns = append(d.ns, scope)
+	let element = try d.resolveName(name, true)
+	mut out = []Attr{}
+	for _, a in attrs {
+		let resolved = try d.resolveName(a.Name, false)
+		out = append(out, Attr{Name: resolved, Value: a.Value})
+	}
+	return element, out
+}
+
+// resolveName resolves a name's prefix to a URI.
+fn (d Decoder) resolveName(n Name, element bool) !Name {
+	if len(n.Space) == 0 {
+		if !element {
+			// The default namespace does not apply to attributes.
+			return n
+		}
+		let uri = d.lookupNS("")
+		return Name{Space: uri, Local: n.Local}
+	}
+	if n.Space == "xml" {
+		return Name{Space: "http://www.w3.org/XML/1998/namespace", Local: n.Local}
+	}
+	if n.Space == "xmlns" {
+		return n
+	}
+	let uri = d.lookupNS(n.Space)
+	if d.strict && len(uri) == 0 {
+		fail d.failAt(say.Fmt("undefined namespace prefix %s", n.Space))
+	}
+	return Name{Space: uri, Local: n.Local}
+}
+
+// lookupNS finds a prefix's URI in the open scopes, newest first.
+fn (d Decoder) lookupNS(prefix str) str {
+	mut i = len(d.ns)
+	for i > 0 {
+		i -= 1
+		let s = d.ns[i]
+		mut j = len(s.prefixes)
+		for j > 0 {
+			j -= 1
+			if s.prefixes[j] == prefix {
+				return s.uris[j]
+			}
+		}
+	}
+	return ""
+}
+
+// popNS drops the scopes of the element that just closed.
+fn (d mut Decoder) popNS(depth i64) {
+	for len(d.ns) > 0 && d.ns[len(d.ns)-1].depth >= depth {
+		d.ns = d.ns[0:len(d.ns)-1]
+	}
+}
+
+// readAttrs reads the attributes of a start tag.
+fn (d mut Decoder) readAttrs() ![]Attr {
+	mut out = []Attr{}
+	mut seen = []str{}
+	for {
+		d.skipSpace()
+		if d.pos >= len(d.text) {
+			fail d.failAt("unclosed start tag")
+		}
+		let c = d.text[d.pos]
+		if c == '>' || c == '/' {
+			return out
+		}
+		let name = try d.readName()
+		if d.strict {
+			if len(out) >= maxAttrs {
+				fail fault.Wrap(fault.LimitExceeded, say.Fmt("scroll: over %d attributes", maxAttrs))
+			}
+			let key = name
+			for _, k in seen {
+				if k == key {
+					fail d.failAt(say.Fmt("duplicate attribute %s", name))
+				}
+			}
+			seen = append(seen, key)
+		}
+		d.skipSpace()
+		try d.expect('=')
+		d.skipSpace()
+		if d.pos >= len(d.text) || d.text[d.pos] != '"' && d.text[d.pos] != '\'' {
+			fail d.failAt("expected a quoted attribute value")
+		}
+		let quote = d.text[d.pos]
+		d.advance()
+		let start = d.pos
+		for d.pos < len(d.text) && d.text[d.pos] != quote {
+			d.advance()
+		}
+		if d.pos >= len(d.text) {
+			fail d.failAt("unclosed attribute value")
+		}
+		try d.checkToken(d.pos - start)
+		let raw = d.text[start:d.pos]
+		d.advance()
+		let value = try decodeText(raw, d.line, d.col)
+		out = append(out, Attr{Name: splitName(name), Value: value})
+	}
+}
+
+// splitName splits a qualified name into (prefix, local).
+fn splitName(q str) Name {
+	for i in 0..len(q) {
+		if q[i] == ':' {
+			return Name{Space: q[0:i], Local: q[i+1:len(q)]}
+		}
+	}
+	return Name{Space: "", Local: q}
+}
+
+// readEnd reads an end tag and checks it against the open element.
+fn (d mut Decoder) readEnd() !Token {
+	try d.expect('/')
+	let name = try d.readName()
+	d.skipSpace()
+	try d.expect('>')
+	if len(d.stack) == 0 {
+		if d.strict {
+			fail d.failAt(say.Fmt("unexpected end tag %s", name))
+		}
+		return Token.EndElement(splitName(name))
+	}
+	let open = d.stack[len(d.stack)-1]
+	let openRaw = d.raw[len(d.raw)-1]
+	d.stack = d.stack[0:len(d.stack)-1]
+	d.raw = d.raw[0:len(d.raw)-1]
+	d.popNS(len(d.stack) + 1)
+	if d.strict && openRaw != name {
+		fail d.failAt(say.Fmt("end tag %s does not match %s", name, openRaw))
+	}
+	return Token.EndElement(open)
+}
+
+// readComment reads <!-- ... -->.
+fn (d mut Decoder) readComment() !Token {
+	d.advance()
+	d.advance()
+	let start = d.pos
+	for {
+		if d.pos+2 >= len(d.text) {
+			fail d.failAt("unclosed comment")
+		}
+		if d.text[d.pos] == '-' && d.text[d.pos+1] == '-' && d.text[d.pos+2] == '>' {
+			let body = d.text[start:d.pos]
+			try d.checkToken(len(body))
+			if d.strict && (len(body) > 0 && body[len(body)-1] == '-' || indexOfDashes(body) >= 0) {
+				fail d.failAt("-- is not allowed inside a comment")
+			}
+			d.advance()
+			d.advance()
+			d.advance()
+			return Token.Comment(body)
+		}
+		d.advance()
+	}
+}
+
+// readCDATA reads <![CDATA[ ... ]]> as character data.
+fn (d mut Decoder) readCDATA() !Token {
+	d.advanceTo(len("[CDATA["))
+	let start = d.pos
+	for {
+		if d.pos+2 >= len(d.text) {
+			fail d.failAt("unclosed CDATA section")
+		}
+		if d.text[d.pos] == ']' && d.text[d.pos+1] == ']' && d.text[d.pos+2] == '>' {
+			let body = d.text[start:d.pos]
+			try d.checkToken(len(body))
+			d.advance()
+			d.advance()
+			d.advance()
+			return Token.CharData(body)
+		}
+		d.advance()
+	}
+}
+
+// readDirective reads <!DOCTYPE ...> and passes it through, never processing it.
+fn (d mut Decoder) readDirective() !Token {
+	let start = d.pos
+	mut depth = 0
+	for d.pos < len(d.text) {
+		let c = d.text[d.pos]
+		if c == '<' {
+			depth += 1
+		} else if c == '>' {
+			if depth == 0 {
+				let body = d.text[start:d.pos]
+				try d.checkToken(len(body))
+				d.advance()
+				return Token.Directive(body)
+			}
+			depth -= 1
+		}
+		d.advance()
+	}
+	fail d.failAt("unclosed directive")
+}
+
+// readProcInst reads <?target inst?>.
+fn (d mut Decoder) readProcInst() !Token {
+	try d.expect('?')
+	let target = try d.readName()
+	d.skipSpace()
+	let start = d.pos
+	for {
+		if d.pos+1 >= len(d.text) {
+			fail d.failAt("unclosed processing instruction")
+		}
+		if d.text[d.pos] == '?' && d.text[d.pos+1] == '>' {
+			let inst = d.text[start:d.pos]
+			try d.checkToken(len(inst))
+			d.advance()
+			d.advance()
+			return Token.ProcInst(target, inst)
+		}
+		d.advance()
+	}
+}
+
+// indexOfDashes returns the position of the first "--" in s, or -1.
+fn indexOfDashes(s str) i64 {
+	for i in 0..len(s)-1 {
+		if s[i] == '-' && s[i+1] == '-' {
+			return i
+		}
+	}
+	return -1
+}
+
+// advanceTo moves forward n bytes.
+fn (d mut Decoder) advanceTo(n i64) {
+	for i in 0..n {
+		d.advance()
+	}
+}

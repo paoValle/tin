@@ -1,0 +1,135 @@
+package scroll
+
+// Entity decoding and character validation: the five predefined entities and numeric references,
+// with everything else an error, so a document cannot define or fetch new entities.
+
+import "fault"
+import "glyph"
+import "say"
+
+// decodeText decodes entities in text and checks the characters: valid UTF-8 and the XML Char
+// production. line and col are where the text starts, for the error.
+fn decodeText(text str, line i64, col i64) !str {
+	if !glyph.Valid(text) {
+		fail say.Fault("scroll: %d:%d: invalid UTF-8", line, col)
+	}
+	mut out = ""
+	mut i = 0
+	for i < len(text) {
+		if text[i] != '&' {
+			let (r, n) = glyph.DecodeRune(text, i)
+			try checkChar(r, line, col)
+			out += text[i:i+n]
+			i += n
+			continue
+		}
+		let semi = indexOfByteFrom(text, ';', i+1)
+		if semi < 0 {
+			fail say.Fault("scroll: %d:%d: unclosed entity", line, col)
+		}
+		let name = text[i+1:semi]
+		let piece = try decodeEntity(name, line, col)
+		out += piece
+		i = semi + 1
+	}
+	return out
+}
+
+// decodeEntity decodes one entity name (without the & and ;).
+fn decodeEntity(name str, line i64, col i64) !str {
+	if name == "lt" {
+		return "<"
+	}
+	if name == "gt" {
+		return ">"
+	}
+	if name == "amp" {
+		return "&"
+	}
+	if name == "apos" {
+		return "'"
+	}
+	if name == "quot" {
+		return "\""
+	}
+	if len(name) > 1 && name[0] == '#' {
+		mut base = i64(10)
+		mut digits = name[1:len(name)]
+		if len(digits) > 1 && (digits[0] == 'x' || digits[0] == 'X') {
+			base = 16
+			digits = digits[1:len(digits)]
+		}
+		let r = parseRune(digits, base) catch _ {
+			fail say.Fault("scroll: %d:%d: invalid character reference &%s;", line, col, name)
+		}
+		try checkChar(r, line, col)
+		return glyph.RuneStr(r)
+	}
+	fail say.Fault("scroll: %d:%d: unknown entity &%s;", line, col, name)
+}
+
+// parseRune parses a numeric character reference.
+fn parseRune(digits str, base i64) !i32 {
+	if len(digits) == 0 {
+		fail say.Fault("empty")
+	}
+	mut v = i64(0)
+	for i in 0..len(digits) {
+		let d = digitValue(digits[i])
+		if d < 0 || d >= base {
+			fail say.Fault("bad digit")
+		}
+		v = v*base + d
+		if v > 0x10FFFF {
+			fail say.Fault("out of range")
+		}
+	}
+	if !glyph.ValidRune(i32(v)) {
+		fail say.Fault("invalid rune")
+	}
+	return i32(v)
+}
+
+// digitValue returns a digit's value, or -1.
+fn digitValue(c u8) i64 {
+	if c >= '0' && c <= '9' {
+		return i64(c - '0')
+	}
+	if c >= 'a' && c <= 'f' {
+		return i64(c-'a') + 10
+	}
+	if c >= 'A' && c <= 'F' {
+		return i64(c-'A') + 10
+	}
+	return -1
+}
+
+// checkChar enforces the XML Char production.
+fn checkChar(r i32, line i64, col i64) ! {
+	let v = i64(r)
+	if v == 0x9 || v == 0xA || v == 0xD {
+		return
+	}
+	if v >= 0x20 && v <= 0xD7FF {
+		return
+	}
+	if v >= 0xE000 && v <= 0xFFFD {
+		return
+	}
+	if v >= 0x10000 && v <= 0x10FFFF {
+		return
+	}
+	fail say.Fault("scroll: %d:%d: character %d is not allowed in XML", line, col, v)
+}
+
+// indexOfByteFrom returns the first position of c at or after from, or -1.
+fn indexOfByteFrom(s str, c u8, from i64) i64 {
+	mut i = from
+	for i < len(s) {
+		if s[i] == c {
+			return i
+		}
+		i += 1
+	}
+	return -1
+}
