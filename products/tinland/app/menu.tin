@@ -25,6 +25,7 @@ const cmdDeleteLine = 19
 const cmdIndent = 20
 const cmdUnindent = 21
 const cmdRun = 22
+const cmdFormat = 23
 
 // item adds a menu item: its title, the key shown beside it (with Shift when shift is set) and its command.
 fn item(m appkit.Menu, menu i64, title str, key str, shift bool, cmd i64) {
@@ -71,6 +72,7 @@ fn buildMenus(win appkit.Window) appkit.Menu {
 	item(m, edit, "Delete Line", "k", true, cmdDeleteLine)
 	item(m, edit, "Indent", "]", false, cmdIndent)
 	item(m, edit, "Unindent", "[", false, cmdUnindent)
+	item(m, edit, "Format Document", "i", true, cmdFormat)
 
 	let find = appkit.AddMenu(m, "Find")
 	item(m, find, "Find and Replace...", "f", false, cmdFind)
@@ -138,6 +140,9 @@ fn (ed mut Editor) perform(cmd i64) {
 		chars = "["
 	} else if cmd == cmdRun {
 		chars = "r"
+	} else if cmd == cmdFormat {
+		chars = "i"
+		shift = true
 	}
 	if len(chars) == 0 {
 		return

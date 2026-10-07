@@ -4,6 +4,7 @@ import "appkit"
 import "mint"
 import "quarry"
 import "textedit"
+import "tinfmt"
 import "twine"
 
 // Modifier flags of a key event (NSEventModifierFlag).
@@ -525,6 +526,8 @@ fn (ed mut Editor) command(k Key, shift bool) {
 	} else if c == 'l' {
 		ed.Mode = modeGoto
 		ed.Prompt = ""
+	} else if c == 'i' && shift {
+		ed.formatDoc()
 	} else if c == 'r' {
 		ed.runFile()
 	} else if c == '/' {
@@ -713,4 +716,20 @@ fn parseInt(s str) i64 {
 		i += 1
 	}
 	return n
+}
+
+// formatDoc formats the active file with tin fmt's rules (a .tin file; the text is one undo step).
+fn (ed mut Editor) formatDoc() {
+	if !twine.HasSuffix(ed.Buf.Path, ".tin") {
+		ed.say("Format Document works on a .tin file")
+		return
+	}
+	let text = ed.Buf.Text()
+	let fresh = tinfmt.Format(text)
+	if fresh == text {
+		ed.say("already formatted")
+		return
+	}
+	ed.Buf.SetText(fresh)
+	ed.say("formatted")
 }

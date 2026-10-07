@@ -104,3 +104,24 @@ let é = "ü"
 diag: 1 1 1 9 E001 edition 1 files start with a package declaration
 diags: 1
 diags: 0
+--- editor_run.tin row 9 col 12 dirty true
+package main
+
+import "say"
+
+fn main() {
+	say.Line("run from the editor", 6 * 7)
+}
+
+let z = 2, 3
+
+--- editor_run.tin row 9 col 12 dirty true
+package main
+
+import "say"
+
+fn main() {
+	say.Line("run from the editor", 6 * 7)
+}
+
+  let z=2,3

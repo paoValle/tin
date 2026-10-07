@@ -1025,3 +1025,22 @@ fn (b mut Buffer) SelectWordAt(row i64, col i64) {
 	}
 	b.selectSpan(row, from, to - from)
 }
+
+// SetText replaces the whole text as one undo step, keeping the cursor on its line and column (or the nearest
+// place that exists).
+fn (b mut Buffer) SetText(text str) {
+	b.record(kindOther)
+	let fresh = FromText(text)
+	b.Lines = fresh.Lines
+	if b.Row >= len(b.Lines) {
+		b.Row = len(b.Lines) - 1
+	}
+	if b.Col > len(b.Lines[b.Row]) {
+		b.Col = len(b.Lines[b.Row])
+	}
+	b.HasSel = false
+	b.want = -1
+	b.Dirty = true
+	b.Version += 1
+	b.last = kindNone
+}

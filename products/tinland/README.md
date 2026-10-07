@@ -24,6 +24,7 @@ bin/tinc -o tinland products/tinland/app/*.tin
 | Cmd+D, Cmd+Shift+K, Alt+Up/Down | duplicate, delete, move lines |
 | Cmd+[ and Cmd+] , Tab, Shift+Tab | unindent, indent |
 | Alt+Left/Right, Cmd+Left/Right/Up/Down | by word, line start/end, document start/end |
+| Cmd+Shift+I | format the file with the rules of `tin fmt` |
 | Cmd+R | compile and run the file with `tinc` (output in a panel; click a compiler message to jump to it) |
 
 Every key command is also in the menu bar. Errors are underlined while you type: after a pause the compiler checks the text (`tinc -check -json` with the
