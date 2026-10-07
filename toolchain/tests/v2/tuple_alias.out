@@ -1,0 +1,11 @@
+catch divide by zero
+dyn 3 4
+generic 2 1
+method 3 4 area 12
+mk 1 2
+named pi 3.14 true
+one 7
+package 6 9
+package fault not found: z
+try 32
+value 3 30

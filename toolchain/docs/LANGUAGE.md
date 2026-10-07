@@ -34,8 +34,8 @@ Contents: 1 Programs and packages · 2 Lexical elements · 3 Types · 4 Constant
 
 **Status.** A few edition 1 forms are read by the parser but not yet accepted by the
 checker, and are marked *not yet implemented* where they appear: `opt ?? fallback`, `arena`
-blocks (#236), tuple type aliases (`type Pair = (i64, i64)`) and variadic parameters
-(`xs ...i64`). The checker reports `??` and variadic parameters as E295 NOT_YET. The checker
+blocks (#236) and variadic parameters (`xs ...i64`). The checker reports `??` and variadic
+parameters as E295 NOT_YET. The checker
 also does not yet reject reassigning a `let` name.
 
 ---
@@ -465,6 +465,12 @@ There are no implicit conversions between types. A conversion is a call of the t
 `type Celsius f64`, `type IDs []i64`, `type Handler fn(Req, mut Out)` declare new types;
 a named type converts to and from its underlying type explicitly. `type Id = i64` is an
 alias: another name for the same type.
+
+A tuple alias names a list of results: `type Pair = (i64, i64)` makes `fn mk() Pair` the
+same as `fn mk() (i64, i64)` and `!Pair` the same as `!(i64, i64)`, in functions, methods,
+function types (`fn() Pair`) and shape methods, and from other packages (`pkg.Pair`). A
+tuple is not a value, so `Pair` is not a variable, parameter, field or element type (E204),
+and only an alias names one; a generic tuple alias is not implemented yet (E295).
 
 ### Shapes and `dyn`
 

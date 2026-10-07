@@ -309,6 +309,10 @@ fn resolve_type(tx i64) i64 {
 				t = find_type(cast(TypeName, tx).name)
 			}
 		}
+		if t == 0 && tuple_alias_of(tx) != 0 {
+			err_code_quoted(cast(Node, tx).pos, "E204 TUPLE_TYPE", "", cast(TypeName, tx).name, " is a tuple: a list of results, not a value type")
+			return ty_int
+		}
 		if t == 0 {
 			err_code_quoted(cast(Node, tx).pos, "E103 UNDEFINED", "undefined type ", cast(TypeName, tx).name, "")
 			return ty_int
@@ -360,7 +364,7 @@ fn resolve_type(tx i64) i64 {
 		return chan_of(resolve_type(cast(TypeExpr, tx).a))
 	}
 	if k == TX_FUNC {
-		return func_of_m(resolve_types(cast([]i64, cast(TypeExpr, tx).a)), resolve_types(cast([]i64, cast(TypeExpr, tx).b)), 0, cast(TypeExpr, tx).args)
+		return func_of_m(resolve_types(cast([]i64, cast(TypeExpr, tx).a)), resolve_types(expand_results(cast([]i64, cast(TypeExpr, tx).b))), 0, cast(TypeExpr, tx).args)
 	}
 	if k == TX_STRUCT {
 		let st = ty_new(K_STRUCT, "struct")
@@ -396,8 +400,75 @@ fn resolve_type(tx i64) i64 {
 	if k == TX_SECRET {
 		return secret_type(tx)
 	}
+	if k == TX_TUPLE {
+		err_code_at(cast(Node, tx).pos, "E204 TUPLE_TYPE", "a tuple type is a list of results, not a value type")
+		return ty_int
+	}
 	err_code_at(cast(Node, tx).pos, "E990 INTERNAL", "invalid type")
 	return ty_int
+}
+
+shared mut tuple_alias_names []str // the qualified names of the tuple aliases (#563)
+shared mut tuple_alias_types []i64 // their tuple type expressions
+
+// tuple_alias_of returns the tuple type expression that a result type naming a tuple alias
+// (Pair or pkg.Pair) stands for, or 0.
+fn tuple_alias_of(tx i64) i64 {
+	if tx == 0 || (cast(Ty, tx).kind < 40 && cast(Node, tx).kind == 0) || cast(Node, tx).kind != TX_NAME || cast(TypeExpr, tx).args != 0 {
+		return 0
+	}
+	mut names = []str{}
+	if len(cast(TypeName, tx).pkg) != 0 {
+		let pkg = import_pkg(cast(TypeName, tx).pkg)
+		if len(pkg) == 0 {
+			return 0
+		}
+		names = append(names, pkg + "." + cast(TypeName, tx).name)
+	} else {
+		if len(ck_pkg) != 0 {
+			names = append(names, qual(ck_pkg, cast(TypeName, tx).name))
+		}
+		names = append(names, cast(TypeName, tx).name)
+	}
+	mut i = 0
+	for i < len(tuple_alias_names) {
+		for n in names {
+			if tuple_alias_names[i] == n {
+				return tuple_alias_types[i]
+			}
+		}
+		i = i + 1
+	}
+	return 0
+}
+
+// expand_results replaces a result that names a tuple alias with the alias's types:
+// fn mk() Pair is fn mk() (i64, i64), and !Pair is !(i64, i64) (#563).
+fn expand_results(v []i64) []i64 {
+	if cast(i64, v) == 0 || len(tuple_alias_names) == 0 {
+		return v
+	}
+	mut any = false
+	for x in v {
+		if tuple_alias_of(x) != 0 {
+			any = true
+		}
+	}
+	if !any {
+		return v
+	}
+	mut out = []i64{}
+	for x in v {
+		let t = tuple_alias_of(x)
+		if t != 0 {
+			for y in cast([]i64, cast(TypeExpr, t).a) {
+				out = append(out, y)
+			}
+		} else {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 fn resolve_types(v []i64) []i64 {
@@ -612,6 +683,26 @@ fn check() {
 	gtab_used = 0
 	generics_init()
 	shapes_init()
+	// Tuple aliases name result lists (#563): they are known before any type or function
+	// uses one, and stand for their types wherever results are written (expand_results).
+	tuple_alias_names = []str{}
+	tuple_alias_types = []i64{}
+	mut ti = 0
+	for ti < len(prog_types) {
+		let td = prog_types[ti]
+		if cast(Node, td.type_).kind == TX_TUPLE {
+			set_file(td.file)
+			if cast(i64, td.tparams) != 0 {
+				err_code_at(td.pos, "E295 NOT_YET", "a generic tuple alias is not implemented yet: write the result list out")
+			} else if td.iota == 0 {
+				err_code_at(td.pos, "E204 TUPLE_TYPE", "a tuple type is named with an alias: type Pair = (A, B)")
+			} else {
+				tuple_alias_names = append(tuple_alias_names, qual(ck_pkg, td.name))
+				tuple_alias_types = append(tuple_alias_types, td.type_)
+			}
+		}
+		ti = ti + 1
+	}
 	// Named types: structs first, so fields and aliases can refer to any of them.
 	mut i = 0
 	for i < len(prog_types) {
@@ -636,7 +727,7 @@ fn check() {
 		} else if cast(Node, d.type_).kind == TX_STRUCT {
 			resolve_fields(cast(Ty, find_type(q)), cast(TypeExpr, d.type_))
 			layout_struct(cast(Ty, find_type(q)))
-		} else {
+		} else if cast(Node, d.type_).kind != TX_TUPLE {
 			name_type(q, resolve_type(d.type_))
 		}
 		i = i + 1
@@ -858,6 +949,7 @@ fn declare_fn(f Fn) {
 		ptypes = append(ptypes, resolve_type(f.ptypes[i]))
 		i = i + 1
 	}
+	f.rtypes = expand_results(f.rtypes)
 	let rtypes = resolve_types(f.rtypes)
 	mut sbi = 0
 	for f.genof == 0 && sbi < len(rtypes) {

@@ -1,0 +1,102 @@
+package main
+
+import "./tuplepkg"
+import "constraints"
+import "say"
+
+// A tuple alias names a result list (#563): fn mk() Pair is fn mk() (i64, i64), !Pair is
+// !(i64, i64), and the alias works in function types, methods, shapes, closures, generic
+// functions and from another package.
+
+type Pair = (i64, i64)
+
+type Named = (str, f64, bool)
+
+type One = (i64)
+
+type Grid struct {
+	w i64
+	h i64
+}
+
+shape Sized {
+	Size() Pair
+}
+
+fn mk() Pair {
+	return 1, 2
+}
+
+fn named() Named {
+	return "pi", 3.14, true
+}
+
+fn one() One {
+	return 7
+}
+
+fn divide(a i64, b i64) !Pair {
+	if b == 0 {
+		fail "divide by zero"
+	}
+	return a / b, a % b
+}
+
+fn (g Grid) Size() Pair {
+	return g.w, g.h
+}
+
+fn area[T Sized](x T) i64 {
+	let (w, h) = x.Size()
+	return w * h
+}
+
+fn swap[T constraints.Any](a T, b T) (T, T) {
+	return b, a
+}
+
+fn use(f fn() Pair) i64 {
+	let (a, b) = f()
+	return a + b
+}
+
+fn run() !i64 {
+	let (q, r) = try divide(17, 5)
+	return q*10 + r
+}
+
+fn caught() {
+	let (q, r) = divide(1, 0) catch err {
+		say.Line("catch", err)
+		return
+	}
+	say.Line("not reached", q, r)
+}
+
+fn main() {
+	let (a, b) = mk()
+	say.Line("mk", a, b)
+	let (s, f, ok) = named()
+	say.Line("named", s, f, ok)
+	say.Line("one", one())
+	let t = run() catch _ { -1 }
+	say.Line("try", t)
+	caught()
+	let g = Grid{w: 3, h: 4}
+	let (w, h) = g.Size()
+	say.Line("method", w, h, "area", area(g))
+	let d dyn Sized = g
+	let (dw, dh) = d.Size()
+	say.Line("dyn", dw, dh)
+	let fv fn() Pair = mk
+	say.Line("value", use(fv), use(fn() Pair { return 10, 20 }))
+	let (x, y) = swap(1, 2)
+	say.Line("generic", x, y)
+	for sub in []str{"wor", "z"} {
+		let (st, en) = tuplepkg.Find("hello world", sub) catch err {
+			say.Line("package fault", err)
+			continue
+		}
+		say.Line("package", st, en)
+	}
+}

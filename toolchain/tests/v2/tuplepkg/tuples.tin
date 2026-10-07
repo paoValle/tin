@@ -1,0 +1,18 @@
+// Package tuplepkg exports a tuple alias, used by toolchain/tests/v2/tuple_alias.tin: an
+// alias from another package stands for its result list there too (#563).
+package tuplepkg
+
+// Span is a start and an end.
+type Span = (i64, i64)
+
+// Find returns where sub starts and ends in s, or fails.
+fn Find(s str, sub str) !Span {
+	mut i = 0
+	for i+len(sub) <= len(s) {
+		if s[i:i+len(sub)] == sub {
+			return i, i + len(sub)
+		}
+		i += 1
+	}
+	fail "not found: {sub}"
+}

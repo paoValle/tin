@@ -1073,6 +1073,31 @@ example.tin:7:5: error E203 NO_ZERO_VALUE: a variable of type Point needs an ini
 Fix: initialize the variable (`mut p = Point{}`), use `?T` for a value that may be missing, or
 make the slice empty with a capacity (`make([]T, 0, n)`) and `append`.
 
+### E204 TUPLE_TYPE
+
+A tuple type is a list of results: an alias of one (`type Pair = (i64, i64)`) is written
+where results go, not as the type of a value. A tuple type declared without `=` is reported
+as `a tuple type is named with an alias: type Pair = (A, B)`.
+
+```tin edition=1
+package main
+
+type Pair = (i64, i64)
+
+fn sum(p Pair) i64 {
+	return 0
+}
+
+fn main() {
+}
+```
+
+```text
+example.tin:5:10: error E204 TUPLE_TYPE: 'Pair' is a tuple: a list of results, not a value type
+```
+
+Fix: take the values as separate parameters (`fn sum(a i64, b i64)`), or a struct.
+
 ### E210 ARG_COUNT
 
 A call passes exactly as many arguments as the function has parameters (a variadic
@@ -2138,9 +2163,10 @@ Fix: end each block arm with its value, or leave from it.
 
 ### E295 NOT_YET
 
-A few edition 1 forms are read by the parser but not built yet: `opt ?? fallback` (#561)
-and a variadic parameter `xs ...T` in a function that is not `extern` (#562, reported as `a
-variadic parameter is not implemented yet`). Until they are, write the form out another way.
+A few edition 1 forms are read by the parser but not built yet: `opt ?? fallback` (#561),
+a variadic parameter `xs ...T` in a function that is not `extern` (#562, reported as `a
+variadic parameter is not implemented yet`) and a generic tuple alias. Until they are, write
+the form out another way.
 
 ```tin edition=1
 package main

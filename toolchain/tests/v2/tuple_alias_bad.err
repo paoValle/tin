@@ -1,0 +1,6 @@
+toolchain/tests/v2/tuple_alias_bad.tin:10:6: error E204 TUPLE_TYPE: a tuple type is named with an alias: type Pair = (A, B)
+toolchain/tests/v2/tuple_alias_bad.tin:12:6: error E295 NOT_YET: a generic tuple alias is not implemented yet: write the result list out
+toolchain/tests/v2/tuple_alias_bad.tin:15:4: error E204 TUPLE_TYPE: 'Pair' is a tuple: a list of results, not a value type
+toolchain/tests/v2/tuple_alias_bad.tin:18:11: error E204 TUPLE_TYPE: 'Pair' is a tuple: a list of results, not a value type
+toolchain/tests/v2/tuple_alias_bad.tin:27:11: error E204 TUPLE_TYPE: 'Pair' is a tuple: a list of results, not a value type
+toolchain/tests/v2/tuple_alias_bad.tin:27:20: error E204 TUPLE_TYPE: 'Pair' is a tuple: a list of results, not a value type

@@ -1,0 +1,31 @@
+package main
+
+import "constraints"
+
+// A tuple alias names a result list, not a value type (#563); only an alias names a tuple,
+// and generic tuple aliases are not built yet.
+
+type Pair = (i64, i64)
+
+type Plain (i64, i64)
+
+type Gen[A constraints.Any] = (A, A)
+
+type Holder struct {
+	p Pair
+}
+
+fn take(p Pair) i64 {
+	return 0
+}
+
+fn mk() Pair {
+	return 1, 2
+}
+
+fn main() {
+	let xs []Pair = []Pair{}
+	_ = xs
+	_ = take
+	_ = Holder{}
+}

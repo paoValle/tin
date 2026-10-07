@@ -779,6 +779,7 @@ fn shapes_declared() {
 						k = k + 1
 					}
 					k = 0
+					m.rtypes = expand_results(m.rtypes)
 					for k < len(cast(Fn, m).rtypes) {
 						resolve_type(cast(Fn, m).rtypes[k])
 						k = k + 1
@@ -1528,8 +1529,9 @@ fn shape_sig_of(f Fn, declared i64, bind_ []i64) ShapeSig {
 	}
 	mut rs = []i64{}
 	i = 0
-	for i < len(f.rtypes) {
-		rs = append(rs, shape_sig_type(cast(Node, f.rtypes[i]), bind_))
+	let rts = expand_results(f.rtypes)
+	for i < len(rts) {
+		rs = append(rs, shape_sig_type(cast(Node, rts[i]), bind_))
 		i = i + 1
 	}
 	let sig = cast(ShapeSig, calloc(7, 8))
