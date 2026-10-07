@@ -2115,8 +2115,11 @@ Fix: add the missing cases, or a `default` arm when the rest share one answer.
 
 ### E292 MATCH_UNREACHABLE
 
-Every arm can be reached: an arm after one that matches every value, or a variant that an
-earlier arm already handles, never runs.
+Every arm can be reached: an arm after one that matches every value, a variant that an
+earlier arm already handles, or an integer, `str` or `bool` constant that an earlier arm (or
+the same arm's list) already names or that an earlier constant range holds, never runs (#642).
+A guarded arm handles nothing for this rule, since its guard can fail. Ranges may overlap, the
+first arm winning; a range wholly inside an earlier one is unreachable.
 
 ```tin edition=1
 package main
@@ -2128,15 +2131,25 @@ fn describe(n i64) str {
 	}
 }
 
+fn status(code i64) str {
+	return match code {
+		400..500 => "client error",
+		404 => "not found",
+		_ => "other",
+	}
+}
+
 fn main() {
 }
 ```
 
 ```text
 example.tin:6:3: error E292 MATCH_UNREACHABLE: this arm is never reached: an earlier arm matches every value
+example.tin:13:3: error E292 MATCH_UNREACHABLE: this pattern is never reached: 404 is already handled by the arm on line 12
 ```
 
-Fix: remove the arm, or move the catch-all `_` arm last.
+Fix: remove the arm, move the catch-all `_` arm last, or put a constant before the range
+that holds it (`404 =>` before `400..500 =>`).
 
 ### E293 MATCH_VALUE
 

@@ -1,0 +1,52 @@
+package main
+
+import "say"
+
+// #642: a second arm for a constant an earlier arm handles is never reached (E292).
+
+fn code(x i64) str {
+	return match x {
+		1 => "a"
+		2 => "b"
+		2 => "c"
+		_ => "d"
+	}
+}
+
+fn word(s str) i64 {
+	return match s {
+		"a" => 1
+		"b", "a" => 2
+		_ => 0
+	}
+}
+
+fn list(x u8) i64 {
+	return match x {
+		1, 1 => 1
+		_ => 0
+	}
+}
+
+fn status(n i64) str {
+	return match n {
+		400..500 => "client"
+		404 => "not found"
+		410..420 => "gone"
+		-1 => "none"
+		-1 => "again"
+		_ => "other"
+	}
+}
+
+fn flag(b bool) i64 {
+	return match b {
+		true => 1
+		false => 0
+		true => 2
+	}
+}
+
+fn main() {
+	say.Line(code(2), word("a"), list(1), status(404), flag(true))
+}

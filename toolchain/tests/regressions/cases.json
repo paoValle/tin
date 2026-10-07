@@ -980,5 +980,14 @@
       "stdout": "9888890\n",
       "stderr": ""
     }
+  },
+  {
+    "source": "match-duplicate-constant.tin",
+    "issue": 642,
+    "expected": {
+      "phase": "compile",
+      "exit": 1,
+      "stderr_contains": "E292 MATCH_UNREACHABLE: this pattern is never reached: 2 is already handled by the arm on line 9"
+    }
   }
 ]

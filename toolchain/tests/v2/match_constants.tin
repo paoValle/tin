@@ -1,0 +1,39 @@
+package main
+
+import "say"
+
+// #642: constant arms are checked for repeats, but these are all reachable: a constant before
+// the range that holds it, overlapping ranges (the first arm wins), a repeat after a guarded arm,
+// and u64 constants past 2^63.
+
+fn status(n i64) str {
+	return match n {
+		404 => "not found"
+		400..500 => "client"
+		450..550 => "overlap"
+		_ => "other"
+	}
+}
+
+fn guarded(n i64, strict bool) str {
+	return match n {
+		1 if strict => "strict one"
+		1 => "one"
+		_ => "other"
+	}
+}
+
+fn big(n u64) str {
+	return match n {
+		18446744073709551615 => "max"
+		9223372036854775808..18446744073709551615 => "high"
+		0..9223372036854775808 => "low"
+		_ => "other"
+	}
+}
+
+fn main() {
+	say.Line(big(18446744073709551615), big(9223372036854775809), big(5))
+	say.Line(status(404), status(420), status(520), status(9))
+	say.Line(guarded(1, true), guarded(1, false), guarded(2, false))
+}

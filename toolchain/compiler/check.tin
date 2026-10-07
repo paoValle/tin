@@ -7912,6 +7912,10 @@ const MR_HINT = 2 // record: the type the context expects (MATCH_EXPR), or 0
 shared mut mt_seq i64 // numbers the match locals that are assigned by name
 shared mut mt_variant i64 // the enum variant a pattern matches whole, or -1
 shared mut mt_bool i64 // a pattern's bool literal: 1 true, 2 false, 0 neither
+shared mut mt_lit i64 // a pattern's constant (#642): 1 an integer in mt_lo, 2 a str in mt_text, 3 an integer range mt_lo..mt_hi, 0 none
+shared mut mt_lo i64
+shared mut mt_hi i64
+shared mut mt_text str
 
 fn mt_name(prefix str) str {
 	mt_seq = mt_seq + 1
@@ -8535,6 +8539,7 @@ fn mt_pattern(p []i64, path MtPath, t i64, binds []i64, top i64) i64 {
 	let k = cast(Pattern, p).kind
 	mt_variant = -1
 	mt_bool = 0
+	mt_lit = 0
 	if k == PAT_WILD {
 		return 0
 	}
@@ -8550,12 +8555,24 @@ fn mt_pattern(p []i64, path MtPath, t i64, binds []i64, top i64) i64 {
 				mt_bool = 2
 			}
 		}
+		if top != 0 && kind_of(cast(Ty, t)) == K_INT && is_int_const_expr(x) != 0 {
+			mt_lit = 1
+			mt_lo = const_value(x, 0)
+		} else if top != 0 && kind_of(cast(Ty, t)) == K_STRING && cast(Node, x).kind == EX_STR {
+			mt_lit = 2
+			mt_text = cast(StrLit, x).ptr
+		}
 		return mt_compare(pos, path, t, x)
 	}
 	if k == PAT_RANGE {
 		if is_numeric_t(t) == 0 && kind_of(cast(Ty, t)) != K_STRING {
 			err_code_type(pos, "E290 MATCH_PATTERN", "a range pattern needs a number or a str, not ", t, "")
 			return 0
+		}
+		if top != 0 && kind_of(cast(Ty, t)) == K_INT && is_int_const_expr(cast(Pattern, p).a) != 0 && is_int_const_expr(cast(Pattern, p).b) != 0 {
+			mt_lit = 3
+			mt_lo = const_value(cast(Pattern, p).a, 0)
+			mt_hi = const_value(cast(Pattern, p).b, 0)
 		}
 		let lo = binary_new(pos, ">=", mt_node(pos, path), cast(Pattern, p).a)
 		let hi = binary_new(pos, "<", mt_node(pos, path), cast(Pattern, p).b)
@@ -8659,6 +8676,41 @@ fn mt_variant_test(pos i64, path MtPath, t Ty, name str, kids []i64, binds []i64
 	return cond
 }
 
+// mt_seen_line is the line of an earlier unguarded arm that already matches every value of the
+// pattern mt_pattern just read (mt_lit), or 0 (#642): an equal integer or str constant, a range
+// holding the integer, or a range holding the whole range. Overlapping ranges are allowed, the
+// first arm winning. unsigned compares integers as u64.
+fn mt_seen_line(seen []i64, texts []str, unsigned i64) i64 {
+	mut i = 0
+	for i < len(seen) {
+		let k = seen[i]
+		let lo = seen[i + 1]
+		let hi = seen[i + 2]
+		if mt_lit == 2 && k == 2 && texts[i / 4] == mt_text {
+			return seen[i + 3]
+		}
+		if mt_lit == 1 && k == 1 && lo == mt_lo {
+			return seen[i + 3]
+		}
+		if mt_lit == 1 && k == 3 && mt_le(lo, mt_lo, unsigned) != 0 && mt_le(mt_lo, hi, unsigned) != 0 && mt_lo != hi {
+			return seen[i + 3]
+		}
+		if mt_lit == 3 && k == 3 && mt_le(lo, mt_lo, unsigned) != 0 && mt_le(mt_hi, hi, unsigned) != 0 {
+			return seen[i + 3]
+		}
+		i = i + 4
+	}
+	return 0
+}
+
+// mt_le is a <= b, as u64 when unsigned is set.
+fn mt_le(a i64, b i64, unsigned i64) i64 {
+	if unsigned != 0 {
+		return i64((a ^ (1 << 63)) <= (b ^ (1 << 63)))
+	}
+	return i64(a <= b)
+}
+
 // lower_match lowers match m to a checked block. rec is the value record (MATCH_VALUE,
 // MATCH_TAIL, MATCH_EXPR), or 0.
 fn lower_match(m i64, mode i64, rec []Sym) i64 {
@@ -8702,6 +8754,11 @@ fn lower_match(m i64, mode i64, rec []Sym) i64 {
 	}
 	mut seen_true = 0
 	mut seen_false = 0
+	// Constants and constant ranges of the unguarded arms so far, for E292 (#642): [kind, lo, hi,
+	// line] per pattern, and the str constants' texts.
+	mut seen_lits = []i64{}
+	mut seen_texts = []str{}
+	let unsigned = i64(kind_of(st) == K_INT && is_unsigned_t(st) != 0)
 	mut catchall = 0
 	mut goflag = 0
 	mut bodies = []Block{}
@@ -8738,11 +8795,56 @@ fn lower_match(m i64, mode i64, rec []Sym) i64 {
 					covered[mt_variant] = 1
 				}
 			}
+			if (mt_bool == 1 && seen_true != 0) || (mt_bool == 2 && seen_false != 0) {
+				mut line = seen_true
+				if mt_bool == 2 {
+					line = seen_false
+				}
+				let u = err_code(cast(Pattern, p).pos, "E292 MATCH_UNREACHABLE")
+				buf_str(u, "this pattern is never reached: ")
+				if mt_bool == 1 {
+					buf_str(u, "true")
+				} else {
+					buf_str(u, "false")
+				}
+				buf_str(u, " is already handled by the arm on line ")
+				buf_int(u, line)
+				err_end(cast([]u8, u))
+			} else if mt_lit != 0 {
+				let line = mt_seen_line(seen_lits, seen_texts, unsigned)
+				if line != 0 {
+					let u = err_code(cast(Pattern, p).pos, "E292 MATCH_UNREACHABLE")
+					buf_str(u, "this pattern is never reached: ")
+					if mt_lit == 1 {
+						buf_int(u, mt_lo)
+					} else if mt_lit == 2 {
+						buf_byte(u, '"')
+						buf_str(u, mt_text)
+						buf_byte(u, '"')
+					} else {
+						buf_str(u, "the range")
+					}
+					if line == (apos >> 16) & 0xffffffff {
+						buf_str(u, " is already in this arm")
+					} else {
+						buf_str(u, " is already handled by the arm on line ")
+						buf_int(u, line)
+					}
+					err_end(cast([]u8, u))
+				}
+			}
 			if guard_ == 0 && mt_bool == 1 {
-				seen_true = 1
+				seen_true = (apos >> 16) & 0xffffffff
 			}
 			if guard_ == 0 && mt_bool == 2 {
-				seen_false = 1
+				seen_false = (apos >> 16) & 0xffffffff
+			}
+			if guard_ == 0 && mt_lit != 0 {
+				seen_lits = append(seen_lits, mt_lit)
+				seen_lits = append(seen_lits, mt_lo)
+				seen_lits = append(seen_lits, mt_hi)
+				seen_lits = append(seen_lits, (apos >> 16) & 0xffffffff)
+				seen_texts = append(seen_texts, mt_text)
 			}
 			if c == 0 {
 				always = 1

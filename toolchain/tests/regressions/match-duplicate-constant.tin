@@ -1,0 +1,14 @@
+package main
+
+import "say"
+
+// #642: the second 2 arm compiled and never ran.
+fn main() {
+	let x = match 2 {
+		1 => "a"
+		2 => "b"
+		2 => "c"
+		_ => "d"
+	}
+	say.Line(x)
+}

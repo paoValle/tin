@@ -1079,6 +1079,10 @@ fn area(s Shape) f64 {
   compare with a guard. Inside a variant's values a name always binds.
 - An enum `match` handles every variant or has `_`. A `match` that gives a value handles
   every value (`_`, every variant, or `true` and `false`).
+- Every arm can be reached (E292): an arm after `_`, a variant handled twice, and an integer,
+  `str` or `bool` constant that an earlier unguarded arm already names or whose constant range
+  holds it are errors (#642). Put a constant before the range that holds it (`404 =>` before
+  `400..500 =>`); ranges may overlap, the first arm winning.
 - A `match` as a statement, `let` or assignment value, `return` value or a `catch` or
   boundary block's last expression may have arms that are blocks that leave; inside a
   larger expression its arms are expressions.

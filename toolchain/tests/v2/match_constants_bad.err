@@ -1,0 +1,7 @@
+toolchain/tests/v2/match_constants_bad.tin:11:3: error E292 MATCH_UNREACHABLE: this pattern is never reached: 2 is already handled by the arm on line 10
+toolchain/tests/v2/match_constants_bad.tin:19:8: error E292 MATCH_UNREACHABLE: this pattern is never reached: "a" is already handled by the arm on line 18
+toolchain/tests/v2/match_constants_bad.tin:26:6: error E292 MATCH_UNREACHABLE: this pattern is never reached: 1 is already in this arm
+toolchain/tests/v2/match_constants_bad.tin:34:3: error E292 MATCH_UNREACHABLE: this pattern is never reached: 404 is already handled by the arm on line 33
+toolchain/tests/v2/match_constants_bad.tin:35:3: error E292 MATCH_UNREACHABLE: this pattern is never reached: the range is already handled by the arm on line 33
+toolchain/tests/v2/match_constants_bad.tin:37:3: error E292 MATCH_UNREACHABLE: this pattern is never reached: -1 is already handled by the arm on line 36
+toolchain/tests/v2/match_constants_bad.tin:46:3: error E292 MATCH_UNREACHABLE: this pattern is never reached: true is already handled by the arm on line 44
