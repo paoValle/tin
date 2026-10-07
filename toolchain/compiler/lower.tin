@@ -3073,22 +3073,29 @@ fn arena_wrapper(pos i64, ct i64, vt i64, fails i64) i64 {
 	mut vs5 = cast([]i64, f.locals)
 	vs5 = append(vs5, cast(i64, cs))
 	mut body = cast(Block, f.body).stmts
-	let r = temp(pos, rt_call(pos, "rt_alloc", args1(mk_int(pos, 16, ty_int)), ty_int), ty_int)
-	body = append(body, cast(i64, r))
 	let a = temp(pos, rt_call(pos, "rt_arena_open", cast(i64, []i64{}), ty_int), ty_int)
 	body = append(body, cast(i64, a))
+	// The result cell lives in the arena, so an arena leaves nothing in the enclosing pool:
+	// a plain program's loop of arenas stays flat (#629).
+	let r = temp(pos, rt_call(pos, "rt_alloc", args1(mk_int(pos, 16, ty_int)), ty_int), ty_int)
+	body = append(body, cast(i64, r))
 	let fe = temp(pos, rt_call(pos, "rt_arena_run", args2(sym_ref_node(pos, cs), sym_ref_node(pos, cast(Sym, r.sym))), ty_error), ty_error)
 	body = append(body, cast(i64, fe))
 	cast(Sym, fe.sym).reads = 1
 	body = append(body, expr_stmt(cast(Node, rt_call(pos, "rt_arena_out", args1(sym_ref_node(pos, cast(Sym, a.sym))), ty_void))))
 	body = append(body, assign_stmt(pos, sym_ref_node(pos, cast(Sym, fe.sym)), rt_call(pos, "rt_arena_fault", args1(sym_ref_node(pos, cast(Sym, fe.sym))), ty_error)))
+	// The value is read out of the cell before the arena closes.
+	mut v = cast(LetStmt, 0)
+	if kind_of(cast(Ty, vt)) != K_VOID {
+		v = temp(pos, mk_mem(pos, sym_ref_node(pos, cast(Sym, r.sym)), 0, 0, 0, vt), vt)
+		body = append(body, cast(i64, v))
+	}
 	if is_ref(vt) != 0 {
 		let ifs = cast(IfStmt, node_new(ST_IF, pos))
 		ifs.cond = mk_bin(pos, "==", sym_ref_node(pos, cast(Sym, fe.sym)), mk_int(pos, 0, ty_error), ty_bool)
 		ifs.then = empty_block(pos)
-		let src = mk_mem(pos, sym_ref_node(pos, cast(Sym, r.sym)), 0, 0, 0, vt)
 		mut vs6 = cast(Block, ifs.then).stmts
-		vs6 = append(vs6, assign_stmt(pos, mk_mem(pos, sym_ref_node(pos, cast(Sym, r.sym)), 0, 0, 0, vt), keep_call(pos, arenacopy_fn(cast(Ty, vt)), src, vt)))
+		vs6 = append(vs6, assign_stmt(pos, sym_ref_node(pos, cast(Sym, v.sym)), keep_call(pos, arenacopy_fn(cast(Ty, vt)), sym_ref_node(pos, cast(Sym, v.sym)), vt)))
 		body = append(body, cast(i64, ifs))
 	}
 	body = append(body, expr_stmt(cast(Node, rt_call(pos, "rt_arena_close", args1(sym_ref_node(pos, cast(Sym, a.sym))), ty_void))))
@@ -3103,7 +3110,7 @@ fn arena_wrapper(pos i64, ct i64, vt i64, fails i64) i64 {
 	let ret = cast(ReturnStmt, node_new(ST_RETURN, pos))
 	mut rv = []i64{}
 	if kind_of(cast(Ty, vt)) != K_VOID {
-		rv = append(rv, mk_mem(pos, sym_ref_node(pos, cast(Sym, r.sym)), 0, 0, 0, vt))
+		rv = append(rv, sym_ref_node(pos, cast(Sym, v.sym)))
 	}
 	if fails != 0 {
 		rv = append(rv, mk_int(pos, 0, ty_error))

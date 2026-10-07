@@ -135,6 +135,9 @@ the compiler: write a minimal repro as a test, open an issue and work around it.
 - Memory: no GC. Allocations during a request go to the core's request pool (wiped per request);
   globals live in the long-lived ingot heap. Storing request memory into a global (or anything a global
   holds) without `keep(x)` is a compile error. keep() deep-copies into the ingot heap.
+- A plain program (a CLI, a batch job) never wipes its pool before it exits: a loop that allocates on
+  every step wraps the step in `total += arena { work(item) }` (the value is copied out, the rest freed),
+  or it grows without bound (the runtime warns on stderr past TIN_POOL_WARN_MB, default 512). examples/batch.tin.
 - `make([]T, n)` starts elements at zero values ("" for str, an empty slice for []T). With a non-zero
   length it is a compile error for struct, map and func elements: use make([]T, 0, n) and append.
 - Builtins: len cap append make copy delete min max panic fail keep bound reveal; say.Line(a, b...)

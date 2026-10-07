@@ -1,0 +1,50 @@
+package main
+
+import "mint"
+import "quarry"
+import "say"
+import "twine"
+
+// A batch job in a plain program (#629): it parses one record per step. A plain program's
+// pool is freed only when the program exits, so each step runs in an arena: the step's
+// strings and slices are dropped when its arena ends, and only its value (an i64) is copied
+// out. The peak stays flat however many records there are.
+//
+//   tinc -o batch examples/batch.tin && ./batch 2000000
+
+type Record struct {
+	id i64
+	name str
+	score i64
+}
+
+// line is the text of record i, as a file or a socket would deliver it.
+fn line(i i64) str {
+	return "{i},user-{i % 1000},{i % 97}"
+}
+
+fn parse(text str) !Record {
+	let parts = twine.Split(text, ",")
+	if len(parts) != 3 {
+		fail "bad record: {text}"
+	}
+	let id = try mint.Atoi(parts[0])
+	let score = try mint.Atoi(parts[2])
+	return Record{id: id, name: parts[1], score: score}
+}
+
+fn main() {
+	let args = quarry.Args()
+	mut n = 1000000
+	if len(args) > 1 {
+		n = mint.Atoi(args[1]) catch _ { n }
+	}
+	mut total = 0
+	for i in 0..n {
+		total += arena {
+			let r = parse(line(i)) catch _ { Record{id: 0, name: "", score: 0} }
+			r.score
+		}
+	}
+	say.Line("records", n, "score total", total)
+}

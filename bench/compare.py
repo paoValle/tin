@@ -42,6 +42,9 @@ def cpu(base, head, suite, names, runs, work):
 
 
 def main():
+    # Benchmarks measure raw allocation; a plain program past 512 MiB of pool (binary-trees)
+    # would print the #629 warning, which the output comparison would count as a difference.
+    os.environ['TIN_POOL_WARN_MB'] = '0'
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base-root', required=True, type=Path)
     parser.add_argument('--head-root', type=Path, default=ROOT)

@@ -758,6 +758,7 @@ fn rt_alloc_slow(n i64) i64 {
 		rt_pool_took(b, false)
 		b[0] = c[ctxPoolExtra]
 		c[ctxPoolExtra] = b
+		rt_pool_warn(c)
 		return b + 16
 	}
 	if c[ctxPoolMark] == 0 {
@@ -769,7 +770,39 @@ fn rt_alloc_slow(n i64) i64 {
 	c[ctxPoolExtra] = chunk
 	c[ctxBump] = chunk + 16 + n
 	c[ctxEnd] = chunk + rt_chunk()
+	rt_pool_warn(c)
 	return chunk + 16
+}
+
+mut poolWarn i64 // TIN_POOL_WARN_MB in bytes; 0 until read, -1 when off or already said (#629)
+
+// rt_pool_warn tells a plain program, once, on stderr, that its pool has grown past
+// TIN_POOL_WARN_MB (default 512; 0 turns it off). Nothing frees a plain program's pool before
+// it exits, so a loop that allocates on every step grows it until the kernel stops it, and
+// the fix is an arena per step (#629). It watches only the main thread outside any task and
+// arena: a server's requests are tasks, with budgets of their own.
+fn rt_pool_warn(c i64) {
+	if poolWarn < 0 || curTask != 0 || c[ctxArena] != 0 {
+		return
+	}
+	if poolWarn == 0 {
+		mut mb = 512
+		let env = rt_getenv(cast(i64, "TIN_POOL_WARN_MB") + 8)
+		if env != 0 {
+			mb = rt_decimal_integer(env)
+		}
+		if mb <= 0 {
+			poolWarn = -1
+			return
+		}
+		poolWarn = mb * 1048576
+	}
+	if rtPoolMore < poolWarn {
+		return
+	}
+	// Building the message allocates from this pool too: say it once.
+	poolWarn = -1
+	rt_fault_say("tin: this program's memory pool holds " + rt_i64str(rtPoolMore / 1048576) + " MiB, and a plain program frees it only when it exits: a loop that allocates on every step grows it without bound. Run each step in an arena block (LANGUAGE.md section 12, Arenas), or call hearth.Reset() between batches. TIN_POOL_WARN_MB=0 turns this message off.\n")
 }
 
 // rt_pool_reset ends a request: the core's pool is zeroed back to empty in place. On the

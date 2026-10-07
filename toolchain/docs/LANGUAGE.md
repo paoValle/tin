@@ -1592,7 +1592,13 @@ Tin has no garbage collector. Each core has two kinds of memory:
 
 - **the request pool**: every allocation a request (or a plain program's `main`) makes is
   a bump-pointer allocation from it; a server wipes the pool after each response, so
-  serving costs no frees and no collection pauses;
+  serving costs no frees and no collection pauses. A plain program's pool is freed only
+  when it exits, so **a loop that allocates on every step runs each step in an `arena`**
+  (below) or calls `hearth.Reset()` between batches; otherwise it grows until the kernel
+  stops the program. Past `TIN_POOL_WARN_MB` (512 MiB by default, 0 turns it off) the
+  runtime says so once on stderr (#629). It is a run-time warning, not a compile error:
+  almost every loop allocates something (an interpolated string), and whether it adds up
+  depends on how many steps run;
 - **the ingot heap**: long-lived memory for globals and everything they hold, a
   size-class allocator. Global initializers allocate here.
 
@@ -1654,7 +1660,8 @@ the use after the loop.
 **Arenas** (edition 1, #236). `arena { body }` runs its body in a sub-region of its own: a
 fresh pool, dropped when the block ends. The block's value (its last expression) is copied
 into the enclosing region, so it is all that leaves; a batch loop whose steps run in arenas
-keeps a flat footprint however many steps it takes, outside a request as well as inside one.
+keeps a flat footprint however many steps it takes, outside a request as well as inside one
+(examples/batch.tin: two million records in the memory of one).
 
 <!-- tin-prelude
 let paths = []str{"a.txt", "b.txt"}

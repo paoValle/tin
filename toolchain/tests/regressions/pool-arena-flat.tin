@@ -1,0 +1,28 @@
+package main
+
+import "say"
+
+// The loop of pool-warning.tin with each step in an arena: the pool stays flat, so the
+// warning (TIN_POOL_WARN_MB=8 through the case's env) never fires. An arena left its 16-byte
+// result cell in the enclosing pool, so a plain program's loop of arenas still grew by 16
+// bytes a step, past 8 MiB in a million steps (#629).
+
+type Row struct {
+	id i64
+	name str
+}
+
+fn parse(i i64) Row {
+	return Row{id: i, name: "row {i}"}
+}
+
+fn main() {
+	mut total = 0
+	for i in 0..1000000 {
+		total += arena {
+			let r = parse(i)
+			len(r.name)
+		}
+	}
+	say.Line(total)
+}

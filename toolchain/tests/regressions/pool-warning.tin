@@ -1,0 +1,25 @@
+package main
+
+import "say"
+
+// A plain program never resets its pool, so a loop that allocates on every step grows it
+// until the kernel stops the program. Past TIN_POOL_WARN_MB (8 here, through the case's env;
+// 512 by default) the runtime says so once on stderr and names the arena fix (#629).
+
+type Row struct {
+	id i64
+	name str
+}
+
+fn parse(i i64) Row {
+	return Row{id: i, name: "row {i}"}
+}
+
+fn main() {
+	mut total = 0
+	for i in 0..1000000 {
+		let r = parse(i)
+		total += len(r.name)
+	}
+	say.Line(total)
+}

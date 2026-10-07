@@ -53,6 +53,36 @@ def batches(exe):
         print('arena batch: peak RSS stays flat (Linux)')
 
 
+def small_steps(out):
+    """examples/batch.tin (#629): a million small steps, each in an arena, keep a plain
+    program's peak flat, and the pool warning (TIN_POOL_WARN_MB) never fires. An arena left
+    16 bytes in the enclosing pool per step, so this grew by 32 MB over two million steps."""
+    exe = out / 'batch'
+    subprocess.run([str(ROOT / 'bin/tinc'), '-o', str(exe), 'examples/batch.tin'], check=True, cwd=ROOT)
+    peaks = []
+    for n in (20000, 2000000):
+        p = subprocess.Popen([str(exe), str(n)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             env=dict(os.environ, TIN_POOL_WARN_MB='8'))
+        stdout, stderr = p.communicate()
+        assert p.returncode == 0, (n, p.returncode, stderr)
+        assert stdout.startswith(b'records %d ' % n), stdout
+        assert stderr == b'', (n, stderr)
+        peaks.append(peak_of(exe, n))
+    if sys.platform.startswith('linux'):
+        assert peaks[1] <= peaks[0] + 2 * MIB, peaks
+    print('batch example: peak RSS %.1f MiB after 20k steps, %.1f MiB after 2M steps, no pool warning'
+          % (peaks[0] / MIB, peaks[1] / MIB))
+
+
+def peak_of(exe, n):
+    """The peak RSS in bytes of one run of the batch example over n records."""
+    p = subprocess.Popen([str(exe), str(n)], stdout=subprocess.DEVNULL)
+    _, status, usage = os.wait4(p.pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0, n
+    kb = usage.ru_maxrss
+    return kb if sys.platform == 'darwin' else kb * 1024
+
+
 def rss(pid):
     return int(subprocess.check_output(['ps', '-o', 'rss=', '-p', str(pid)]).strip()) * 1024
 
@@ -159,6 +189,7 @@ def main():
                 server.kill()
                 server.wait()
     csv_streaming(out)
+    small_steps(out)
 
 
 if __name__ == '__main__':

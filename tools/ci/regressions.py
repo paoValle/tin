@@ -75,6 +75,11 @@ def run_case(case, compiler, work, cross=None, docker=None):
         env = {k: v for k, v in os.environ.items() if not k.startswith('TIN_REPLAY_')}
         env.update(TIN_REPLAY_CAPSULE=str(work / case['replay']['capsule']), TIN_REPLAY_KEY=case['replay']['key'])
         docker_env = ['-e', 'TIN_REPLAY_CAPSULE=/work/' + case['replay']['capsule'], '-e', 'TIN_REPLAY_KEY=' + case['replay']['key']]
+    if 'env' in case:
+        # The case's own environment (a TIN_* setting the run needs, #629).
+        env = dict(env or os.environ)
+        env.update(case['env'])
+        docker_env += [x for k, v in sorted(case['env'].items()) for x in ('-e', k + '=' + v)]
     if docker:
         # Cross-built cases run in a container of the target with the same limits.
         command = ['docker', 'run', '--rm', '--platform', target.replace('-', '/'), '-v', str(work) + ':/work',

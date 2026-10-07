@@ -207,7 +207,8 @@ fires. Messages are copied into the receiver's request pool.
 - Frames, their text buffers and their scratch space for a number's digits live in the
   heap and are reused (#553). A finished frame, whose text has been copied into a string,
   stdout or a fault, goes back on the core's free list (`fmtFree`), keeping a buffer of up
-  to 64 KiB. A plain program, whose pool is never reset, prints in constant memory, and an
+  to 64 KiB. A plain program, whose pool is never reset (it warns once on stderr when the pool
+  passes `TIN_POOL_WARN_MB`, default 512, #629), prints in constant memory, and an
   interpolation or `say.Fmt` costs only the string it returns. A frame that never finishes
   (a panic in the middle of a format) is not reused.
 - No frame is open while user code runs: the compiler evaluates every argument that is more

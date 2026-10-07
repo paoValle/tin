@@ -17,6 +17,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
+    # Benchmarks measure raw allocation; a plain program past 512 MiB of pool (binary-trees)
+    # would print the #629 warning, which the output comparison would count as a difference.
+    os.environ['TIN_POOL_WARN_MB'] = '0'
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('names', nargs='*')
     parser.add_argument('--json', type=Path)

@@ -944,5 +944,31 @@
       "stdout": "13230 1.5\n",
       "stderr": ""
     }
+  },
+  {
+    "source": "pool-warning.tin",
+    "issue": 629,
+    "env": {
+      "TIN_POOL_WARN_MB": "8"
+    },
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "9888890\n",
+      "stderr_contains": "a loop that allocates on every step grows it without bound"
+    }
+  },
+  {
+    "source": "pool-arena-flat.tin",
+    "issue": 629,
+    "env": {
+      "TIN_POOL_WARN_MB": "8"
+    },
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "9888890\n",
+      "stderr": ""
+    }
   }
 ]
