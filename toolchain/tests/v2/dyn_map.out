@@ -1,0 +1,19 @@
+a 2 dog rex [good] bird with 2 wings 8 6
+b 2 bird with 3 wings dog rex [good]
+c rex bird with 3 wings
+c tweety bird with 2 wings
+d rex dog again []
+d tweety bird with 2 wings
+e map[rex:{again []} tweety:{2}]
+f dog one [] bird with 4 wings 2
+g 2 dog s1b [] bird with 5 wings
+h map[{1 a}:{s1b []} {2 b}:{5}]
+i bird with 6 wings
+j true true
+k true true true false
+l map[a:{6} n:<nil>]
+l2 bird with 8 wings bird with 6 wings
+m panic: panic: map has no such key, and a dyn value has no zero value (a map[K]?dyn S reads nil)
+n dog rex [kept deep] bird with 7 wings dog x [k] true
+o 2 bird with 7 wings 2
+p bird with 1 wings

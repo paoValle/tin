@@ -249,6 +249,12 @@ name is E641 (`ys` would have changed under you). Take `sift.Clone(xs)` for a sn
 - `m[k]` reads (a missing key reads as V's zero value: 0, `""`, an empty slice, a new
   empty struct or map); `let (v, ok) = m[k]` also reports presence; `m[k] = v` writes;
   `m[k] += 1` updates; `delete(m, k)` removes; `len(m)` counts.
+- A map of `dyn S` values (a registry of handlers by name) works like any other, with one
+  difference: a `dyn S` has no zero value, so reading a missing key panics (`guard` turns
+  the panic into a fault), and `let (v, ok) = m[k]` is a compile error (E203). A map of
+  `?dyn S` values reads nil for a missing key, and its `let (v, ok) = m[k]` works. Each
+  value is kept in a 16-byte cell of the map's own memory, so storing allocates once per
+  new key and overwriting a key reuses its cell.
 - `for k, v in m` iterates in **insertion order**: a new key goes last, updating a key
   keeps its place, and deleting then re-adding moves it to the end. JSON output and
   `atlas.Keys` / `atlas.Values` follow the same order; printing a map sorts its keys like
@@ -563,9 +569,10 @@ exhaustive `match`, an open set is a method on the shape. A named union
 **Status.** Shapes support structural constraints, composition, named unions and generic
 instances. Calls through shaped type parameters are direct calls on concrete types. `dyn S`
 uses a two-word object/table pair; the checker verifies conversions, and method calls
-dispatch through the table without allocating. `?dyn S`, `[]dyn S`, `keep` of a dynamic
-value or container, and region checks are implemented. Map values and `!dyn` results
-remain deferred; see [the representation and staging note](../../design/design_dyn.md). The
+dispatch through the table without allocating. `?dyn S`, `[]dyn S`, maps of `dyn S` and
+`?dyn S` values (#567), `!dyn S` results (#568), formatting (#569), `keep` of a dynamic
+value or container, and region checks are implemented; see
+[the representation and staging note](../../design/design_dyn.md). The
 `io` shapes live in `toolchain/std/io`. `constraints.Any`, `constraints.Comparable` and
 `sift.Ordered` are ordinary library shapes, not language keywords; import their packages
 where used.
@@ -1289,7 +1296,8 @@ if a != nil && b != nil {       // both narrowed inside
   in a local first to narrow it (`let l = n.left`).
 - `if let v = opt { ... }` binds `v` (a `T`) when `opt` is not nil.
 - Using a `?T` without narrowing is a compile error. Map reads of missing keys return the
-  zero value, not an optional; use `let (v, ok) = m[k]` to tell.
+  zero value, not an optional; use `let (v, ok) = m[k]` to tell. A map of `dyn S` values has
+  no zero to return: a missing key panics there, and a map of `?dyn S` values reads nil.
 
 ---
 

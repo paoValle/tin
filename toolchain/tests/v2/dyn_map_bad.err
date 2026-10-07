@@ -1,0 +1,2 @@
+toolchain/tests/v2/dyn_map_bad.tin:23:2: error E203 NO_ZERO_VALUE: a missing key has no dyn Namer value to give (a dyn value is never nil): use a map with ?dyn values, which reads nil for a missing key
+toolchain/tests/v2/dyn_map_bad.tin:25:6: error E281 ARGO: argo cannot encode values of type dyn Namer

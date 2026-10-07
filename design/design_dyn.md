@@ -3,8 +3,9 @@
 Status: `dyn` is implemented on arm64 and amd64. The checker validates conversions and
 structural satisfaction; both back ends generate the two-word object/table pair, table fills,
 method calls and size-16 ABI paths. `?dyn`, `[]dyn`, `keep` of a dynamic value or container,
-and region summaries/checks are covered. Map values, `!dyn` results, formatting, comparisons,
-and closure cells that capture a `dyn` remain rejected or deferred under the rules below.
+and region summaries/checks are covered, and so are map values (#567), `!dyn` results (#568)
+and formatting (#569). Comparisons and closure cells that capture a `dyn` remain rejected or
+deferred under the rules below.
 `dyn` in expression-position type arguments parses (`Box[dyn W]{...}`), and an unnamed `dyn`
 parameter is a parse error that says how to name it.
 
@@ -60,7 +61,7 @@ nothing new; it inherits design_foundations section 2 (`interface`, `any`, type 
 | stack argument | 8-byte slot | two 8-byte slots, 16-byte aligned; arm64 gains callee-side stack-parameter loading (x64 has it) |
 | struct field | 8-byte slot | 16-byte slot, 8-byte aligned; `layout_struct` starts its width walk at 16 |
 | slice element | scale 1/2/4/8 | address `base + idx*16` with two loads/stores at +0 and +8; size-16 `append` lowers to the grow check plus two stores (the existing inline path, extended), so the one-word `rt_append`/`rt_store_elem` is not used for it; `keep_each` uses the same address rule |
-| map value | one word | **later step**: the runtime map ABI (header value size, 16-byte slots) changes with it |
+| map value | one word | the word points at a 16-byte cell (object, table) in the map's own memory (#567): `rt_map_set_dyn` overwrites a present key's cell in place or makes a new one, `rt_map_get_dyn` and `rt_map_val_dyn` return the pair; a long-lived map counts its cells, so a deleted entry's cell is freed. The map routines and the map header are unchanged |
 | `?dyn` | nil check | `object == 0` |
 
 The size of a type comes from `type_width` (extended with a `K_DYN` case), not `TY_SIZE`,
@@ -104,8 +105,9 @@ error's `keep` suggestion keeps working.
   formats"); a shape's method is the way to render an open set.
 - A closure capturing a `dyn`: rejected until cells can be two words; the diagnostic names
   the capture.
-- `map[K]dyn` values and `!dyn` results: deferred to the map-ABI and fault-return steps;
-  `!dyn` returns the zero pair `(0, 0)` when it does land.
+- `map[K]dyn` values (#567): a missing key of a `map[K]dyn S` panics (there is no zero
+  pair to return) and its comma-ok read is E203; a `map[K]?dyn S` reads nil. `!dyn` results
+  landed in #568.
 - `dyn` as a map key: rejected (it does not compare).
 
 ## 5. Rejected alternatives
@@ -120,8 +122,8 @@ error's `keep` suggestion keeps working.
 
 ## 6. Staging
 
-Each step kept `make bootstrap` a fixed point and added its own tests. The first five steps
-are complete; the final step remains deferred.
+Each step kept `make bootstrap` a fixed point and added its own tests. All six steps are
+complete.
 
 1. **Representation decision**: this note fixes the pair layout, method-table shape, and
    region semantics.
@@ -133,8 +135,9 @@ are complete; the final step remains deferred.
    and dynamic calls are implemented.
 5. **Region and lifetime behavior**: storing a request-backed `dyn` in a global is rejected;
    `keep(dyn)` survives pool resets; and `[]dyn` values of different types work.
-6. **Deferred**: map values and the library ports that need them (`io.ReaderFrom`/`WriterTo`,
-   `MultiReader`, and driver shapes) follow the map ABI and library roadmap work.
+6. **Map values** (#567): boxed in cells, so the runtime map ABI did not change. The library
+   ports that want them (`io.ReaderFrom`/`WriterTo`, `MultiReader`, and driver shapes) follow
+   the library roadmap work.
 
 ## 7. What this unlocks
 

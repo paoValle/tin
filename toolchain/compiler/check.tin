@@ -340,9 +340,6 @@ fn resolve_type(tx i64) i64 {
 			err_code_type(cast(Node, tx).pos, "E201 MAP_KEY", "a map key must compare by value (str, numbers, bool, or structs and enums of those), not ", mkt, "")
 		}
 		let mvt = resolve_type(cast(TypeExpr, tx).b)
-		if is_dyn_value(cast(Ty, mvt)) != 0 {
-			err_code_at(cast(Node, tx).pos, "E530 DYN_NOT_YET", "a map value of type dyn is not built yet: the map stores 16-byte slots with the table (#567)")
-		}
 		return map_of(mkt, mvt)
 	}
 	if k == TX_PTR {
@@ -6133,9 +6130,14 @@ fn check_assign(s i64) {
 			if is_untyped(vt) != 0 {
 				reconvert(v, xt.elem)
 			}
-			let store = cast(Call, map_set_call(cast(Node, s).pos, tx, ti, cast(i64, v), xt.key))
+			let mset = map_set_call(cast(Node, s).pos, tx, ti, cast(i64, v), xt.key)
+			mut store = cast(Call, mset)
+			if cast(Node, mset).kind == EX_SEQ {
+				// A dyn value's store (#567): its value is the call.
+				store = cast(Call, cast(SeqExpr, mset).value)
+			}
 			store.store = 1
-			replace_node(s, expr_stmt(cast(Node, store)))
+			replace_node(s, expr_stmt(cast(Node, mset)))
 			return
 		}
 		if kind_of(xt) == K_STRING {
@@ -6278,6 +6280,9 @@ fn check_multi(s i64) {
 				let kt = chk(cast(Node, cast(IndexExpr, v).i), mt.key)
 				if is_untyped(kt) != 0 {
 					reconvert(cast(Node, cast(IndexExpr, v).i), mt.key)
+				}
+				if kind_of(cast(Ty, mt.elem)) == K_DYN {
+					err_code_type(pos, "E203 NO_ZERO_VALUE", "a missing key has no ", mt.elem, " value to give (a dyn value is never nil): use a map with ?dyn values, which reads nil for a missing key")
 				}
 				let get = map_read(pos, cast(Node, cast(IndexExpr, v).x), cast(IndexExpr, v).i, mt.elem)
 				stmts = append(stmts, cast(i64, temp(pos, get, mt.elem)))
@@ -6964,7 +6969,7 @@ fn lower_range(s i64) {
 			pre = append(pre, range_bind(pos, key, kv, secret_like(cast(i64, xt), xt.key), cast(RangeStmt, s).define))
 		}
 		if val != 0 {
-			let vv = from_bits(cast(Node, rt_call(pos, "rt_map_val", args2(sym_ref_node(pos, cast(Sym, ss)), sym_ref_node(pos, cast(Sym, i))), ty_int)), xt.elem)
+			let vv = map_val(pos, sym_ref_node(pos, cast(Sym, ss)), sym_ref_node(pos, cast(Sym, i)), xt.elem)
 			pre = append(pre, range_bind(pos, val, vv, secret_like(cast(i64, xt), xt.elem), cast(RangeStmt, s).define))
 		}
 	} else {
@@ -9383,7 +9388,7 @@ fn keep_fn(t Ty) Fn {
 		live.cond = rt_call(pos, "rt_map_live", args2(sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, j))), ty_bool)
 		live.then = empty_block(pos)
 		mut kv = from_bits(cast(Node, rt_call(pos, "rt_map_key", args2(sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, j))), ty_int)), t.key)
-		mut vv = from_bits(cast(Node, rt_call(pos, "rt_map_val", args2(sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, j))), ty_int)), t.elem)
+		mut vv = map_val(pos, sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, j)), t.elem)
 		let kc = key_composite(t.key)
 		if kc != 0 {
 			// An encoded key: rt_map_setk copies its bytes into the kept map.
@@ -9394,7 +9399,11 @@ fn keep_fn(t Ty) Fn {
 		if is_ref(t.elem) != 0 || is_dyn_value(cast(Ty, t.elem)) != 0 {
 			vv = keep_call(pos, keep_fn(cast(Ty, t.elem)), vv, t.elem)
 		}
-		if kc != 0 {
+		if is_dyn_value(cast(Ty, t.elem)) != 0 {
+			// A dyn value goes into a cell of the kept map (#567).
+			mut vs11 = cast(Block, live.then).stmts
+			vs11 = append(vs11, expr_stmt(cast(Node, map_set_dyn(pos, sym_ref_node(pos, cast(Sym, out.sym)), to_bits(cast(Node, kv)), vv, kc))))
+		} else if kc != 0 {
 			mut vs9 = cast(Block, live.then).stmts
 			vs9 = append(vs9, expr_stmt(cast(Node, rt_call(pos, "rt_map_setk", args3(sym_ref_node(pos, cast(Sym, out.sym)), to_bits(cast(Node, kv)), to_bits(cast(Node, vv))), ty_void))))
 		} else {
@@ -9483,6 +9492,10 @@ fn rc_map_bits(t Ty) i64 {
 	if rc_counted(cast(Ty, t.elem)) != 0 {
 		b = b | 2
 	}
+	if is_dyn_value(cast(Ty, t.elem)) != 0 {
+		// Each value is a cell of the map's own (#567).
+		b = b | 2
+	}
 	return b
 }
 
@@ -9567,6 +9580,10 @@ fn rc_drop_body(pos i64, body []i64, x i64, t Ty) {
 		if rc_counted(cast(Ty, t.elem)) != 0 {
 			mut vs2 = cast(Block, live.then).stmts
 			vs2 = append(vs2, expr_stmt(rc_dec_call(pos, from_bits(cast(Node, rt_call(pos, "rt_map_val", args2(x, sym_ref_node(pos, cast(Sym, j))), ty_int)), t.elem), drop_fn(t.elem))))
+		} else if is_dyn_value(cast(Ty, t.elem)) != 0 {
+			// The entry's dyn cell (#567).
+			mut vs12 = cast(Block, live.then).stmts
+			vs12 = append(vs12, expr_stmt(rc_dec_call(pos, rt_call(pos, "rt_map_val", args2(x, sym_ref_node(pos, cast(Sym, j))), ty_int), rc_none())))
 		}
 		wb.stmts = append(wb.stmts, cast(i64, live))
 		body = append(body, cast(i64, w))
@@ -9856,7 +9873,7 @@ fn arenacopy_fn(t Ty) Fn {
 		live.cond = rt_call(pos, "rt_map_live", args2(sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, j))), ty_bool)
 		live.then = empty_block(pos)
 		mut kv = from_bits(cast(Node, rt_call(pos, "rt_map_key", args2(sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, j))), ty_int)), t.key)
-		mut vv = from_bits(cast(Node, rt_call(pos, "rt_map_val", args2(sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, j))), ty_int)), t.elem)
+		mut vv = map_val(pos, sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, j)), t.elem)
 		let kc = key_composite(t.key)
 		if kc != 0 {
 			// An encoded key: rt_map_setk copies its bytes into the new map.

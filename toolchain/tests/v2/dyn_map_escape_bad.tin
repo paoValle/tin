@@ -1,0 +1,29 @@
+package main
+
+import "say"
+
+// A dyn value stored in a long-lived map must be kept (#567), like any other value:
+// its object would otherwise live in the request's pool.
+
+shape Namer {
+	Name() str
+}
+
+type Dog struct {
+	n str
+}
+
+fn (d Dog) Name() str {
+	return d.n
+}
+
+mut registry = map[str]dyn Namer{}
+
+fn register(n dyn Namer) {
+	registry["k"] = n
+}
+
+fn main() {
+	register(Dog{n: "a"})
+	say.Line(registry["k"].Name())
+}

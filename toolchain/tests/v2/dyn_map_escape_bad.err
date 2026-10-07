@@ -1,0 +1,1 @@
+toolchain/tests/v2/dyn_map_escape_bad.tin:23:10: error E310 REQUEST_ESCAPE: request memory stored into long-lived memory (it may be reachable from a global): wrap the value in keep()

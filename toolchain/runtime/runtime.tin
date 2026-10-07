@@ -2233,6 +2233,53 @@ fn rt_map_setk(m i64, k str, v i64) {
 	rt_map_set(m, cast(i64, k), v, 0)
 }
 
+// ---- maps of dyn values (#567) ----
+//
+// A dyn value is two words (object, table) and a map's value slot is one, so a map of dyn
+// or ?dyn values keeps each value in a 16-byte cell of the map's own memory and stores the
+// cell's address. Writing a key that is present overwrites its cell in place. A long-lived
+// map counts its cells like other values (with no children to drop), so the cell of a
+// deleted entry is freed with the slot.
+
+// rt_map_set_dyn stores the dyn value (object, table) under k; ck says k is an encoded
+// struct or enum key (rt_map_setk).
+fn rt_map_set_dyn(m i64, k i64, object i64, table i64, ck i64) {
+	if m == 0 {
+		rt_panic("assignment to entry in nil map")
+	}
+	mut c = rt_map_get(m, k)
+	if c == 0 {
+		c = rt_region_alloc(m[9], 16)
+	}
+	c[0] = object
+	c[1] = table
+	if ck != 0 {
+		rt_map_setk(m, cast(str, k), c)
+	} else {
+		rt_map_set(m, k, c, 1)
+	}
+}
+
+// rt_map_get_dyn is m[k] in a map of dyn values: the value's two words, or a nil ?dyn
+// (0, 0) for a missing key. must reports a missing key instead: a dyn S has no zero value.
+// rt_map_found tells whether the key was there, as after rt_map_get.
+fn rt_map_get_dyn(m i64, k i64, must i64) (i64, i64) {
+	let c = rt_map_get(m, k)
+	if c == 0 {
+		if must != 0 {
+			rt_panic("map has no such key, and a dyn value has no zero value (a map[K]?dyn S reads nil)")
+		}
+		return 0, 0
+	}
+	return c[0], c[1]
+}
+
+// rt_map_val_dyn is the dyn value of entry i (see rt_map_val).
+fn rt_map_val_dyn(m i64, i i64) (i64, i64) {
+	let c = rt_map_val(m, i)
+	return c[0], c[1]
+}
+
 // ---- big maps: chunked entries and an index that grows a few entries at a time (#346) ----
 //
 // A map of up to mapChunk (4096) entries is flat, as above. Past that its entries live in

@@ -1052,7 +1052,8 @@ Fix: give the array a length of zero or more; for other elements, use a slice an
 
 Structs, maps, functions and `dyn` values are never nil, so they have no zero value: a
 variable of such a type needs an initializer, and an array or a slice made with a length
-cannot start with such elements.
+cannot start with such elements. For the same reason `let (v, ok) = m[k]` on a map of `dyn`
+values is an error: a missing key would leave `v` with no value (#567).
 
 ```tin edition=1
 package main
@@ -1072,7 +1073,8 @@ example.tin:7:5: error E203 NO_ZERO_VALUE: a variable of type Point needs an ini
 ```
 
 Fix: initialize the variable (`mut p = Point{}`), use `?T` for a value that may be missing, or
-make the slice empty with a capacity (`make([]T, 0, n)`) and `append`.
+make the slice empty with a capacity (`make([]T, 0, n)`) and `append`. For a map whose keys
+may be missing, give it `?dyn S` values: `m[k]` then reads nil for a missing key.
 
 ### E204 TUPLE_TYPE
 
@@ -3262,26 +3264,11 @@ Fix: rename one of the methods, or make the signatures the same.
 
 ### E530 DYN_NOT_YET
 
-One use of `dyn` is planned but not built yet: a `dyn` value in a map (#567). A `!dyn` result
-works since #568, and formatting a `dyn` value since #569: it prints as its concrete value.
+Reported a use of `dyn` that was planned but not built yet: a `dyn` value in a map, until
+#567, and a `!dyn` result, until #568.
 
-```tin edition=1
-package main
-
-shape Sized { Size() i64 }
-
-fn main() {
-	let m = map[str]dyn Sized{}
-	_ = len(m)
-}
-```
-
-```text
-example.tin:6:10: error E530 DYN_NOT_YET: a map value of type dyn is not built yet: the map stores 16-byte slots with the table (#567)
-```
-
-Fix: keep the values in a `[]dyn S` and map the keys to indexes, or use the concrete type
-until the feature lands.
+Retired: both are built. A map holds `dyn` and `?dyn` values since #567; reading a missing
+key of a map of `dyn` values with `let (v, ok) = m[k]` is E203.
 
 ## E6xx Concurrency, boundaries and lifecycle
 

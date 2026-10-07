@@ -1363,11 +1363,37 @@ fn key_out(e Node, kt i64) i64 {
 
 // map_set_call stores v under key k in map m.
 fn map_set_call(pos i64, m i64, k i64, v i64, kt i64) i64 {
+	if is_dyn_value(cast(Ty, cast(Ty, cast(Node, m).type_).elem)) != 0 {
+		return map_set_dyn(pos, m, key_in(cast(Node, k), kt), v, key_composite(kt))
+	}
 	if key_composite(kt) != 0 {
 		return rt_call(pos, "rt_map_setk", args3(m, key_in(cast(Node, k), kt), to_bits(cast(Node, v))), ty_void)
 	}
 	// dup: the caller keeps no reference to the key it passes.
 	return rt_call(pos, "rt_map_set", args4(m, to_bits(cast(Node, k)), to_bits(cast(Node, v)), mk_int(pos, 1, ty_int)), ty_void)
+}
+
+// map_set_dyn stores the dyn (or ?dyn) value v under k, the key's stored form (key_in),
+// in map m (#567): the runtime keeps the value's two words in a cell of the map's memory.
+// ck says the key is encoded (a struct or enum key).
+fn map_set_dyn(pos i64, m i64, k i64, v i64, ck i64) i64 {
+	mut stmts = []i64{}
+	let key = temp(pos, k, cast(Node, k).type_)
+	stmts = append(stmts, cast(i64, key))
+	let saved = temp(pos, v, cast(Node, v).type_)
+	stmts = append(stmts, cast(i64, saved))
+	let object = mk_conv(pos, sym_ref_node(pos, cast(Sym, saved.sym)), CV_DYN_OBJECT, ty_int)
+	let table = mk_conv(pos, sym_ref_node(pos, cast(Sym, saved.sym)), CV_DYN_TABLE_WORD, ty_int)
+	let call = rt_call(pos, "rt_map_set_dyn", args5(m, sym_ref_node(pos, cast(Sym, key.sym)), object, table, mk_int(pos, ck, ty_int)), ty_void)
+	return mk_seq(pos, cast(i64, stmts), call, ty_void)
+}
+
+// map_val is the value of entry j of map m (rt_map_val) as a vt.
+fn map_val(pos i64, m i64, j i64, vt i64) i64 {
+	if is_dyn_value(cast(Ty, vt)) != 0 {
+		return rt_call(pos, "rt_map_val_dyn", args2(m, j), vt)
+	}
+	return from_bits(cast(Node, rt_call(pos, "rt_map_val", args2(m, j), ty_int)), vt)
 }
 
 // map_make_call makes a map of type t (#176): counted sides carry their drops, so the
@@ -1578,6 +1604,10 @@ fn key_dec_field(pos i64, body []i64, s i64, obj i64, t i64, fi i64) {
 // map_read is m[k]: a missing key reads as the value type's zero, and a str, slice, map
 // or struct zero is a real (never nil) value.
 fn map_read(pos i64, m Node, k i64, vt i64) i64 {
+	if is_dyn_value(cast(Ty, vt)) != 0 {
+		// A dyn value has no zero (#567): a missing key panics, or reads nil from a ?dyn map.
+		return rt_call(pos, "rt_map_get_dyn", args3(cast(i64, m), key_in(cast(Node, k), cast(Ty, m.type_).key), mk_int(pos, i64(kind_of(cast(Ty, vt)) == K_DYN), ty_int)), vt)
+	}
 	let get = from_bits(cast(Node, rt_call(pos, "rt_map_get", args2(cast(i64, m), key_in(cast(Node, k), cast(Ty, m.type_).key)), ty_int)), vt)
 	let vk = kind_of(cast(Ty, vt))
 	if !(vk == K_STRING || vk == K_SLICE || vk == K_MAP || vk == K_STRUCT) {
@@ -6017,7 +6047,7 @@ fn say_map_sorted(a Node, t Ty, prefix str) i64 {
 	let kv = from_bits(cast(Node, rt_call(pos, "rt_map_key", args2(sym_ref_node(pos, cast(Sym, m.sym)), sym_ref_node(pos, cast(Sym, slot.sym))), ty_int)), kt)
 	wb.stmts = append(wb.stmts, expr_stmt(say_arg(cast(Node, kv), prefix)))
 	wb.stmts = append(wb.stmts, expr_stmt(cast(Node, rt_call(pos, prefix + "raw", args1(lit_string(pos, ":")), ty_void))))
-	let vv = from_bits(cast(Node, rt_call(pos, "rt_map_val", args2(sym_ref_node(pos, cast(Sym, m.sym)), sym_ref_node(pos, cast(Sym, slot.sym))), ty_int)), t.elem)
+	let vv = map_val(pos, sym_ref_node(pos, cast(Sym, m.sym)), sym_ref_node(pos, cast(Sym, slot.sym)), t.elem)
 	wb.stmts = append(wb.stmts, expr_stmt(say_arg(cast(Node, vv), prefix)))
 	stmts = append(stmts, cast(i64, w))
 	stmts = append(stmts, expr_stmt(cast(Node, rt_call(pos, prefix + "raw", args1(lit_string(pos, "]")), ty_void))))
@@ -6063,7 +6093,7 @@ fn say_map_keyed(a Node, t Ty, prefix str) i64 {
 		lb = append(lb, expr_stmt(cast(Node, say_struct(cast(Node, kv), cast(Ty, kt), prefix))))
 	}
 	lb = append(lb, expr_stmt(cast(Node, rt_call(pos, prefix + "raw", args1(lit_string(pos, ":")), ty_void))))
-	let vv = from_bits(cast(Node, rt_call(pos, "rt_map_val", args2(sym_ref_node(pos, cast(Sym, m.sym)), sym_ref_node(pos, cast(Sym, j))), ty_int)), t.elem)
+	let vv = map_val(pos, sym_ref_node(pos, cast(Sym, m.sym)), sym_ref_node(pos, cast(Sym, j)), t.elem)
 	lb = append(lb, expr_stmt(say_arg(cast(Node, vv), prefix)))
 	wb.stmts = append(wb.stmts, cast(i64, live))
 	stmts = append(stmts, cast(i64, w))

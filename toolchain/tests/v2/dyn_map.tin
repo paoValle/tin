@@ -1,0 +1,147 @@
+package main
+
+import "constraints"
+import "fault"
+import "hearth"
+import "say"
+
+// dyn values in maps (#567): each value lives in a cell of the map's memory. A missing key
+// panics in a map of dyn values (a dyn value has no zero) and reads nil in a map of ?dyn.
+
+shape Animal {
+	Name() str
+	Legs(times i64) i64
+}
+
+type Dog struct {
+	name str
+	tags []str
+}
+
+fn (d Dog) Name() str {
+	return "dog {d.name} {d.tags}"
+}
+
+fn (d Dog) Legs(times i64) i64 {
+	return 4 * times
+}
+
+type Bird struct {
+	wings i64
+}
+
+fn (b Bird) Name() str {
+	return "bird with {b.wings} wings"
+}
+
+fn (b Bird) Legs(times i64) i64 {
+	return 2 * times
+}
+
+type Spot struct {
+	x i64
+	y str
+}
+
+mut zoo = map[str]dyn Animal{}
+
+fn admit(name str, a dyn Animal) {
+	zoo[keep(name)] = keep(a)
+}
+
+fn pick[V constraints.Any](m map[str]V, k str) V {
+	return m[k]
+}
+
+fn count[K constraints.Any, V constraints.Any](m map[K]V) i64 {
+	mut n = 0
+	for _, _ in m {
+		n += 1
+	}
+	return n
+}
+
+fn fill(m mut map[str]dyn Animal) {
+	m["filled"] = Bird{wings: 1}
+}
+
+fn missing(m map[str]dyn Animal, k str) str {
+	let v = guard {
+		m[k].Name()
+	} catch err {
+		if fault.Is(err, fault.Panic) {
+			return "panic: {err}"
+		}
+		return "other"
+	}
+	return v
+}
+
+fn main() {
+	// Fill, read, overwrite, delete, iterate in insertion order.
+	mut m = map[str]dyn Animal{}
+	m["rex"] = Dog{name: "rex", tags: []str{"good"}}
+	m["tweety"] = Bird{wings: 2}
+	say.Line("a", len(m), m["rex"].Name(), m["tweety"].Name(), m["rex"].Legs(2), m["tweety"].Legs(3))
+	let before = m["rex"]
+	m["rex"] = Bird{wings: 3}
+	say.Line("b", len(m), m["rex"].Name(), before.Name())
+	for k, v in m {
+		say.Line("c", k, v.Name())
+	}
+	delete(m, "rex")
+	m["rex"] = Dog{name: "again", tags: []str{}}
+	for k, v in m {
+		say.Line("d", k, v.Name())
+	}
+	say.Line("e", m)
+
+	// Literals; integer and struct keys.
+	let byNum = map[i64]dyn Animal{1: Dog{name: "one", tags: []str{}}, 2: Bird{wings: 4}}
+	say.Line("f", byNum[1].Name(), byNum[2].Name(), count(byNum))
+	mut bySpot = map[Spot]dyn Animal{}
+	bySpot[Spot{x: 1, y: "a"}] = Dog{name: "s1", tags: []str{}}
+	bySpot[Spot{x: 1, y: "a"}] = Dog{name: "s1b", tags: []str{}}
+	bySpot[Spot{x: 2, y: "b"}] = Bird{wings: 5}
+	say.Line("g", len(bySpot), bySpot[Spot{x: 1, y: "a"}].Name(), bySpot[Spot{x: 2, y: "b"}].Name())
+	say.Line("h", bySpot)
+
+	// ?dyn values: nil is a value; a missing key reads nil.
+	mut opt = map[str]?dyn Animal{}
+	opt["a"] = Bird{wings: 6}
+	opt["n"] = nil
+	let a = opt["a"]
+	if a != nil {
+		say.Line("i", a.Name())
+	}
+	say.Line("j", opt["zz"] == nil, opt["n"] == nil)
+	let (n, okn) = opt["n"]
+	let (q, okq) = opt["q"]
+	say.Line("k", n == nil, okn, q == nil, okq)
+	say.Line("l", opt)
+	let fb = opt["zz"] ?? Bird{wings: 8}
+	if let got = opt["a"] {
+		say.Line("l2", fb.Name(), got.Name())
+	}
+
+	// A missing key in a map of dyn values panics.
+	say.Line("m", missing(m, "nobody"))
+
+	// A global map of kept values outlives the pool; keep copies a whole map.
+	admit("rex", Dog{name: "rex", tags: []str{"kept", "deep"}})
+	admit("tweety", Bird{wings: 7})
+	let kept = keep(map[str]dyn Animal{"x": Dog{name: "x", tags: []str{"k"}}})
+	let keptOpt = keep(opt)
+	hearth.Reset()
+	say.Line("n", zoo["rex"].Name(), zoo["tweety"].Name(), kept["x"].Name(), keptOpt["a"] != nil)
+	for i in 0..1000 {
+		admit("tmp", Bird{wings: i})
+		delete(zoo, "tmp")
+	}
+	say.Line("o", len(zoo), pick(zoo, "tweety").Name(), count(zoo))
+
+	// A mut parameter fills the caller's map.
+	mut mm = map[str]dyn Animal{}
+	fill(mut mm)
+	say.Line("p", mm["filled"].Name())
+}

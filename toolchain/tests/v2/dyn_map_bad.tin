@@ -1,0 +1,28 @@
+package main
+
+import "argo"
+
+// A map of dyn values (#567): a missing key has no value to give, so the comma-ok read
+// is an error; argo cannot encode dyn values.
+
+shape Namer {
+	Name() str
+}
+
+type Dog struct {
+	n str
+}
+
+fn (d Dog) Name() str {
+	return d.n
+}
+
+fn main() {
+	mut m = map[str]dyn Namer{}
+	m["a"] = Dog{n: "a"}
+	let (v, ok) = m["a"]
+	mut b = []u8{}
+	argo.Put(mut b, m)
+	mut o = map[str]?dyn Namer{}
+	let (w, okw) = o["a"]
+}

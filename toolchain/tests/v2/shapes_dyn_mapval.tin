@@ -1,0 +1,30 @@
+package main
+
+import "io"
+import "say"
+
+// A map value of dyn (#567; it was E530 until the map could hold the two words): each value
+// lives in a cell of the map's memory, and calls through it dispatch on the stored type.
+type Count struct {
+	n i64
+}
+
+fn (c Count) Write(data []u8) !i64 {
+	return len(data) + c.n
+}
+
+type Null struct {}
+
+fn (z Null) Write(data []u8) !i64 {
+	return 0
+}
+
+fn main() {
+	mut m = map[str]dyn io.Writer{}
+	m["count"] = Count{n: 100}
+	m["null"] = Null{}
+	for k, w in m {
+		let n = w.Write([]u8("hello")) catch _ { -1 }
+		say.Line(k, n)
+	}
+}
