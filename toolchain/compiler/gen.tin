@@ -14,6 +14,7 @@ const REG_DEAD = -2
 // #12 (4095 << 12 | 4095 bytes). The arguments are at most 64 parameters of each kind, under
 // 2 KiB, so the frame stops 8 KiB below that reach and leaves 4095 bytes for them (#570).
 const MAX_FRAME = 16769024
+const STACK_PAGE = 4096 // a frame larger than this touches each page on the way down (#570)
 const FPR = 64 // d0 is register 64
 const FSCR = 95 // d31, float scratch
 
@@ -1753,9 +1754,19 @@ fn out_frame(frame i64, up i64) {
 		out4(I_SUBI, SP, SP, frame, 0)
 		return
 	}
-	out4(I_SUBISH, SP, SP, frame >> 12, 0)
-	if frame & 4095 != 0 {
-		out4(I_SUBI, SP, SP, frame & 4095, 0)
+	// Past a page, sp goes down one page at a time and each page is touched, so a stack
+	// overflow meets the guard page below the stack first and is reported as one (a task's
+	// guard is 16 KiB): a larger step could land past the guard, in another mapping (#570).
+	mut rest = frame
+	for rest > STACK_PAGE {
+		out4(I_SUBISH, SP, SP, 1, 0)
+		out4(I_STR, SP, SP, 0, 0) // register 31 as the stored value is xzr
+		rest = rest - STACK_PAGE
+	}
+	if rest == STACK_PAGE {
+		out4(I_SUBISH, SP, SP, 1, 0)
+	} else {
+		out4(I_SUBI, SP, SP, rest, 0)
 	}
 }
 

@@ -269,7 +269,12 @@ fn pr_mem(b []u8, name str, rt i64, rn i64, off i64) {
 	buf_byte(b, '\t')
 	buf_str(b, name)
 	buf_byte(b, ' ')
-	pr_reg(b, rt)
+	if rt == SP {
+		// Register 31 as a load or store's value is xzr (the stack probes store it, #570).
+		buf_str(b, "xzr")
+	} else {
+		pr_reg(b, rt)
+	}
 	buf_str(b, ", [")
 	pr_reg(b, rn)
 	if off != 0 {
