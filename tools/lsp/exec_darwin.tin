@@ -1,0 +1,48 @@
+package main
+
+import "twine"
+
+extern fn popen(command i64, mode i64) i64
+
+extern fn fread(buf i64, size i64, n i64, stream i64) i64
+
+extern fn pclose(stream i64) i64
+
+extern fn mkdir(path i64, mode i64) i64
+
+// quoted is s as one word for sh.
+fn quoted(s str) str {
+	return "'" + twine.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// run starts a program with no standard error and returns its exit status and what it printed on standard output
+// (macOS has no spawn yet: a shell and popen).
+fn run(argv []str) (i64, str) {
+	mut words = []str{}
+	for a in argv {
+		words = append(words, quoted(a))
+	}
+	let command = "exec " + twine.Join(words, " ") + " 2>/dev/null </dev/null"
+	let fp = popen(rt_cstr(command), rt_cstr("r"))
+	if fp == 0 {
+		return -1, ""
+	}
+	let buf = calloc(65536, 1)
+	mut out = []u8{}
+	for {
+		let n = fread(buf, 1, 65536, fp)
+		if n <= 0 {
+			break
+		}
+		for i in 0..n {
+			out = append(out, u8(load8(buf + i)))
+		}
+	}
+	let status = pclose(fp)
+	return (status >> 8) & 0xff, str(out)
+}
+
+// makeDir creates the directory path with mode 0700; it fails when path exists (also as a symbolic link).
+fn makeDir(path str) bool {
+	return (mkdir(rt_cstr(path), 448) & 0xffffffff) == 0
+}

@@ -1,0 +1,728 @@
+package main
+
+import "mint"
+import "quarry"
+import "say"
+import "tide"
+import "twine"
+
+// tin lsp: a language server for Tin over standard input and output (LSP 3.17, full document sync). Diagnostics come
+// from the compiler's `-check -json`, outline, go to definition, hover and completion from its `-symbols`, both in one
+// run of `tinc -symbols -json` per change, with the editor's unsaved text as an overlay (toolchain/docs/TOOLING.md 3.1
+// and 3.3). The compiler is $TINLSP_TINC, else $TIN_ROOT/bin/tinc.
+
+// Sym is one declaration of `tinc -symbols`.
+type Sym struct {
+	kind     str
+	name     str
+	pkg      str
+	file     str
+	line     i64
+	col      i64
+	endCol   i64
+	recv     str
+	exported bool
+	sig      str
+	doc      str
+	members  []Member
+}
+
+type Member struct {
+	name   str
+	detail str
+}
+
+// Diag is one error of `tinc -check -json`.
+type Diag struct {
+	line    i64
+	col     i64
+	endLine i64
+	endCol  i64
+	code    str
+	message str
+}
+
+// Server is everything the server remembers: the open documents and what the compiler said about each.
+type Server struct {
+	tinc     str
+	docs     map[str]str
+	syms     map[str][]Sym
+	counter  i64
+	dir      str // a directory only this user can use, for the text of the documents being checked ("" when there is none)
+	shutdown bool
+}
+
+// ---- messages ----
+
+// reader holds the bytes read from standard input and not yet used.
+type reader struct {
+	buf []u8
+	at  i64
+}
+
+// fill reads more bytes from standard input; false at the end of the input.
+fn (r mut reader) fill() bool {
+	let chunk = calloc(65536, 1)
+	let n = rt_sys_read(0, chunk, 65536)
+	if n <= 0 {
+		return false
+	}
+	// drop what was used
+	if r.at > 0 {
+		r.buf = r.buf[r.at:]
+		r.at = 0
+	}
+	for i in 0..n {
+		r.buf = append(r.buf, u8(load8(chunk + i)))
+	}
+	return true
+}
+
+// message reads one JSON-RPC message (false at the end of the input).
+fn (r mut reader) message() (str, bool) {
+	// the headers end at an empty line
+	mut length = -1
+	for {
+		mut line = ""
+		for {
+			mut found = -1
+			for i in r.at..len(r.buf) {
+				if r.buf[i] == '\n' {
+					found = i
+					break
+				}
+			}
+			if found >= 0 {
+				line = str(r.buf[r.at:found])
+				r.at = found + 1
+				break
+			}
+			if !r.fill() {
+				return "", false
+			}
+		}
+		if len(line) > 0 && line[len(line) - 1] == '\r' {
+			line = line[:len(line) - 1]
+		}
+		if len(line) == 0 {
+			break
+		}
+		let lower = twine.ToLower(line)
+		if twine.HasPrefix(lower, "content-length:") {
+			length = mint.Atoi(twine.TrimSpace(line[15:])) catch _ {
+				-1
+			}
+		}
+	}
+	if length < 0 {
+		return "", false
+	}
+	for len(r.buf) - r.at < length {
+		if !r.fill() {
+			return "", false
+		}
+	}
+	let body = str(r.buf[r.at:r.at + length])
+	r.at += length
+	return body, true
+}
+
+// send writes one message.
+fn send(body str) {
+	say.Out("Content-Length: %d\r\n\r\n%s", len(body), body)
+	rt_flush()
+}
+
+fn idJson(id J) str {
+	if id.kind == jNumber {
+		return mint.Itoa(id.int())
+	}
+	if id.kind == jString {
+		return quote(id.s)
+	}
+	return "null"
+}
+
+fn reply(id J, result str) {
+	send("{{\"jsonrpc\":\"2.0\",\"id\":" + idJson(id) + ",\"result\":" + result + "}}")
+}
+
+fn replyError(id J, code i64, message str) {
+	send("{{\"jsonrpc\":\"2.0\",\"id\":" + idJson(id) + ",\"error\":{{\"code\":" + mint.Itoa(code) + ",\"message\":" + quote(message) + "}}}}")
+}
+
+fn notify(method str, params str) {
+	send("{{\"jsonrpc\":\"2.0\",\"method\":" + quote(method) + ",\"params\":" + params + "}}")
+}
+
+// ---- text helpers ----
+
+fn isWordByte(c u8) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+// uriToPath turns file:///a/b%20c into /a/b c.
+fn uriToPath(uri str) str {
+	mut s = uri
+	if twine.HasPrefix(s, "file://") {
+		s = s[7:]
+	}
+	mut out = []u8{}
+	mut i = 0
+	for i < len(s) {
+		if s[i] == '%' && i + 2 < len(s) + 0 && hexVal(s[i + 1]) >= 0 && hexVal(s[i + 2]) >= 0 {
+			out = append(out, u8(hexVal(s[i + 1]) * 16 + hexVal(s[i + 2])))
+			i += 3
+		} else {
+			out = append(out, s[i])
+			i += 1
+		}
+	}
+	return str(out)
+}
+
+// pathToUri is the file: URI of a path (everything but letters, digits and -._~/ is percent-encoded).
+fn pathToUri(path str) str {
+	let hex = "0123456789ABCDEF"
+	mut out = []u8{}
+	for c in "file://" {
+		out = append(out, u8(c))
+	}
+	for i in 0..len(path) {
+		let c = path[i]
+		if isWordByte(c) || c == '-' || c == '.' || c == '~' || c == '/' {
+			out = append(out, c)
+		} else {
+			out = append(out, '%')
+			out = append(out, hex[c >> 4])
+			out = append(out, hex[c & 15])
+		}
+	}
+	return str(out)
+}
+
+// utf16Col is the UTF-16 column of byte offset col in line.
+fn utf16Col(line str, col i64) i64 {
+	mut units = 0
+	mut i = 0
+	for i < col && i < len(line) {
+		let c = i64(line[i])
+		if c < 0x80 {
+			units += 1
+			i += 1
+		} else if c >= 0xf0 {
+			units += 2
+			i += 4
+		} else if c >= 0xe0 {
+			units += 1
+			i += 3
+		} else if c >= 0xc0 {
+			units += 1
+			i += 2
+		} else {
+			i += 1
+		}
+	}
+	return units
+}
+
+// byteCol is the byte offset in line of UTF-16 column units.
+fn byteCol(line str, units i64) i64 {
+	mut u = 0
+	mut i = 0
+	for i < len(line) && u < units {
+		let c = i64(line[i])
+		if c < 0x80 {
+			u += 1
+			i += 1
+		} else if c >= 0xf0 {
+			u += 2
+			i += 4
+		} else if c >= 0xe0 {
+			u += 1
+			i += 3
+		} else if c >= 0xc0 {
+			u += 1
+			i += 2
+		} else {
+			i += 1
+		}
+	}
+	if i > len(line) {
+		return len(line)
+	}
+	return i
+}
+
+// dirOf is the directory part of a path.
+fn dirOf(path str) str {
+	let slash = twine.LastIndex(path, "/")
+	if slash < 0 {
+		return "."
+	}
+	return path[:slash]
+}
+
+fn lineOf(text str, n i64) str {
+	let lines = twine.Split(text, "\n")
+	if n < 0 || n >= len(lines) {
+		return ""
+	}
+	let l = lines[n]
+	if len(l) > 0 && l[len(l) - 1] == '\r' {
+		return l[:len(l) - 1]
+	}
+	return l
+}
+
+// position is a JSON position {line, character} for 1-based line and byte column col of text.
+fn position(text str, line i64, col i64) str {
+	let l = lineOf(text, line - 1)
+	return "{{\"line\":" + mint.Itoa(line - 1) + ",\"character\":" + mint.Itoa(utf16Col(l, col - 1)) + "}}"
+}
+
+// ---- running the compiler ----
+
+// privateDir creates a new directory that only this user can use, in $TMPDIR (or /tmp). mkdir fails when the name is
+// taken, also by a symbolic link someone else put there, so the directory is always one this process made. "" when none
+// could be made: documents are then checked as saved, never through a file in a shared directory.
+fn privateDir() str {
+	mut base = "/tmp"
+	let dir = quarry.Getenv("TMPDIR")
+	if len(dir) > 0 {
+		base = twine.TrimSuffix(dir, "/")
+	}
+	for attempt in 0..50 {
+		let path = base + "/tinlsp-" + mint.Itoa((tide.Now() + attempt * 7919) % 2147483647)
+		if makeDir(path) {
+			return path
+		}
+	}
+	return ""
+}
+
+// overlayPath is a file name for the text of a document being checked ("" when there is no private directory).
+fn (s mut Server) overlayPath() str {
+	if len(s.dir) == 0 {
+		return ""
+	}
+	s.counter += 1
+	return s.dir + "/buf-" + mint.Itoa(s.counter % 4) + ".tin"
+}
+
+// check runs the compiler on the document and keeps its symbols; it returns the diagnostics.
+fn (s mut Server) check(path str) []Diag {
+	let text = s.docs[path]
+	let tmp = s.overlayPath()
+	mut argv = []str{s.tinc, "-symbols", "-json"}
+	if len(tmp) > 0 {
+		quarry.WriteFile(tmp, text) catch _ {
+			return []Diag{}
+		}
+		argv = append(argv, "-overlay")
+		argv = append(argv, path + "=" + tmp)
+	}
+	argv = append(argv, path)
+	let (code, out) = run(argv)
+	mut diags = []Diag{}
+	mut syms = []Sym{}
+	for line in twine.Split(out, "\n") {
+		if len(line) < 2 || line[0] != '{' {
+			continue
+		}
+		let (j, ok) = parseJson(line)
+		if !ok {
+			continue
+		}
+		if j.get("severity").kind == jString {
+			if j.get("file").text() == path {
+				diags = append(diags, Diag{line: j.get("line").int(), col: j.get("col").int(), endLine: j.get("endLine").int(), endCol: j.get("endCol").int(), code: j.get("code").text(), message: j.get("message").text()})
+			}
+			continue
+		}
+		let mem = j.get("members")
+		mut members = []Member{}
+		for k in 0..len(mem.items) {
+			members = append(members, Member{name: mem.items[k].get("name").text(), detail: mem.items[k].get("detail").text()})
+		}
+		syms = append(syms, Sym{kind: j.get("kind").text(), name: j.get("name").text(), pkg: j.get("pkg").text(), file: j.get("file").text(), line: j.get("line").int(), col: j.get("col").int(), endCol: j.get("endCol").int(), recv: j.get("recv").text(), exported: j.get("exported").b, sig: j.get("sig").text(), doc: j.get("doc").text(), members: members})
+	}
+	// a file that does not parse gives no declarations: keep the last ones
+	if len(syms) > 0 || code == 0 {
+		s.syms[path] = syms
+	}
+	return diags
+}
+
+fn (s mut Server) publish(path str) {
+	let diags = s.check(path)
+	let text = s.docs[path]
+	mut items = []str{}
+	for d in diags {
+		mut endLine = d.endLine
+		mut endCol = d.endCol
+		if d.line == 0 {
+			// an error with no place belongs to the top of the file
+			items = append(items, "{{\"range\":{{\"start\":{{\"line\":0,\"character\":0}},\"end\":{{\"line\":0,\"character\":0}}}},\"severity\":1,\"code\":" + quote(d.code) + ",\"source\":\"tinc\",\"message\":" + quote(d.message) + "}}")
+			continue
+		}
+		if endLine == 0 {
+			endLine = d.line
+			endCol = d.col + 1
+		}
+		items = append(items, "{{\"range\":{{\"start\":" + position(text, d.line, d.col) + ",\"end\":" + position(text, endLine, endCol) + "}},\"severity\":1,\"code\":" + quote(d.code) + ",\"source\":\"tinc\",\"message\":" + quote(d.message) + "}}")
+	}
+	notify("textDocument/publishDiagnostics", "{{\"uri\":" + quote(pathToUri(path)) + ",\"diagnostics\":[" + twine.Join(items, ",") + "]}}")
+}
+
+// ---- language features ----
+
+fn symbolKind(k str) i64 {
+	if k == "fn" {
+		return 12
+	}
+	if k == "method" {
+		return 6
+	}
+	if k == "type" {
+		return 23
+	}
+	if k == "shape" {
+		return 11
+	}
+	if k == "const" {
+		return 14
+	}
+	return 13
+}
+
+fn completionKind(k str) i64 {
+	if k == "fn" {
+		return 3
+	}
+	if k == "method" {
+		return 2
+	}
+	if k == "type" {
+		return 22
+	}
+	if k == "shape" {
+		return 8
+	}
+	if k == "const" {
+		return 21
+	}
+	return 6
+}
+
+fn (s Server) location(sym Sym) str {
+	mut text = ""
+	if s.docs[sym.file] != "" {
+		text = s.docs[sym.file]
+	}
+	mut start = "{{\"line\":" + mint.Itoa(sym.line - 1) + ",\"character\":" + mint.Itoa(sym.col - 1) + "}}"
+	mut end = "{{\"line\":" + mint.Itoa(sym.line - 1) + ",\"character\":" + mint.Itoa(sym.endCol - 1) + "}}"
+	if len(text) > 0 {
+		start = position(text, sym.line, sym.col)
+		end = position(text, sym.line, sym.endCol)
+	}
+	return "{{\"uri\":" + quote(pathToUri(sym.file)) + ",\"range\":{{\"start\":" + start + ",\"end\":" + end + "}}}}"
+}
+
+// wordAt is the identifier around (line, character) of the text and where it starts and ends in its line (bytes).
+fn wordAt(text str, line i64, character i64) (str, i64, i64) {
+	let l = lineOf(text, line)
+	let at = byteCol(l, character)
+	mut from = at
+	mut to = at
+	for from > 0 && isWordByte(l[from - 1]) {
+		from -= 1
+	}
+	for to < len(l) && isWordByte(l[to]) {
+		to += 1
+	}
+	return l[from:to], from, to
+}
+
+// importsOf are the package names the text imports (the last element of each import path).
+fn importsOf(text str) []str {
+	mut out = []str{}
+	for l in twine.Split(text, "\n") {
+		let t = twine.TrimSpace(l)
+		if twine.HasPrefix(t, "import \"") {
+			let rest = t[8:]
+			let q = twine.Index(rest, "\"")
+			if q > 0 {
+				let p = rest[:q]
+				let slash = twine.LastIndex(p, "/")
+				out = append(out, p[slash + 1:])
+			}
+		}
+	}
+	return out
+}
+
+// currentPkg is the package of the document: "" for main, as the compiler names it.
+fn currentPkg(text str) str {
+	for l in twine.Split(text, "\n") {
+		let t = twine.TrimSpace(l)
+		if twine.HasPrefix(t, "package ") {
+			let name = twine.TrimSpace(t[8:])
+			if name == "main" {
+				return ""
+			}
+			return name
+		}
+	}
+	return ""
+}
+
+// resolve is the declarations the word at the position can mean: after pkg. the exported names of that package,
+// after anything else. a method of that name, otherwise a name of the document's package (or any package).
+fn (s Server) resolve(path str, line i64, character i64) []Sym {
+	let text = s.docs[path]
+	let (word, from, to) = wordAt(text, line, character)
+	mut found = []Sym{}
+	if len(word) == 0 {
+		return found
+	}
+	let l = lineOf(text, line)
+	let all = s.syms[path]
+	if from > 0 && l[from - 1] == '.' {
+		// a qualified name: the identifier before the dot
+		mut q = from - 1
+		let qend = q
+		for q > 0 && isWordByte(l[q - 1]) {
+			q -= 1
+		}
+		let qualifier = l[q:qend]
+		let imports = importsOf(text)
+		mut isPackage = false
+		for p in imports {
+			if p == qualifier {
+				isPackage = true
+			}
+		}
+		for sym in all {
+			if isPackage && sym.pkg == qualifier && sym.name == word && sym.recv == "" {
+				found = append(found, sym)
+			} else if !isPackage && sym.kind == "method" && sym.name == word {
+				found = append(found, sym)
+			}
+		}
+		return found
+	}
+	let pkg = currentPkg(text)
+	let dir = dirOf(path)
+	for sym in all {
+		if sym.name == word && sym.recv == "" && sym.pkg == pkg && dirOf(sym.file) == dir {
+			found = append(found, sym)
+		}
+	}
+	if len(found) == 0 {
+		for sym in all {
+			if sym.name == word && sym.recv == "" {
+				found = append(found, sym)
+			}
+		}
+	}
+	return found
+}
+
+fn (s Server) hover(sym Sym) str {
+	mut md = "```tin\n" + sym.sig + "\n```"
+	if len(sym.doc) > 0 {
+		md = md + "\n\n" + sym.doc
+	}
+	return "{{\"contents\":{{\"kind\":\"markdown\",\"value\":" + quote(md) + "}}}}"
+}
+
+const keywords = "break case catch const continue default defer detach else enum extern fail fn for go guard if import keep let limit map match mut package parallel range return secret shared struct switch try type var while within use on shape"
+
+fn (s Server) completion(path str, line i64, character i64) str {
+	let text = s.docs[path]
+	let l = lineOf(text, line)
+	let at = byteCol(l, character)
+	// the word being typed, and what comes before it
+	mut from = at
+	for from > 0 && isWordByte(l[from - 1]) {
+		from -= 1
+	}
+	let all = s.syms[path]
+	mut items = []str{}
+	mut seen = map[str]bool{}
+	if from > 0 && l[from - 1] == '.' {
+		mut q = from - 1
+		let qend = q
+		for q > 0 && isWordByte(l[q - 1]) {
+			q -= 1
+		}
+		let qualifier = l[q:qend]
+		mut isPackage = false
+		for p in importsOf(text) {
+			if p == qualifier {
+				isPackage = true
+			}
+		}
+		for sym in all {
+			if isPackage && sym.pkg == qualifier && sym.exported && sym.recv == "" {
+				if !seen[sym.name] {
+					seen[sym.name] = true
+					items = append(items, "{{\"label\":" + quote(sym.name) + ",\"kind\":" + mint.Itoa(completionKind(sym.kind)) + ",\"detail\":" + quote(sym.sig) + "}}")
+				}
+			} else if !isPackage {
+				// a value's methods and fields: its type is not known here, so every method and every field
+				if sym.kind == "method" && !seen[sym.name] {
+					seen[sym.name] = true
+					items = append(items, "{{\"label\":" + quote(sym.name) + ",\"kind\":2,\"detail\":" + quote(sym.sig) + "}}")
+				}
+				if sym.kind == "type" {
+					for m in sym.members {
+						if !seen[m.name] {
+							seen[m.name] = true
+							items = append(items, "{{\"label\":" + quote(m.name) + ",\"kind\":5,\"detail\":" + quote(m.detail) + "}}")
+						}
+					}
+				}
+			}
+		}
+		return "{{\"isIncomplete\":false,\"items\":[" + twine.Join(items, ",") + "]}}"
+	}
+	let pkg = currentPkg(text)
+	let dir = dirOf(path)
+	for sym in all {
+		if sym.pkg == pkg && dirOf(sym.file) == dir && sym.recv == "" && sym.kind != "method" && !seen[sym.name] {
+			seen[sym.name] = true
+			items = append(items, "{{\"label\":" + quote(sym.name) + ",\"kind\":" + mint.Itoa(completionKind(sym.kind)) + ",\"detail\":" + quote(sym.sig) + "}}")
+		}
+	}
+	for p in importsOf(text) {
+		if !seen[p] {
+			seen[p] = true
+			items = append(items, "{{\"label\":" + quote(p) + ",\"kind\":9}}")
+		}
+	}
+	for k in twine.Split(keywords, " ") {
+		if !seen[k] {
+			seen[k] = true
+			items = append(items, "{{\"label\":" + quote(k) + ",\"kind\":14}}")
+		}
+	}
+	return "{{\"isIncomplete\":false,\"items\":[" + twine.Join(items, ",") + "]}}"
+}
+
+fn (s Server) documentSymbols(path str) str {
+	mut items = []str{}
+	for sym in s.syms[path] {
+		if sym.file == path {
+			items = append(items, "{{\"name\":" + quote(sym.name) + ",\"kind\":" + mint.Itoa(symbolKind(sym.kind)) + ",\"location\":" + s.location(sym) + ",\"containerName\":" + quote(sym.recv) + "}}")
+		}
+	}
+	return "[" + twine.Join(items, ",") + "]"
+}
+
+fn (s Server) workspaceSymbols(query str) str {
+	mut items = []str{}
+	let q = twine.ToLower(query)
+	for path, syms in s.syms {
+		for sym in syms {
+			if len(items) < 200 && sym.file == path && twine.Contains(twine.ToLower(sym.name), q) {
+				items = append(items, "{{\"name\":" + quote(sym.name) + ",\"kind\":" + mint.Itoa(symbolKind(sym.kind)) + ",\"location\":" + s.location(sym) + ",\"containerName\":" + quote(sym.recv) + "}}")
+			}
+		}
+	}
+	return "[" + twine.Join(items, ",") + "]"
+}
+
+// ---- the loop ----
+
+fn (s mut Server) handle(msg J) bool {
+	let method = msg.get("method").text()
+	let id = msg.get("id")
+	let params = msg.get("params")
+	let td = params.get("textDocument")
+	if method == "initialize" {
+		reply(id, "{{\"capabilities\":{{\"textDocumentSync\":1,\"documentSymbolProvider\":true,\"workspaceSymbolProvider\":true,\"definitionProvider\":true,\"hoverProvider\":true,\"completionProvider\":{{\"triggerCharacters\":[\".\"]}}}},\"serverInfo\":{{\"name\":\"tin lsp\",\"version\":\"1\"}}}}")
+	} else if method == "shutdown" {
+		s.shutdown = true
+		reply(id, "null")
+	} else if method == "exit" {
+		return false
+	} else if method == "textDocument/didOpen" {
+		let path = uriToPath(td.get("uri").text())
+		s.docs[path] = td.get("text").text()
+		s.publish(path)
+	} else if method == "textDocument/didChange" {
+		let path = uriToPath(td.get("uri").text())
+		let changes = params.get("contentChanges")
+		if len(changes.items) > 0 {
+			s.docs[path] = changes.items[len(changes.items) - 1].get("text").text()
+			s.publish(path)
+		}
+	} else if method == "textDocument/didSave" {
+		let path = uriToPath(td.get("uri").text())
+		if s.docs[path] != "" {
+			s.publish(path)
+		}
+	} else if method == "textDocument/didClose" {
+		let path = uriToPath(td.get("uri").text())
+		notify("textDocument/publishDiagnostics", "{{\"uri\":" + quote(pathToUri(path)) + ",\"diagnostics\":[]}}")
+	} else if method == "textDocument/documentSymbol" {
+		reply(id, s.documentSymbols(uriToPath(td.get("uri").text())))
+	} else if method == "workspace/symbol" {
+		reply(id, s.workspaceSymbols(params.get("query").text()))
+	} else if method == "textDocument/definition" {
+		let path = uriToPath(td.get("uri").text())
+		let pos = params.get("position")
+		mut locs = []str{}
+		for sym in s.resolve(path, pos.get("line").int(), pos.get("character").int()) {
+			locs = append(locs, s.location(sym))
+		}
+		reply(id, "[" + twine.Join(locs, ",") + "]")
+	} else if method == "textDocument/hover" {
+		let path = uriToPath(td.get("uri").text())
+		let pos = params.get("position")
+		let found = s.resolve(path, pos.get("line").int(), pos.get("character").int())
+		if len(found) == 0 {
+			reply(id, "null")
+		} else {
+			reply(id, s.hover(found[0]))
+		}
+	} else if method == "textDocument/completion" {
+		let path = uriToPath(td.get("uri").text())
+		let pos = params.get("position")
+		reply(id, s.completion(path, pos.get("line").int(), pos.get("character").int()))
+	} else if id.kind != jNull {
+		replyError(id, -32601, "method not found: " + method)
+	}
+	return true
+}
+
+fn main() {
+	mut tinc = quarry.Getenv("TINLSP_TINC")
+	if len(tinc) == 0 {
+		tinc = quarry.Getenv("TIN_ROOT") + "/bin/tinc"
+	}
+	let s = Server{tinc: tinc, docs: map[str]str{}, syms: map[str][]Sym{}, counter: 0, dir: privateDir(), shutdown: false}
+	let r = reader{buf: []u8{}, at: 0}
+	for {
+		let (body, ok) = r.message()
+		if !ok {
+			break
+		}
+		let (msg, valid) = parseJson(body)
+		if !valid {
+			continue
+		}
+		if !s.handle(msg) {
+			break
+		}
+	}
+	if len(s.dir) > 0 {
+		quarry.RemoveAll(s.dir) catch _ {
+		}
+	}
+	if !s.shutdown {
+		quarry.Exit(1)
+	}
+}

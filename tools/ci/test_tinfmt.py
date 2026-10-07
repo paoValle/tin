@@ -6,6 +6,14 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 
+
+def tinc():
+    """bin/tinc, built from the seed first when it is not there yet (the unit tests run before the bootstrap step)."""
+    path = ROOT / 'bin/tinc'
+    if not path.exists():
+        subprocess.run(['make', '-s', '-C', str(ROOT), 'bin/tinc'], check=True, timeout=600)
+    return path
+
 UNFORMATTED = 'package main\n\nimport "say"\n\n\nfn main() {\n    let x=1\n  if x==1 {\n\t\tsay.Line("a",x)\n    }\n\n}\n'
 FORMATTED = 'package main\n\nimport "say"\n\nfn main() {\n\tlet x = 1\n\tif x == 1 {\n\t\tsay.Line("a", x)\n\t}\n}\n'
 
@@ -16,7 +24,7 @@ def tin_fmt(*args, stdin=None):
 
 
 def tokens(path):
-    r = subprocess.run([str(ROOT / 'bin/tinc'), '-tokens', str(path)], capture_output=True, timeout=60)
+    r = subprocess.run([str(tinc()), '-tokens', str(path)], capture_output=True, timeout=60)
     # the lines are "file:line:col KIND text": the place differs when the layout does, the rest must not
     return r.returncode, [line.split(b' ', 1)[1] if b' ' in line else line for line in r.stdout.split(b'\n')]
 
@@ -54,7 +62,7 @@ class FormatCommand(unittest.TestCase):
 
     def test_tests_are_idempotent_and_keep_every_token(self):
         exe = Path(tempfile.mkdtemp()) / 'tinfmt'
-        subprocess.run([str(ROOT / 'bin/tinc'), '-o', str(exe), str(ROOT / 'tools/fmt/main.tin')], check=True, timeout=120)
+        subprocess.run([str(tinc()), '-o', str(exe), str(ROOT / 'tools/fmt/main.tin')], check=True, timeout=120)
         def fmt(text):
             r = subprocess.run([str(exe), '-stdin'], capture_output=True, text=True, input=text, timeout=60)
             return r.returncode, r.stdout, r.stderr

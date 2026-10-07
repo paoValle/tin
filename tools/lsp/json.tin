@@ -1,0 +1,324 @@
+package main
+
+import "mint"
+import "twine"
+
+// A small JSON reader and writer for the language server's messages.
+
+// J is a parsed JSON value.
+type J struct {
+	kind  i64 // 0 null, 1 bool, 2 number, 3 string, 4 array, 5 object
+	s     str
+	n     f64
+	b     bool
+	items []J
+	keys  []str
+}
+
+const jNull = 0
+const jBool = 1
+const jNumber = 2
+const jString = 3
+const jArray = 4
+const jObject = 5
+
+fn jnull() J {
+	return J{kind: jNull, s: "", n: 0.0, b: false, items: []J{}, keys: []str{}}
+}
+
+// parser holds the text and the position while a value is read.
+type parser struct {
+	text str
+	at   i64
+	ok   bool
+}
+
+fn (p mut parser) skip() {
+	for p.at < len(p.text) && (p.text[p.at] == ' ' || p.text[p.at] == '\n' || p.text[p.at] == '\r' || p.text[p.at] == '\t') {
+		p.at += 1
+	}
+}
+
+fn hexVal(c u8) i64 {
+	if c >= '0' && c <= '9' {
+		return i64(c) - '0'
+	}
+	if c >= 'a' && c <= 'f' {
+		return i64(c) - 'a' + 10
+	}
+	if c >= 'A' && c <= 'F' {
+		return i64(c) - 'A' + 10
+	}
+	return -1
+}
+
+// appendRune adds the UTF-8 bytes of code point r.
+fn appendRune(out []u8, r i64) []u8 {
+	mut o = out
+	if r < 0x80 {
+		o = append(o, u8(r))
+	} else if r < 0x800 {
+		o = append(o, u8(0xc0 | (r >> 6)))
+		o = append(o, u8(0x80 | (r & 0x3f)))
+	} else if r < 0x10000 {
+		o = append(o, u8(0xe0 | (r >> 12)))
+		o = append(o, u8(0x80 | ((r >> 6) & 0x3f)))
+		o = append(o, u8(0x80 | (r & 0x3f)))
+	} else {
+		o = append(o, u8(0xf0 | (r >> 18)))
+		o = append(o, u8(0x80 | ((r >> 12) & 0x3f)))
+		o = append(o, u8(0x80 | ((r >> 6) & 0x3f)))
+		o = append(o, u8(0x80 | (r & 0x3f)))
+	}
+	return o
+}
+
+fn (p mut parser) hex4() i64 {
+	mut v = 0
+	mut k = 0
+	for k < 4 {
+		if p.at >= len(p.text) {
+			p.ok = false
+			return 0
+		}
+		let h = hexVal(p.text[p.at])
+		if h < 0 {
+			p.ok = false
+			return 0
+		}
+		v = v * 16 + h
+		p.at += 1
+		k += 1
+	}
+	return v
+}
+
+fn (p mut parser) str() str {
+	// at the opening quote
+	p.at += 1
+	mut out = []u8{}
+	for p.at < len(p.text) && p.text[p.at] != '"' {
+		let c = p.text[p.at]
+		if c == '\\' && p.at + 1 < len(p.text) {
+			p.at += 1
+			let e = p.text[p.at]
+			p.at += 1
+			if e == 'n' {
+				out = append(out, '\n')
+			} else if e == 't' {
+				out = append(out, '\t')
+			} else if e == 'r' {
+				out = append(out, '\r')
+			} else if e == 'b' {
+				out = append(out, 8)
+			} else if e == 'f' {
+				out = append(out, 12)
+			} else if e == 'u' {
+				mut r = p.hex4()
+				if r >= 0xd800 && r < 0xdc00 && p.at + 1 < len(p.text) && p.text[p.at] == '\\' && p.text[p.at + 1] == 'u' {
+					p.at += 2
+					let lo = p.hex4()
+					r = 0x10000 + ((r - 0xd800) << 10) + (lo - 0xdc00)
+				}
+				out = appendRune(out, r)
+			} else {
+				out = append(out, e)
+			}
+		} else {
+			out = append(out, c)
+			p.at += 1
+		}
+	}
+	if p.at >= len(p.text) {
+		p.ok = false
+	} else {
+		p.at += 1
+	}
+	return str(out)
+}
+
+fn (p mut parser) value() J {
+	p.skip()
+	if p.at >= len(p.text) {
+		p.ok = false
+		return jnull()
+	}
+	let c = p.text[p.at]
+	if c == '"' {
+		let v = jnull()
+		v.kind = jString
+		v.s = p.str()
+		return v
+	}
+	if c == '{' {
+		let v = jnull()
+		v.kind = jObject
+		p.at += 1
+		p.skip()
+		if p.at < len(p.text) && p.text[p.at] == '}' {
+			p.at += 1
+			return v
+		}
+		for p.ok {
+			p.skip()
+			if p.at >= len(p.text) || p.text[p.at] != '"' {
+				p.ok = false
+				break
+			}
+			let key = p.str()
+			p.skip()
+			if p.at >= len(p.text) || p.text[p.at] != ':' {
+				p.ok = false
+				break
+			}
+			p.at += 1
+			let item = p.value()
+			v.keys = append(v.keys, key)
+			v.items = append(v.items, item)
+			p.skip()
+			if p.at < len(p.text) && p.text[p.at] == ',' {
+				p.at += 1
+				continue
+			}
+			if p.at < len(p.text) && p.text[p.at] == '}' {
+				p.at += 1
+				break
+			}
+			p.ok = false
+		}
+		return v
+	}
+	if c == '[' {
+		let v = jnull()
+		v.kind = jArray
+		p.at += 1
+		p.skip()
+		if p.at < len(p.text) && p.text[p.at] == ']' {
+			p.at += 1
+			return v
+		}
+		for p.ok {
+			let item = p.value()
+			v.items = append(v.items, item)
+			p.skip()
+			if p.at < len(p.text) && p.text[p.at] == ',' {
+				p.at += 1
+				continue
+			}
+			if p.at < len(p.text) && p.text[p.at] == ']' {
+				p.at += 1
+				break
+			}
+			p.ok = false
+		}
+		return v
+	}
+	if twine.HasPrefix(p.text[p.at:], "true") {
+		p.at += 4
+		let v = jnull()
+		v.kind = jBool
+		v.b = true
+		return v
+	}
+	if twine.HasPrefix(p.text[p.at:], "false") {
+		p.at += 5
+		let v = jnull()
+		v.kind = jBool
+		return v
+	}
+	if twine.HasPrefix(p.text[p.at:], "null") {
+		p.at += 4
+		return jnull()
+	}
+	// a number
+	let from = p.at
+	for p.at < len(p.text) && (p.text[p.at] == '-' || p.text[p.at] == '+' || p.text[p.at] == '.' || p.text[p.at] == 'e' || p.text[p.at] == 'E' || (p.text[p.at] >= '0' && p.text[p.at] <= '9')) {
+		p.at += 1
+	}
+	if p.at == from {
+		p.ok = false
+		return jnull()
+	}
+	let v = jnull()
+	v.kind = jNumber
+	v.n = mint.ParseFloat(p.text[from:p.at]) catch _ {
+		0.0
+	}
+	return v
+}
+
+// parseJson reads one JSON value; ok is false when the text is not valid.
+fn parseJson(text str) (J, bool) {
+	let p = parser{text: text, at: 0, ok: true}
+	let v = p.value()
+	return v, p.ok
+}
+
+// get is the member of an object with that key (null when there is none).
+fn (j J) get(key str) J {
+	if j.kind != jObject {
+		return jnull()
+	}
+	for i in 0..len(j.keys) {
+		if j.keys[i] == key {
+			return j.items[i]
+		}
+	}
+	return jnull()
+}
+
+// at is element i of an array (null past the end).
+fn (j J) at(i i64) J {
+	if j.kind != jArray || i < 0 || i >= len(j.items) {
+		return jnull()
+	}
+	return j.items[i]
+}
+
+fn (j J) text() str {
+	if j.kind == jString {
+		return j.s
+	}
+	return ""
+}
+
+fn (j J) int() i64 {
+	if j.kind == jNumber {
+		return i64(j.n)
+	}
+	return 0
+}
+
+// quote is s as a JSON string.
+fn quote(s str) str {
+	mut out = []u8{}
+	out = append(out, '"')
+	for i in 0..len(s) {
+		let c = s[i]
+		if c == '"' || c == '\\' {
+			out = append(out, '\\')
+			out = append(out, c)
+		} else if c == '\n' {
+			out = append(out, '\\')
+			out = append(out, 'n')
+		} else if c == '\t' {
+			out = append(out, '\\')
+			out = append(out, 't')
+		} else if c == '\r' {
+			out = append(out, '\\')
+			out = append(out, 'r')
+		} else if c < 32 {
+			let hex = "0123456789abcdef"
+			out = append(out, '\\')
+			out = append(out, 'u')
+			out = append(out, '0')
+			out = append(out, '0')
+			out = append(out, hex[c >> 4])
+			out = append(out, hex[c & 15])
+		} else {
+			out = append(out, c)
+		}
+	}
+	out = append(out, '"')
+	return str(out)
+}

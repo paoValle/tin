@@ -99,6 +99,9 @@ tinc [-o OUT] [-S] [-edition 1] [-target darwin-arm64|linux-arm64|linux-amd64] F
 - `-check`: lex, parse and check the program through every analysis pass, and stop before generating code (`tin check`).
   `-json` prints each error as a JSON object on standard output (§3.1); `-overlay FILE=PATH` (repeatable) reads
   FILE's content from PATH.
+- `-symbols`: check the program and print every declaration of every loaded file (the program's, its packages' and the
+  runtime's) as JSON lines on standard output instead of building (§3.3). Errors, if any, print as usual on standard
+  error and the exit status is 1, but the declarations are printed too.
 - `-caps`: check the program and print the capabilities each package can reach instead of
   building (`tin caps`; PACKAGES.md, "Capabilities").
 - `-fix -edition 1 FILE.tin` prints the file translated to edition 1 (`tin fix`, which also
@@ -147,6 +150,43 @@ tests and the examples) and formatting twice changes nothing. The rules:
 
 The tree has not been converted: `tin fmt -l toolchain packages` lists the files that differ (about one in eight).
 Converting them is a one-commit change for the maintainers to announce (like #226), after which `tin fmt -l` can gate CI.
+
+### 3.3 Declarations as JSON (`tinc -symbols`, protocol version 1)
+
+One JSON object per line for each function, method, type, shape, constant and global of every loaded file:
+
+| field | meaning |
+|---|---|
+| `kind` | `fn`, `method`, `type` (struct, enum and named types), `shape`, `const` or `var` (a package-level `let` or `shared`) |
+| `name`, `pkg` | the name and its package (`""` for `main`) |
+| `file`, `line`, `col`, `endCol` | where the name is: the path as loaded, 1-based line and byte column, the column just past the name |
+| `recv` | a method's receiver type (without type arguments), else `""` |
+| `exported` | the name starts with a capital letter |
+| `sig` | the declaration's first line without its indentation and opening brace: `fn (p Point) Dist() i64`, `type Point struct` |
+| `doc` | the `//` comment lines directly above the declaration, joined with newlines |
+| `members` | for a struct, enum or shape: one `{"name","detail"}` per line of its body (a field and its type, a variant and its payload) |
+
+`tin lsp` answers outline, go to definition, hover and completion from these lines and from `-check -json`.
+
+### 3.4 The language server: `tin lsp`
+
+`tin lsp` (`tools/lsp`, built when it starts) speaks the Language Server Protocol on standard input and output. It has no
+checker of its own: for every opened, changed or saved document it runs `tinc -symbols -json -overlay FILE=TEXT FILE`
+(§3.1 and §3.3: the unsaved text is what is checked, the errors and the declarations come from one run) and answers from
+the result.
+
+| request | answer |
+|---|---|
+| `textDocument/publishDiagnostics` (sent after open, change and save) | the compiler's errors, with ranges (UTF-16 columns), the E-code as `code`, `source` `tinc` |
+| `textDocument/documentSymbol`, `workspace/symbol` | the declarations of the file, or all that match the query |
+| `textDocument/definition` | after `pkg.`, the exported name in that package; after any other `.`, the methods of that name; otherwise the name in the document's package, else in any package. The runtime and the standard library are searched too |
+| `textDocument/hover` | the declaration's signature and its doc comment, as markdown |
+| `textDocument/completion` (also after `.`) | after `pkg.` its exported names; after another `.` every method and field name (the type of the value is not known here); otherwise the package's names, the imported packages and the keywords |
+
+The compiler is `$TINLSP_TINC`, else `$TIN_ROOT/bin/tinc` (`tin lsp` sets it). A file that does not parse reports its one
+error and keeps the declarations of the last version that did, so outline and definition keep working while a line is
+half typed. Names of values and of fields are not resolved: that needs the checker's types, which `-symbols` does not
+print yet.
 
 ## 4. Make targets
 

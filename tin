@@ -10,6 +10,7 @@
 #   tin test [-bench] [-run REGEX] [-json] [DIR]  run DIR's *_test.tin tests (TestXxx, BenchmarkXxx)
 #   tin replay CAPSULE --against BUILD [--live KIND]... [--save-test NAME --issue N]  replay a recorded request
 #   tin vendor [DIR]                copy tin.mod's requires into vendor/ and write tin.lock
+#   tin lsp                         language server on standard input and output (diagnostics, outline, definition, hover, completion)
 #   tin fmt [-l] [-d] [-w] FILE.tin... | DIR | -stdin   format source: the canonical whitespace
 #   tin check [-json] [-overlay FILE=PATH]... FILE.tin...  check without building; errors as text or JSON
 #   tin caps FILE.tin...            print the capabilities each package can reach
@@ -68,6 +69,13 @@ case $1 in
   asm)
     shift
     "$tinc" -S "$@" ;;
+  lsp)
+    # tin lsp: the language server (tools/lsp) built here; it runs the compiler for every change
+    shift
+    case $(uname -s) in Darwin) os=darwin ;; *) os=linux ;; esac
+    exe=$cache/tinlsp.$$; trap 'rm -f "$exe"' EXIT
+    "$tinc" -o "$exe" "$root/tools/lsp/main.tin" "$root/tools/lsp/json.tin" "$root/tools/lsp/exec_$os.tin"
+    TINLSP_TINC=$tinc "$exe" ;;
   fmt)
     # tin fmt: the formatter (tools/fmt, packages/tinfmt) built here; a directory stands for the .tin files under it
     shift
