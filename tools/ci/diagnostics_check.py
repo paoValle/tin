@@ -40,6 +40,7 @@ SOURCE_UNCODED = re.compile(r'"error: ')
 def parse_doc(text):
     """The entries of the page in order: code, name, line, group digit, retired, fenced blocks."""
     entries, entry, group, fence, block, edition, name = [], None, None, None, [], EDITION, None
+    fix_open = False
     for number, line in enumerate(text.splitlines(), 1):
         if fence is not None:
             if line.startswith('```'):
@@ -48,6 +49,15 @@ def parse_doc(text):
                 fence, block = None, []
             else:
                 block.append(line)
+            continue
+        if entry is not None and fix_open:
+            if line.strip():
+                entry['fix'] += ' ' + line.strip()
+                continue
+            fix_open = False
+        if entry is not None and line.startswith('Fix: ') and 'fix' not in entry:
+            entry['fix'] = line[5:].rstrip()
+            fix_open = True
             continue
         match = FENCE.match(line)
         if match:
@@ -237,6 +247,18 @@ def run_example(compiler, root, entry):
     return None
 
 
+FIXES = {}
+
+
+def documented_fix(code):
+    """The Fix: paragraph of a code on the page (cached; the page is parsed once)."""
+    if not FIXES:
+        for e in parse_doc((ROOT / DOC).read_text()):
+            FIXES[e['code']] = e.get('fix', '')
+        FIXES[''] = ''
+    return FIXES.get(code, '')
+
+
 TEXT_ERROR = re.compile(r'^(?:(.*?):(\d+)(?::(\d+))?: )?error (E\d{3}) ([A-Z][A-Z0-9_]*): (.*)$')
 
 
@@ -255,6 +277,9 @@ def check_json(compiler, root, entry, work, edition, expected):
         if d['line'] > 0 and d['endLine'] < d['line'] or d['line'] > 0 and (d['endLine'] == d['line'] and d['endCol'] <= d['col']):
             return f"{entry['code']} {entry['name']}: -json range {d['line']}:{d['col']}-{d['endLine']}:{d['endCol']} is empty"
         got.append((d['file'], str(d['line']), str(d['col']), d['code'], d['name'], d['message']))
+        # the fix is the page's Fix: paragraph of the code ("" when the entry has none)
+        if d['fix'] != documented_fix(d['code']):
+            return f"{entry['code']} {entry['name']}: -json fix of {d['code']} is {d['fix']!r}, the page says {documented_fix(d['code'])!r}"
     if result.returncode != 1 or got != want:
         return (f"{DOC}:{entry['line']}: {entry['code']} {entry['name']}: -check -json printed {got} "
                 f'(exit {result.returncode}) instead of {want}')

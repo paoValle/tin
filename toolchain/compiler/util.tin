@@ -137,6 +137,7 @@ shared mut files []str
 shared mut tgt_linux i64 // the target OS is Linux (else macOS)
 shared mut tgt_x64 i64 // the target CPU is x86-64 (else arm64)
 shared mut error_count i64
+shared mut json_fix_table str // -json: "CODE<tab>fix" lines (fixes.tin), "" when none
 shared mut json_diag i64 // -json: errors print as one JSON object per line on standard output (#393)
 shared mut json_sources []str // each loaded file's text, for the end of the token an error is at (set by load_file_trusted)
 
@@ -263,6 +264,26 @@ fn json_token_end(file i64, line i64, col i64) i64 {
 	return col + (end - start)
 }
 
+// json_fix is the fix text of an error code ("" when the page gives none).
+fn json_fix(code str) str {
+	if len(code) == 0 {
+		return ""
+	}
+	let at = json_index(json_fix_table, "\n" + code + "\t", 0)
+	mut from = at + 1 + len(code) + 1
+	if at < 0 {
+		if !(len(json_fix_table) > len(code) && json_fix_table[:len(code) + 1] == code + "\t") {
+			return ""
+		}
+		from = len(code) + 1
+	}
+	mut to = from
+	for to < len(json_fix_table) && json_fix_table[to] != '\n' {
+		to = to + 1
+	}
+	return json_fix_table[from:to]
+}
+
 // json_error prints a finished error text ("file:line:col: error E502 NAME: message") as the JSON object of
 // toolchain/docs/TOOLING.md section 3, on standard output, and counts it.
 fn json_error(b []u8) {
@@ -338,7 +359,9 @@ fn json_error(b []u8) {
 	json_quote(o, name)
 	buf_str(o, ",\"severity\":\"error\",\"message\":")
 	json_quote(o, msg)
-	buf_str(o, ",\"fix\":\"\"}}\n")
+	buf_str(o, ",\"fix\":")
+	json_quote(o, json_fix(code))
+	buf_str(o, "}}\n")
 	write_all(1, cast([]u8, o))
 	error_count = error_count + 1
 }

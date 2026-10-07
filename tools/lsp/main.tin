@@ -297,7 +297,11 @@ fn (s mut Server) publish(path str) {
 	let diags = s.check(path)
 	let text = s.docs[path]
 	mut items = []str{}
-	for d in diags {
+	for dd in diags {
+		mut d = dd
+		if len(d.Fix) > 0 {
+			d.Message = d.Message + "\nFix: " + d.Fix
+		}
 		mut endLine = d.EndLine
 		mut endCol = d.EndCol
 		if d.Line == 0 {
@@ -403,7 +407,7 @@ fn (s Server) completion(path str, line i64, character i64) str {
 fn (s Server) documentSymbols(path str) str {
 	mut items = []str{}
 	for sym in s.syms[path] {
-		if sym.File == path {
+		if sym.File == path && sym.Kind != "local" {
 			items = append(items, "{{\"name\":" + tinjson.Quote(sym.Name) + ",\"kind\":" + mint.Itoa(symbolKind(sym.Kind)) + ",\"location\":" + s.location(sym) + ",\"containerName\":" + tinjson.Quote(sym.Recv) + "}}")
 		}
 	}
@@ -415,7 +419,7 @@ fn (s Server) workspaceSymbols(query str) str {
 	let q = twine.ToLower(query)
 	for path, syms in s.syms {
 		for sym in syms {
-			if len(items) < 200 && sym.File == path && twine.Contains(twine.ToLower(sym.Name), q) {
+			if len(items) < 200 && sym.File == path && sym.Kind != "local" && twine.Contains(twine.ToLower(sym.Name), q) {
 				items = append(items, "{{\"name\":" + tinjson.Quote(sym.Name) + ",\"kind\":" + mint.Itoa(symbolKind(sym.Kind)) + ",\"location\":" + s.location(sym) + ",\"containerName\":" + tinjson.Quote(sym.Recv) + "}}")
 			}
 		}

@@ -42,16 +42,19 @@ fn main() {
 	say.Line(tinjson.Quote("a\"b\\c\nd\te"))
 
 	// the lines of tinc -symbols -json
-	let out = sym("fn", "helper", "", "/p/main.tin", 10, "", "fn helper(a i64) i64", "[]") +
+	let out = sym("fn", "main", "", "/p/main.tin", 5, "", "fn main()", "[]") +
+		sym("fn", "helper", "", "/p/main.tin", 10, "", "fn helper(a i64) i64", "[]") +
 		sym("method", "Dist", "", "/p/main.tin", 20, "Point", "fn (p Point) Dist() i64", "[]") +
 		sym("type", "Point", "", "/p/main.tin", 5, "", "type Point struct", "[{{\"name\":\"X\",\"detail\":\"i64\"}},{{\"name\":\"Y\",\"detail\":\"i64\"}}]") +
 		sym("fn", "Split", "twine", "/lib/twine/twine.tin", 7, "", "fn Split(s str, sep str) []str", "[]") +
 		sym("fn", "hidden", "twine", "/lib/twine/twine.tin", 9, "", "fn hidden()", "[]") +
 		sym("fn", "helper", "", "/lib/rt/runtime.tin", 3, "", "fn helper()", "[]") +
+		"{{\"kind\":\"local\",\"name\":\"p\",\"pkg\":\"\",\"file\":\"/p/main.tin\",\"line\":6,\"col\":6,\"endCol\":7,\"fn\":\"main\",\"fnLine\":5,\"type\":\"mut Point\"}}\n" +
+		"{{\"kind\":\"local\",\"name\":\"parts\",\"pkg\":\"\",\"file\":\"/p/main.tin\",\"line\":7,\"col\":6,\"endCol\":11,\"fn\":\"main\",\"fnLine\":5,\"type\":\"[]str\"}}\n" +
 		"{{\"file\":\"/p/main.tin\",\"line\":12,\"col\":5,\"endLine\":12,\"endCol\":9,\"code\":\"E103\",\"name\":\"UNDEFINED\",\"severity\":\"error\",\"message\":\"undefined: x\",\"fix\":\"\"}}\n"
 	let (syms, diags) = tinsym.Parse(out)
 	say.Line(len(syms), len(diags), diags[0].Code, diags[0].Line, diags[0].EndCol, diags[0].Message)
-	say.Line(syms[2].Members[1].Name, syms[2].Members[1].Detail, syms[1].Recv, syms[3].Exported)
+	say.Line(syms[3].Members[1].Name, syms[3].Members[1].Detail, syms[2].Recv, syms[4].Exported)
 
 	let text = "package main\n\nimport \"twine\"\n\nfn main() {{\n\tlet p = Point{{X: 1}}\n\tlet parts = twine.Split(\"a\", \",\")\n\thelper(p.Dist())\n}}\n"
 	let path = "/p/main.tin"
@@ -67,7 +70,12 @@ fn main() {
 
 	// Complete: after a package, after a value's dot, and plain
 	say.Line("after pkg:", names(tinsym.Complete(syms, path, text, 6, 23)))
-	say.Line("after dot:", names(tinsym.Complete(syms, path, text, 7, 12)))
+	say.Line("after a local's dot:", names(tinsym.Complete(syms, path, text, 7, 12)))
+	say.Line("a local:", found(tinsym.Resolve(syms, path, text, 7, 9)))
+	say.Line("locals plain:", names(tinsym.Complete(syms, path, text, 7, 1))[:40])
+	let (ty, nm) = tinsym.TypeParts("mut geo.Point")
+	let (ty2, nm2) = tinsym.TypeParts("[]str")
+	say.Line(ty, nm, "|", ty2, nm2, "|")
 	let plain = names(tinsym.Complete(syms, path, text, 7, 1))
 	say.Line("plain:", plain[:48])
 }

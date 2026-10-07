@@ -38,10 +38,19 @@ fn helper(a i64) i64 {
 	return a + 1
 }
 
+type Other struct {
+	Z i64
+}
+
+fn (o Other) Ping() i64 {
+	return o.Z
+}
+
 fn main() {
 	let p = Point{X: 1, Y: 2}
 	let parts = twine.Split("a,b", ",")
-	say.Line(p.Dist(), helper(1), len(parts))
+	let o = Other{Z: 3}
+	say.Line(p.Dist(), o.Ping(), helper(1), len(parts))
 }
 '''
 
@@ -160,7 +169,7 @@ class LanguageServer(unittest.TestCase):
         td = {'uri': self.uri}
         outline = self.client.request('textDocument/documentSymbol', {'textDocument': td})['result']
         self.assertEqual(sorted((s['name'], s['kind']) for s in outline),
-                         [('Dist', 6), ('Point', 23), ('helper', 12), ('main', 12)])
+                         [('Dist', 6), ('Other', 23), ('Ping', 6), ('Point', 23), ('helper', 12), ('main', 12)])
         pos = self.at(PROGRAM, 'helper(1)')
         found = self.client.request('textDocument/definition', {'textDocument': td, 'position': pos})['result']
         self.assertEqual(len(found), 1)
@@ -190,10 +199,21 @@ class LanguageServer(unittest.TestCase):
         items = self.client.request('textDocument/completion', {'textDocument': td, 'position': self.at(PROGRAM, 'say.Line')})['result']['items']
         labels = {i['label'] for i in items}
         self.assertTrue({'helper', 'Point', 'main', 'twine', 'say', 'return'} <= labels, labels)
+        # after a local's dot: the members of its type, and only those
         pos = self.at(PROGRAM, 'Dist()', 1)
         items = self.client.request('textDocument/completion', {'textDocument': td, 'position': pos})['result']['items']
         labels = {i['label'] for i in items}
-        self.assertTrue({'Dist', 'X', 'Y'} <= labels, labels)
+        self.assertEqual(labels, {'Dist', 'X', 'Y'})
+        pos = self.at(PROGRAM, 'Ping()', 1)
+        items = self.client.request('textDocument/completion', {'textDocument': td, 'position': pos})['result']['items']
+        self.assertEqual({i['label'] for i in items}, {'Ping', 'Z'})
+        # plain completion offers the locals of the function
+        items = self.client.request('textDocument/completion', {'textDocument': td, 'position': self.at(PROGRAM, 'say.Line')})['result']['items']
+        details = {i['label']: i['detail'] for i in items}
+        self.assertEqual((details['p'], details['o'], details['parts']), ('Point', 'Other', '[]str'))
+        # go to the declaration of a local
+        found = self.client.request('textDocument/definition', {'textDocument': td, 'position': self.at(PROGRAM, 'p.Dist')})['result']
+        self.assertEqual(found[0]['range']['start'], self.at(PROGRAM, 'p = Point'))
 
     def test_workspace_symbols_and_unknown_requests(self):
         self.client.open(self.path, PROGRAM)

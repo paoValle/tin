@@ -124,7 +124,7 @@ program checks; exit status 1 otherwise). Fields:
 | `code`, `name` | `"E502"`, `"TYPE_ARG_COUNT"` ([ERRORS.md](ERRORS.md)) |
 | `severity` | `"error"` (reserved for future warnings) |
 | `message` | the text of the text form after `code name: ` |
-| `fix` | the fix text of [ERRORS.md](ERRORS.md) when the compiler knows it; `""` today |
+| `fix` | the `Fix:` paragraph of the code's entry in [ERRORS.md](ERRORS.md) (`""` when it has none); `tools/gen/genfixes.tin` makes `toolchain/compiler/fixes.tin` from the page, and `tools/ci/diagnostics_check.py` requires every example to print the page's |
 
 The text form and the JSON form carry the same code, name, position and message; `tools/ci/diagnostics_check.py` checks
 this for every example in ERRORS.md. The compiler stops at the first syntax error, so a file that does not parse
@@ -148,45 +148,10 @@ tests and the examples) and formatting twice changes nothing. The rules:
 - **Left as written**: the spaces inside a line (so aligned fields and aligned trailing comments stay aligned), strings, raw
   strings (every line of one, including its indentation), rune literals, the order and line breaks of the code.
 
-The tree has not been converted: `tin fmt -l toolchain packages` lists the files that differ (about one in eight).
-Converting them is a one-commit change for the maintainers to announce (like #226), after which `tin fmt -l` can gate CI.
-
-### 3.3 Declarations as JSON (`tinc -symbols`, protocol version 1)
-
-One JSON object per line for each function, method, type, shape, constant and global of every loaded file:
-
-| field | meaning |
-|---|---|
-| `kind` | `fn`, `method`, `type` (struct, enum and named types), `shape`, `const` or `var` (a package-level `let` or `shared`) |
-| `name`, `pkg` | the name and its package (`""` for `main`) |
-| `file`, `line`, `col`, `endCol` | where the name is: the path as loaded, 1-based line and byte column, the column just past the name |
-| `recv` | a method's receiver type (without type arguments), else `""` |
-| `exported` | the name starts with a capital letter |
-| `sig` | the declaration's first line without its indentation and opening brace: `fn (p Point) Dist() i64`, `type Point struct` |
-| `doc` | the `//` comment lines directly above the declaration, joined with newlines |
-| `members` | for a struct, enum or shape: one `{"name","detail"}` per line of its body (a field and its type, a variant and its payload) |
-
-`tin lsp` answers outline, go to definition, hover and completion from these lines and from `-check -json`.
-
-### 3.4 The language server: `tin lsp`
-
-`tin lsp` (`tools/lsp`, built when it starts) speaks the Language Server Protocol on standard input and output. It has no
-checker of its own: for every opened, changed or saved document it runs `tinc -symbols -json -overlay FILE=TEXT FILE`
-(§3.1 and §3.3: the unsaved text is what is checked, the errors and the declarations come from one run) and answers from
-the result.
-
-| request | answer |
-|---|---|
-| `textDocument/publishDiagnostics` (sent after open, change and save) | the compiler's errors, with ranges (UTF-16 columns), the E-code as `code`, `source` `tinc` |
-| `textDocument/documentSymbol`, `workspace/symbol` | the declarations of the file, or all that match the query |
-| `textDocument/definition` | after `pkg.`, the exported name in that package; after any other `.`, the methods of that name; otherwise the name in the document's package, else in any package. The runtime and the standard library are searched too |
-| `textDocument/hover` | the declaration's signature and its doc comment, as markdown |
-| `textDocument/completion` (also after `.`) | after `pkg.` its exported names; after another `.` every method and field name (the type of the value is not known here); otherwise the package's names, the imported packages and the keywords |
-
-The compiler is `$TINLSP_TINC`, else `$TIN_ROOT/bin/tinc` (`tin lsp` sets it). A file that does not parse reports its one
-error and keeps the declarations of the last version that did, so outline and definition keep working while a line is
-half typed. Names of values and of fields are not resolved: that needs the checker's types, which `-symbols` does not
-print yet.
+The tree is converted directory by directory: `tools/ci/test_fmt_gate.py` fails when `tin fmt -l` lists a file of the
+directories it names (the Tinland editor and its packages, `tin lsp`, `tin fmt`, the new tests), and a directory joins
+that list when the change that converts it is announced, like #226. Today about one file in eight of the rest differs
+(`tin fmt -l toolchain packages` lists them).
 
 ## 4. Make targets
 

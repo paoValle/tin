@@ -71,7 +71,7 @@ class Symbols(unittest.TestCase):
         self.dir.cleanup()
 
     def mine(self, syms):
-        return {(s['kind'], s['name']): s for s in syms if s['file'] == str(self.path)}
+        return {(s['kind'], s['name']): s for s in syms if s['file'] == str(self.path) and s['kind'] != 'local'}
 
     def test_declarations(self):
         code, syms, _ = symbols(self.path)
@@ -94,6 +94,16 @@ class Symbols(unittest.TestCase):
         self.assertEqual(mine[('const', 'Limit')]['sig'], 'const Limit = 10')
         self.assertEqual(mine[('var', 'counter')]['sig'], 'let counter i64 = 0')
         self.assertEqual([m['name'] for m in mine[('type', 'Shape')]['members']], ['Circle', 'Empty'])
+
+    def test_locals_and_parameters_of_the_named_files(self):
+        code, syms, _ = symbols(self.path)
+        locals_ = [(s['name'], s['fn'], s['fnLine'], s['type']) for s in syms if s['kind'] == 'local']
+        self.assertEqual(sorted(locals_), [('a', 'helper', 30, 'i64'), ('dx', 'Move', 26, 'i64'), ('dy', 'Move', 26, 'i64'),
+                                           ('p', 'Dist', 22, 'Point'), ('p', 'Move', 26, 'Point'), ('p', 'main', 34, 'Point')])
+        # only the files named on the command line: none of the runtime's or the packages' locals
+        self.assertEqual({s['file'] for s in syms if s['kind'] == 'local'}, {str(self.path)})
+        local = [s for s in syms if s['kind'] == 'local' and s['name'] == 'p' and s['fn'] == 'main'][0]
+        self.assertEqual((local['line'], local['col'], local['endCol']), (35, 6, 7))
 
     def test_packages_come_with_their_names(self):
         twine = subprocess.run([str(tinc()), '-symbols', '-edition', '1', str(ROOT / 'toolchain/tests/v2/twine.tin')],

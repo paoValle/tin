@@ -103,6 +103,7 @@ say.Line(yy)
 let é = "ü"
 diag: 1 1 1 9 E001 edition 1 files start with a package declaration
 diags: 1
+info: E001 edition 1 files start with a package declaration | Fix: start the file with `package main` (or the package's name), and keep only one.
 diags: 0
 --- editor_run.tin row 9 col 12 dirty true
 package main

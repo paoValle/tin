@@ -10,7 +10,7 @@ import "twine"
 
 // Sym is one declaration.
 type Sym struct {
-	Kind     str // fn, method, type, shape, const or var
+	Kind     str // fn, method, type, shape, const, var, or local (a local variable or parameter)
 	Name     str
 	Pkg      str // "" for main
 	File     str
@@ -22,6 +22,9 @@ type Sym struct {
 	Sig      str
 	Doc      str
 	Members  []Member
+	Fn       str // a local: the function it is in (the outermost, for a closure)
+	FnLine   i64 // and the line that function starts on
+	Type     str // a local: its type, as the compiler writes it ("Point", "mut Point", "[]str")
 }
 
 // Member is a line of a struct, enum or shape body: a field and its type, a variant and its payload.
@@ -39,6 +42,7 @@ type Diag struct {
 	EndCol  i64
 	Code    str
 	Message str
+	Fix     str // what to do about it, from toolchain/docs/ERRORS.md ("" when it gives none)
 }
 
 // Item is one candidate for completion: its text, what it is (a Sym kind, or field, package, keyword) and a description.
@@ -61,7 +65,7 @@ fn Parse(out str) ([]Sym, []Diag) {
 			continue
 		}
 		if j.Get("severity").IsString() {
-			diags = append(diags, Diag{File: j.Get("file").Text(), Line: j.Get("line").Int(), Col: j.Get("col").Int(), EndLine: j.Get("endLine").Int(), EndCol: j.Get("endCol").Int(), Code: j.Get("code").Text(), Message: j.Get("message").Text()})
+			diags = append(diags, Diag{File: j.Get("file").Text(), Line: j.Get("line").Int(), Col: j.Get("col").Int(), EndLine: j.Get("endLine").Int(), EndCol: j.Get("endCol").Int(), Code: j.Get("code").Text(), Message: j.Get("message").Text(), Fix: j.Get("fix").Text()})
 			continue
 		}
 		let mem = j.Get("members")
@@ -69,7 +73,7 @@ fn Parse(out str) ([]Sym, []Diag) {
 		for k in 0..mem.Len() {
 			members = append(members, Member{Name: mem.At(k).Get("name").Text(), Detail: mem.At(k).Get("detail").Text()})
 		}
-		syms = append(syms, Sym{Kind: j.Get("kind").Text(), Name: j.Get("name").Text(), Pkg: j.Get("pkg").Text(), File: j.Get("file").Text(), Line: j.Get("line").Int(), Col: j.Get("col").Int(), EndCol: j.Get("endCol").Int(), Recv: j.Get("recv").Text(), Exported: j.Get("exported").Bool(), Sig: j.Get("sig").Text(), Doc: j.Get("doc").Text(), Members: members})
+		syms = append(syms, Sym{Kind: j.Get("kind").Text(), Name: j.Get("name").Text(), Pkg: j.Get("pkg").Text(), File: j.Get("file").Text(), Line: j.Get("line").Int(), Col: j.Get("col").Int(), EndCol: j.Get("endCol").Int(), Recv: j.Get("recv").Text(), Exported: j.Get("exported").Bool(), Sig: j.Get("sig").Text(), Doc: j.Get("doc").Text(), Members: members, Fn: j.Get("fn").Text(), FnLine: j.Get("fnLine").Int(), Type: j.Get("type").Text()})
 	}
 	return syms, diags
 }
@@ -173,6 +177,74 @@ fn isImported(text str, name str) bool {
 	return false
 }
 
+// fnLineAt is the line the function that contains line n (1-based) of the file starts on (0 outside any).
+fn fnLineAt(syms []Sym, path str, n i64) i64 {
+	mut best = 0
+	for sym in syms {
+		if sym.File == path && (sym.Kind == "fn" || sym.Kind == "method") && sym.Line <= n && sym.Line > best {
+			best = sym.Line
+		}
+	}
+	return best
+}
+
+// localsAt are the locals and parameters visible at line n (1-based): those of the function around it declared before.
+fn localsAt(syms []Sym, path str, n i64) []Sym {
+	let fl = fnLineAt(syms, path, n)
+	mut out = []Sym{}
+	if fl == 0 {
+		return out
+	}
+	for sym in syms {
+		if sym.Kind == "local" && sym.File == path && sym.FnLine == fl && sym.Line <= n {
+			out = append(out, sym)
+		}
+	}
+	return out
+}
+
+// localNamed is the latest local of that name visible at line n (found is false when there is none).
+fn localNamed(syms []Sym, path str, n i64, name str) (Sym, bool) {
+	let all = localsAt(syms, path, n)
+	mut at = -1
+	for i in 0..len(all) {
+		if all[i].Name == name && (at < 0 || all[i].Line >= all[at].Line) {
+			at = i
+		}
+	}
+	if at < 0 {
+		return Sym{}, false
+	}
+	return all[at], true
+}
+
+// TypeParts splits a type as the compiler writes it ("mut geo.Point", "?Point", "[]str") into the package ("" when
+// unqualified) and the name of the named type it is, or "" when it is not one (a slice, a map, a number).
+fn TypeParts(t str) (str, str) {
+	mut s = t
+	for twine.HasPrefix(s, "mut ") || twine.HasPrefix(s, "secret ") {
+		s = twine.TrimSpace(s[twine.Index(s, " ") + 1:])
+	}
+	if twine.HasPrefix(s, "?") {
+		s = s[1:]
+	}
+	if len(s) == 0 || !(s[0] >= 'A' && s[0] <= 'Z') && twine.Index(s, ".") < 0 {
+		return "", ""
+	}
+	for i in 0..len(s) {
+		if !(isWordByte(s[i]) || s[i] == '.') {
+			// generic arguments and the like: keep the name before them
+			s = s[:i]
+			break
+		}
+	}
+	let dot = twine.LastIndex(s, ".")
+	if dot >= 0 {
+		return s[:dot], s[dot + 1:]
+	}
+	return "", s
+}
+
 // Resolve is the declarations the word at line n, byte column col of the text can mean: after pkg. the exported name in
 // that package; after any other dot a method of that name; otherwise a name of the text's package (in its directory), else
 // of any package.
@@ -195,16 +267,21 @@ fn Resolve(syms []Sym, path str, text str, n i64, col i64) []Sym {
 		}
 		return found
 	}
+	let (local, isLocal) = localNamed(syms, path, n + 1, word)
+	if isLocal {
+		found = append(found, local)
+		return found
+	}
 	let pkg = CurrentPkg(text)
 	let dir = DirOf(path)
 	for sym in syms {
-		if sym.Name == word && sym.Recv == "" && sym.Pkg == pkg && DirOf(sym.File) == dir {
+		if sym.Name == word && sym.Recv == "" && sym.Kind != "local" && sym.Pkg == pkg && DirOf(sym.File) == dir {
 			found = append(found, sym)
 		}
 	}
 	if len(found) == 0 {
 		for sym in syms {
-			if sym.Name == word && sym.Recv == "" {
+			if sym.Name == word && sym.Recv == "" && sym.Kind != "local" {
 				found = append(found, sym)
 			}
 		}
@@ -233,6 +310,38 @@ fn Complete(syms []Sym, path str, text str, n i64, col i64) []Item {
 	let (qualifier, dotted) = qualifierAt(l, from)
 	if dotted {
 		let isPackage = isImported(text, qualifier)
+		if !isPackage {
+			// a local variable or parameter of a known type: that type's fields and methods
+			let (local, isLocal) = localNamed(syms, path, n + 1, qualifier)
+			if isLocal {
+				let (tpkg, tname) = TypeParts(local.Type)
+				mut owner = tpkg
+				if len(tpkg) == 0 {
+					owner = local.Pkg
+				}
+				mut known = false
+				for sym in syms {
+					if sym.Kind == "type" && sym.Name == tname && sym.Pkg == owner {
+						known = true
+						for m in sym.Members {
+							if !seen[m.Name] {
+								seen[m.Name] = true
+								items = append(items, Item{Label: m.Name, Kind: "field", Detail: m.Detail})
+							}
+						}
+					}
+				}
+				for sym in syms {
+					if known && sym.Kind == "method" && sym.Recv == tname && sym.Pkg == owner && !seen[sym.Name] {
+						seen[sym.Name] = true
+						items = append(items, Item{Label: sym.Name, Kind: "method", Detail: sym.Sig})
+					}
+				}
+				if known {
+					return items
+				}
+			}
+		}
 		for sym in syms {
 			if isPackage {
 				if sym.Pkg == qualifier && sym.Exported && sym.Recv == "" && !seen[sym.Name] {
@@ -258,8 +367,14 @@ fn Complete(syms []Sym, path str, text str, n i64, col i64) []Item {
 	}
 	let pkg = CurrentPkg(text)
 	let dir = DirOf(path)
+	for sym in localsAt(syms, path, n + 1) {
+		if !seen[sym.Name] {
+			seen[sym.Name] = true
+			items = append(items, Item{Label: sym.Name, Kind: "local", Detail: sym.Type})
+		}
+	}
 	for sym in syms {
-		if sym.Pkg == pkg && DirOf(sym.File) == dir && sym.Recv == "" && sym.Kind != "method" && !seen[sym.Name] {
+		if sym.Pkg == pkg && DirOf(sym.File) == dir && sym.Recv == "" && sym.Kind != "method" && sym.Kind != "local" && !seen[sym.Name] {
 			seen[sym.Name] = true
 			items = append(items, Item{Label: sym.Name, Kind: sym.Kind, Detail: sym.Sig})
 		}

@@ -2,7 +2,7 @@ true 3 1 x
 é🙂 true true true
 bad json: false
 "a\"b\\c\nd\te"
-6 1 E103 12 9 undefined: x
+9 1 E103 12 9 undefined: x
 Y i64 Point true
 plain: /p/main.tin:10 
 qualified: /lib/twine/twine.tin:7 
@@ -12,5 +12,8 @@ nothing:
 helper 1 7
 [twine] true geo
 after pkg: fn:Split 
-after dot: method:Dist field:X field:Y 
-plain: fn:helper type:Point package:twine keyword:break
+after a local's dot: field:X field:Y method:Dist 
+a local: /p/main.tin:6 
+locals plain: local:p local:parts fn:main fn:helper ty
+geo Point |   |
+plain: local:p local:parts fn:main fn:helper type:Point

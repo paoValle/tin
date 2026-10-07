@@ -883,6 +883,7 @@ fn compiler_main(argc i64, argv i64) i64 {
 			check_only = 1
 		} else if a == "-json" {
 			json_diag = 1
+			json_fix_table = fix_table()
 		} else if a == "-overlay" && i + 1 < argc {
 			// -overlay FILE=PATH: check the text in PATH as FILE (an editor's unsaved buffer)
 			i = i + 1
@@ -906,6 +907,7 @@ fn compiler_main(argc i64, argv i64) i64 {
 	if len(files) == 0 {
 		return usage()
 	}
+	symbols_user_files = len(files)
 	if tokens_dump != 0 {
 		return dump_tokens()
 	}
@@ -1235,6 +1237,7 @@ fn fix_source_is_edition1(src str) i64 {
 // ---- -symbols: the declarations of a program as JSON lines (tin lsp, an editor's outline and go to definition) ----
 
 shared mut symbols_mode i64 // -symbols: print every declaration instead of building (#401)
+shared mut symbols_user_files i64 // the files named on the command line: the only ones whose locals -symbols prints
 
 // src_line is line number n (1-based) of file's source, without its newline ("" past the end).
 fn src_line(file i64, n i64) str {
@@ -1443,6 +1446,46 @@ fn print_symbol(kind str, name str, pos i64, extra_recv i64) {
 	write_all(1, cast([]u8, o))
 }
 
+// print_local prints one local variable or parameter of function f: its name, where it is declared, the function it is
+// in (the outermost one, for a closure) and the name of its type.
+fn print_local(f Fn, root Fn, s Sym) {
+	if cast(i64, s) < 65536 {
+		return
+	}
+	if len(s.name) == 0 || s.name[0] == '$' || s.pos == NO_POS || root.pos == NO_POS || s.name[0] == '_' && len(s.name) == 1 {
+		return
+	}
+	let file = s.pos >> 48
+	let line = (s.pos >> 16) & 0xffffffff
+	let text = src_line(file, line)
+	let col = sym_name_col(text, s.name, s.pos & 0xffff)
+	let o = buf_new()
+	buf_str(o, "{{\"kind\":\"local\",\"name\":")
+	json_quote(o, s.name)
+	buf_str(o, ",\"pkg\":")
+	json_quote(o, file_pkgs[file])
+	buf_str(o, ",\"file\":")
+	json_quote(o, files[file])
+	buf_str(o, ",\"line\":")
+	buf_int(o, line)
+	buf_str(o, ",\"col\":")
+	buf_int(o, col)
+	buf_str(o, ",\"endCol\":")
+	buf_int(o, col + len(s.name))
+	buf_str(o, ",\"fn\":")
+	json_quote(o, root.name)
+	buf_str(o, ",\"fnLine\":")
+	buf_int(o, (root.pos >> 16) & 0xffffffff)
+	buf_str(o, ",\"type\":")
+	let t = buf_new()
+	if cast(i64, s.type_) > 65536 {
+		type_name(cast([]u8, t), cast(Ty, s.type_))
+	}
+	json_quote(o, str(t))
+	buf_str(o, "}}\n")
+	write_all(1, cast([]u8, o))
+}
+
 // print_symbols prints every declaration of every loaded file, functions and methods, types, shapes, constants and
 // globals; toolchain/docs/TOOLING.md section 3.3 describes the lines.
 fn print_symbols() {
@@ -1455,6 +1498,27 @@ fn print_symbols() {
 				kind = "method"
 			}
 			print_symbol(kind, f.name, f.pos, f.recv)
+		}
+		i = i + 1
+	}
+	// the locals and parameters of each function, closures with the function around them
+	i = 0
+	for i < len(prog_fns) {
+		let f = prog_fns[i]
+		if f.generated == 0 && f.extern_ == 0 {
+			mut root = f
+			mut up = 0
+			for root.parent != 0 && up < 20 {
+				root = cast(Fn, root.parent)
+				up = up + 1
+			}
+			if root.lifted == 0 && root.generated == 0 && len(root.name) > 0 && (root.pos >> 48) < symbols_user_files && cast(i64, f.locals) != 0 {
+				mut k = 0
+				for k < len(f.locals) {
+					print_local(f, root, f.locals[k])
+					k = k + 1
+				}
+			}
 		}
 		i = i + 1
 	}

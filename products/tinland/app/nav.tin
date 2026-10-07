@@ -49,6 +49,17 @@ fn (ed mut Editor) goBack() {
 fn (ed mut Editor) quickInfo() {
 	let found = tinsym.Resolve(ed.Syms, ed.Buf.Path, ed.Buf.Text(), ed.Buf.Row, ed.Buf.Col)
 	if len(found) == 0 {
+		let at = ed.diagAt(ed.Buf.Row)
+		if at >= 0 {
+			// an error on the line: what the compiler says and what to do about it
+			let d = ed.Diags[at]
+			mut lines = []str{d.Code + " " + d.Message}
+			if len(d.Fix) > 0 {
+				lines = append(lines, "Fix: " + d.Fix)
+			}
+			ed.Info = lines
+			return
+		}
 		ed.say("no declaration found")
 		return
 	}
