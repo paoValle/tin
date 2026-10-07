@@ -1,0 +1,90 @@
+package abacus
+
+// The integer square root, the greatest common divisor and the modular inverse, as Go's Int has
+// them.
+
+// Sqrt returns the floor of the square root of a, like Go's Int.Sqrt; a negative value panics.
+fn (a Int) Sqrt() Int {
+	if a.neg {
+		panic("abacus: square root of a negative number")
+	}
+	if len(a.limbs) == 0 {
+		return zeroInt()
+	}
+	if a.BitLen() <= 62 {
+		let (v, _) = a.U64()
+		mut r = u64(0)
+		mut bit = u64(1) << 62 // shift down to the largest power of four <= v
+		mut x = v
+		for bit > x {
+			bit >>= 2
+		}
+		for bit != 0 {
+			if x >= r+bit {
+				x -= r + bit
+				r = (r >> 1) + bit
+			} else {
+				r >>= 1
+			}
+			bit >>= 2
+		}
+		return FromI64(i64(r))
+	}
+	// Newton's method from above the root: x = (x + a/x) / 2 until it stops shrinking.
+	mut x = FromI64(1).Lsh((a.BitLen() + 1) / 2)
+	for {
+		let (q, _) = a.QuoRem(x)
+		let nx = x.Add(q).Rsh(1)
+		if nx.Cmp(x) >= 0 {
+			break
+		}
+		x = nx
+	}
+	return x
+}
+
+// Gcd returns the greatest common divisor of a and b, always non-negative, like Go's Int.GCD;
+// Gcd(0, 0) is 0.
+fn (a Int) Gcd(b Int) Int {
+	mut x = a.Abs()
+	mut y = b.Abs()
+	for !y.IsZero() {
+		let (_, r) = x.QuoRem(y)
+		x = y
+		y = r
+	}
+	return x
+}
+
+// ModInverse returns the multiplicative inverse of a modulo m (m's sign is ignored), like Go's
+// Int.ModInverse: the result x with a*x == 1 (mod m), or nil when a and m are not coprime. A
+// modulus of 1 or less panics.
+fn (a Int) ModInverse(m Int) ?Int {
+	let n = m.Abs()
+	if n.Cmp(FromI64(1)) <= 0 {
+		panic("abacus: ModInverse needs a modulus above 1")
+	}
+	let g = a.Mod(n)
+	let (d, x) = egcd(g, n)
+	if d.Cmp(FromI64(1)) != 0 {
+		return nil
+	}
+	return x.Mod(n)
+}
+
+// egcd returns (d, x) with g*x + n*y = d for some y, the extended Euclidean algorithm.
+fn egcd(g Int, n Int) (Int, Int) {
+	mut oldR = g
+	mut r = n
+	mut oldS = FromI64(1)
+	mut s = FromI64(0)
+	for !r.IsZero() {
+		let (q, rem) = oldR.QuoRem(r)
+		oldR = r
+		r = rem
+		let ns = oldS.Sub(q.Mul(s))
+		oldS = s
+		s = ns
+	}
+	return oldR, oldS
+}

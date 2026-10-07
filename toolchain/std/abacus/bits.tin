@@ -1,0 +1,184 @@
+package abacus
+
+// Bit operations with two's-complement semantics like Go's Int, where a negative value is the
+// infinite two's complement of its magnitude: Not(x) = -x-1, and And, Or and Xor follow from the
+// identities on the magnitudes (Go's nat.go uses the same ones).
+
+// Not returns ^a, which is -a-1.
+fn (a Int) Not() Int {
+	return a.Neg().Sub(FromI64(1))
+}
+
+// And returns a & b.
+fn (a Int) And(b Int) Int {
+	if !a.neg && !b.neg {
+		return Int{neg: false, limbs: uand(a.limbs, b.limbs)}
+	}
+	if a.neg && b.neg {
+		// ~((|a|-1) | (|b|-1)) = -(((|a|-1) | (|b|-1)) + 1)
+		let x = a.Abs().Sub(FromI64(1))
+		let y = b.Abs().Sub(FromI64(1))
+		return Int{neg: false, limbs: uor(x.limbs, y.limbs)}.Add(FromI64(1)).Neg()
+	}
+	if a.neg {
+		// b & ~(|a|-1)
+		let x = a.Abs().Sub(FromI64(1))
+		return Int{neg: false, limbs: uandNot(b.limbs, x.limbs)}
+	}
+	let y = b.Abs().Sub(FromI64(1))
+	return Int{neg: false, limbs: uandNot(a.limbs, y.limbs)}
+}
+
+// Or returns a | b.
+fn (a Int) Or(b Int) Int {
+	if !a.neg && !b.neg {
+		return Int{neg: false, limbs: uor(a.limbs, b.limbs)}
+	}
+	if a.neg && b.neg {
+		// ~((|a|-1) & (|b|-1)) = -(((|a|-1) & (|b|-1)) + 1)
+		let x = a.Abs().Sub(FromI64(1))
+		let y = b.Abs().Sub(FromI64(1))
+		return Int{neg: false, limbs: uand(x.limbs, y.limbs)}.Add(FromI64(1)).Neg()
+	}
+	if a.neg {
+		// b | ~(|a|-1) = ~((|a|-1) &^ b) = -(((|a|-1) &^ b) + 1)
+		let x = a.Abs().Sub(FromI64(1))
+		return Int{neg: false, limbs: uandNot(x.limbs, b.limbs)}.Add(FromI64(1)).Neg()
+	}
+	let y = b.Abs().Sub(FromI64(1))
+	return Int{neg: false, limbs: uandNot(y.limbs, a.limbs)}.Add(FromI64(1)).Neg()
+}
+
+// Xor returns a ^ b.
+fn (a Int) Xor(b Int) Int {
+	if !a.neg && !b.neg {
+		return Int{neg: false, limbs: uxor(a.limbs, b.limbs)}
+	}
+	if a.neg && b.neg {
+		// (|a|-1) ^ (|b|-1)
+		let x = a.Abs().Sub(FromI64(1))
+		let y = b.Abs().Sub(FromI64(1))
+		return Int{neg: false, limbs: uxor(x.limbs, y.limbs)}
+	}
+	if a.neg {
+		// ~((|a|-1) ^ b) = -(((|a|-1) ^ b) + 1)
+		let x = a.Abs().Sub(FromI64(1))
+		return Int{neg: false, limbs: uxor(x.limbs, b.limbs)}.Add(FromI64(1)).Neg()
+	}
+	let y = b.Abs().Sub(FromI64(1))
+	return Int{neg: false, limbs: uxor(a.limbs, y.limbs)}.Add(FromI64(1)).Neg()
+}
+
+// Lsh returns a << n, like Go's Int.Lsh; a negative shift panics.
+fn (a Int) Lsh(n i64) Int {
+	if n < 0 {
+		panic("abacus: negative shift count")
+	}
+	if len(a.limbs) == 0 {
+		return zeroInt()
+	}
+	let limbShift = n / 64
+	let bitShift = n % 64
+	mut out = make([]u64, 0, len(a.limbs)+limbShift+1)
+	for i in 0..limbShift {
+		out = append(out, 0)
+	}
+	if bitShift == 0 {
+		out = append(out, a.limbs...)
+	} else {
+		mut carry = u64(0)
+		for i in 0..len(a.limbs) {
+			let v = a.limbs[i]
+			out = append(out, (v << u64(bitShift)) | carry)
+			carry = v >> u64(64-bitShift)
+		}
+		if carry != 0 {
+			out = append(out, carry)
+		}
+	}
+	return Int{neg: a.neg, limbs: out}
+}
+
+// Rsh returns a >> n, the arithmetic shift (floor division by 2^n), like Go's Int.Rsh; a
+// negative shift panics.
+fn (a Int) Rsh(n i64) Int {
+	if n < 0 {
+		panic("abacus: negative shift count")
+	}
+	if len(a.limbs) == 0 {
+		return zeroInt()
+	}
+	if !a.neg {
+		return Int{neg: false, limbs: rshBits(a.limbs, n)}
+	}
+	// (-x) >> s == -(((|x|-1) >> s) + 1)
+	let t = a.Abs().Sub(FromI64(1))
+	let s = Int{neg: false, limbs: rshBits(t.limbs, n)}
+	return s.Add(FromI64(1)).Neg()
+}
+
+// uand returns a & b, zero-extended to the longer length.
+fn uand(a []u64, b []u64) []u64 {
+	mut n = len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	mut out = make([]u64, 0, n)
+	for i in 0..n {
+		out = append(out, a[i]&b[i])
+	}
+	return unorm(out)
+}
+
+// uandNot returns a &^ b (a with b's set bits cleared), b zero-extended to a's length.
+fn uandNot(a []u64, b []u64) []u64 {
+	mut out = make([]u64, 0, len(a))
+	for i in 0..len(a) {
+		mut v = a[i]
+		if i < len(b) {
+			v &= ^b[i]
+		}
+		out = append(out, v)
+	}
+	return unorm(out)
+}
+
+// uor returns a | b, zero-extended to the longer length.
+fn uor(a []u64, b []u64) []u64 {
+	mut n = len(a)
+	if len(b) > n {
+		n = len(b)
+	}
+	mut out = make([]u64, 0, n)
+	for i in 0..n {
+		mut v = u64(0)
+		if i < len(a) {
+			v |= a[i]
+		}
+		if i < len(b) {
+			v |= b[i]
+		}
+		out = append(out, v)
+	}
+	return unorm(out)
+}
+
+// uxor returns a ^ b, zero-extended to the longer length.
+fn uxor(a []u64, b []u64) []u64 {
+	mut n = len(a)
+	if len(b) > n {
+		n = len(b)
+	}
+	mut out = make([]u64, 0, n)
+	for i in 0..n {
+		mut v = u64(0)
+		if i < len(a) {
+			v ^= a[i]
+		}
+		if i < len(b) {
+			v ^= b[i]
+		}
+		out = append(out, v)
+	}
+	return unorm(out)
+}

@@ -1,8 +1,8 @@
 package abacus
 
-// Exp returns a**e, or a**e mod |m| when m is not zero, like Go's Exp: the sign of m is ignored
-// and e <= 0 gives 1 for a plain power. A negative exponent with a modulus needs ModInverse,
-// the third step of #577, and panics until then.
+// Exp returns a**e, or a**e mod |m| when m is not zero, like Go's Exp: the sign of m is ignored,
+// e <= 0 gives 1 for a plain power, and a negative exponent with a modulus uses the base's
+// modular inverse (panicking when there is none, where Go returns nil).
 fn (a Int) Exp(e Int, m Int) Int {
 	if m.IsZero() {
 		if e.Sign() <= 0 {
@@ -10,17 +10,23 @@ fn (a Int) Exp(e Int, m Int) Int {
 		}
 		return a.pow(e)
 	}
-	if e.Sign() < 0 {
-		panic("abacus: Exp with a modulus needs a non-negative exponent (ModInverse is #577's third step)")
-	}
 	let mod = m.Abs()
 	if mod.Cmp(Int{neg: false, limbs: []u64{1}}) == 0 {
 		return zeroInt()
 	}
-	let (_, base0) = a.DivMod(mod)
+	mut baseIn = a
+	if e.Sign() < 0 {
+		// x**y mod m with y < 0 is (x**-1)**|y| mod m.
+		let inv = a.ModInverse(mod)
+		if inv == nil {
+			panic("abacus: Exp: the base has no inverse modulo the modulus")
+		}
+		baseIn = inv
+	}
+	let (_, base0) = baseIn.DivMod(mod)
 	mut base = base0
 	mut result = Int{neg: false, limbs: []u64{1}}
-	mut ee = e
+	mut ee = e.Abs()
 	for !ee.IsZero() {
 		if ee.limbs[0]&1 == 1 {
 			let (_, r) = result.Mul(base).DivMod(mod)

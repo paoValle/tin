@@ -48,6 +48,14 @@ fn convU64(v abacus.Int) str {
 	return say.Fmt("%d/%s", u64(x), boolText(ok))
 }
 
+// modinvText prints an optional inverse.
+fn modinvText(m ?abacus.Int) str {
+	if let x = m {
+		return x.Str()
+	}
+	return "none"
+}
+
 fn fbits(f f64) str {
 	return say.Fmt("%016x", gauge.F64bits(f))
 }
@@ -136,6 +144,42 @@ fn main() {
 	say.Line("expmod", abacus.FromI64(3).Exp(abacus.FromI64(100), abacus.FromI64(7)).Str())
 	say.Line("expmod big", big("12345678901234567890").Exp(abacus.FromI64(65537), big("1000000007")).Str())
 	say.Line("exp zero", abacus.FromI64(5).Exp(zero, zero).Str(), abacus.FromI64(5).Exp(zero, abacus.FromI64(7)).Str())
+
+	// Bit operations: two's complement semantics, the shifts, sqrt, gcd and the modular inverse.
+	let bit1 = big("0xdeadbeefdeadbeefdeadbeef")
+	let bit2 = big("0x1234567890abcdef")
+	say.Line("and", bit1.And(bit2).Text(16), bit1.Or(bit2).Text(16), bit1.Xor(bit2).Text(16))
+	say.Line("not", bit1.Not().Text(16), abacus.FromI64(-1).Not().Str(), zero.Not().Str())
+	let negb = bit1.Neg()
+	let negc = bit1.Neg().Sub(abacus.FromI64(3))
+	say.Line("bits neg", negb.And(bit2).Text(16), negb.Or(bit2).Text(16), negb.Xor(bit2).Text(16))
+	say.Line("bits both neg", negb.And(negc).Text(16), negb.Or(negc).Text(16), negb.Xor(negc).Text(16))
+	say.Line("lsh", abacus.FromI64(1).Lsh(200).Text(16), bit1.Lsh(65).Text(16)[0:8], abacus.FromI64(-3).Lsh(4).Str())
+	say.Line("rsh", big("0xffffffffffffffffffff").Rsh(64).Text(16), abacus.FromI64(-100).Rsh(3).Str(), bit1.Rsh(200).Str())
+	let shpanic = guard {
+		let _ = abacus.FromI64(1).Lsh(-1)
+		false
+	} catch err {
+		fault.Is(err, fault.Panic)
+	}
+	say.Line("shift panic", shpanic)
+	let sq = big("100000000000000000000000000000000000000000000000000").Sqrt()
+	let exact = big("123456789012345678901234567890")
+	say.Line("sqrt", sq.Str(), exact.Mul(exact).Sqrt().Cmp(exact), sq.Mul(sq).Cmp(big("100000000000000000000000000000000000000000000000000")) <= 0)
+	let sqpanic = guard {
+		let _ = abacus.FromI64(-1).Sqrt()
+		false
+	} catch err {
+		fault.Is(err, fault.Panic)
+	}
+	say.Line("sqrt panic", sqpanic)
+	say.Line("gcd", big("123456789012345678901234567890").Gcd(big("98765432109876543210")).Str(),
+		zero.Gcd(zero).Str(), zero.Gcd(abacus.FromI64(5)).Str(), abacus.FromI64(-12).Gcd(abacus.FromI64(18)).Str())
+	say.Line("modinv", modinvText(abacus.FromI64(3).ModInverse(abacus.FromI64(7))),
+		modinvText(big("12345678901234567890").ModInverse(big("1000000007"))),
+		modinvText(abacus.FromI64(4).ModInverse(abacus.FromI64(8))))
+	say.Line("exp neg", abacus.FromI64(3).Exp(abacus.FromI64(-1), abacus.FromI64(7)).Str(),
+		abacus.FromI64(2).Exp(abacus.FromI64(-3), abacus.FromI64(1000000007)).Str())
 
 	// Conversions.
 	say.Line("i64", convI64(maxi), convI64(mini), convI64(p64), convI64(maxi.Add(one)))

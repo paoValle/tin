@@ -57,7 +57,7 @@ def main():
             if ops is None:
                 ops = names
             assert names == ops, 'abacus: the operation set changed between batches'
-        assert len(ops) == 16, f'abacus: {len(ops)} operations, want 16'
+        assert len(ops) == 25, f'abacus: {len(ops)} operations, want 25'
         print(f'PASS abacus: {len(ops)} operations on {PAIRS} operand pairs in '
               f'{PAIRS // BATCH} batches match Go\'s math/big ({", ".join(ops)})')
 

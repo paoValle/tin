@@ -119,7 +119,8 @@ func main() {
 		}
 	}
 	ops := []string{"add", "sub", "mul", "cmp", "text10", "text16", "text36", "bytes", "i64", "u64", "f64",
-		"quo", "rem", "div", "mod", "exp"}
+		"quo", "rem", "div", "mod", "exp",
+		"and", "or", "xor", "not", "lsh", "rsh", "sqrt", "gcd", "modinv"}
 	hash := make(map[string]*hasher, len(ops))
 	for _, op := range ops {
 		hash[op] = &hasher{h: 14695981039346656037}
@@ -150,7 +151,26 @@ func main() {
 		} else {
 			xp = new(big.Int).Exp(a, e, m)
 		}
+		shift := new(big.Int).Mod(new(big.Int).Abs(b), big.NewInt(200))
+		var inv string
+		mi := new(big.Int).Mod(new(big.Int).Abs(b), new(big.Int).Lsh(big.NewInt(1), 256))
+		if mi.Cmp(big.NewInt(2)) < 0 {
+			inv = "skip"
+		} else if x := new(big.Int).ModInverse(a, mi); x == nil {
+			inv = "none"
+		} else {
+			inv = hexInt(x)
+		}
 		results := map[string]string{
+			"and":    hexInt(new(big.Int).And(a, b)),
+			"or":     hexInt(new(big.Int).Or(a, b)),
+			"xor":    hexInt(new(big.Int).Xor(a, b)),
+			"not":    hexInt(new(big.Int).Not(a)),
+			"lsh":    hexInt(new(big.Int).Lsh(a, uint(shift.Uint64()))),
+			"rsh":    hexInt(new(big.Int).Rsh(a, uint(shift.Uint64()))),
+			"sqrt":   hexInt(new(big.Int).Sqrt(new(big.Int).Abs(a))),
+			"gcd":    hexInt(new(big.Int).GCD(nil, nil, a, b)),
+			"modinv": inv,
 			"quo":    hexInt(q),
 			"rem":    hexInt(r),
 			"div":    hexInt(dd),

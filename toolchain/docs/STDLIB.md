@@ -78,14 +78,14 @@ Package argo writes JSON. argo.Put(b, v) appends v to the []u8 buffer b; the com
 
 ## io
 
-Package io declares the streaming shapes: a type satisfies Reader, Writer, Closer or Seeker by having the methods, with no declaration, and compositions like ReadWriteCloser by satisfying every listed shape. The helpers (Copy, ReadAll, Pipe, MultiWriter, ...) and EOF as a sentinel fault land with the io port (roadmap #141); the byte, rune and string shapes (ByteReader, RuneReader, StringWriter, ...) and Go's ReaderFrom and WriterTo (which need dyn) are not declared yet.
+Package io declares the streaming shapes: a type satisfies Reader, Writer, Closer or Seeker by having the methods, with no declaration, and compositions like ReadWriteCloser by satisfying every listed shape. The helpers (Copy, ReadAll, Pipe, MultiWriter, ...) and EOF as a sentinel fault land with the io port (roadmap #141); the byte, rune and string shapes (ByteReader, RuneReader, StringWriter, ...) and Go's ReaderFrom and WriterTo (which need dyn) are not declared yet. Reading, writing, closing and seeking change the stream, so those methods are mut (#644): a type's method may take its receiver mut, and a call through a dyn value needs a mut one (w mut dyn io.Writer).
 
-- `shape Reader { Read(buf mut []u8) !i64 }`: Reader is anything with Read: it fills buf and returns how many bytes it wrote.
-- `shape Writer { Write(data []u8) !i64 }`: Writer is anything with Write: it takes data and returns how many bytes it took.
-- `shape Closer { Close() !i64 }`: Closer is anything with Close.
-- `shape Seeker { Seek(offset i64, whence i64) !i64 }`: Seeker is anything with Seek: offset is relative to whence (0 start, 1 current, 2 end).
+- `shape Reader { mut Read(buf mut []u8) !i64 }`: Reader is anything with Read: it fills buf and returns how many bytes it wrote.
+- `shape Writer { mut Write(data []u8) !i64 }`: Writer is anything with Write: it takes data and returns how many bytes it took.
+- `shape Closer { mut Close() !i64 }`: Closer is anything with Close.
+- `shape Seeker { mut Seek(offset i64, whence i64) !i64 }`: Seeker is anything with Seek: offset is relative to whence (0 start, 1 current, 2 end).
 - `shape ReaderAt { ReadAt(buf mut []u8, off i64) !i64 }`: ReaderAt is a reader that does not move a position: it reads at off.
-- `shape WriterAt { WriteAt(data []u8, off i64) !i64 }`: WriterAt is a writer that does not move a position: it writes at off.
+- `shape WriterAt { mut WriteAt(data []u8, off i64) !i64 }`: WriterAt is a writer that does not move a position: it writes at off.
 - `shape ReadWriter`: ReadWriter reads and writes.
 - `shape ReadCloser`: ReadCloser reads and closes.
 - `shape WriteCloser`: WriteCloser writes and closes.
@@ -1250,10 +1250,19 @@ It is not constant-time: use seal for cryptography. There is no formatting hook 
 - `Parse(s str, base i64) !Int`: Parse returns the value of s, like Go's big.Int.SetString: base 2 to 36, or 0 to read a prefix (0x and 0X for 16, 0o and 0O for 8, 0b and 0B for 2, a leading 0 for 8, otherwise 10). The string may start with + or -.
 - `(a Int) Str() str`: Str returns the decimal value.
 - `(a Int) Text(base i64) str`: Text returns the value in the given base, 2 to 36.
+- `(a Int) Not() Int`: Not returns ^a, which is -a-1.
+- `(a Int) And(b Int) Int`: And returns a & b.
+- `(a Int) Or(b Int) Int`: Or returns a | b.
+- `(a Int) Xor(b Int) Int`: Xor returns a ^ b.
+- `(a Int) Lsh(n i64) Int`: Lsh returns a << n, like Go's Int.Lsh; a negative shift panics.
+- `(a Int) Rsh(n i64) Int`: Rsh returns a >> n, the arithmetic shift (floor division by 2^n), like Go's Int.Rsh; a negative shift panics.
 - `(a Int) QuoRem(b Int) (Int, Int)`: QuoRem returns the truncated quotient and remainder of a/b, like Go's QuoRem: the quotient is rounded toward zero and r = a - q*b, so the remainder has a's sign. Division by zero panics.
 - `(a Int) DivMod(b Int) (Int, Int)`: DivMod returns the Euclidean quotient and remainder, like Go's DivMod: q = a div b and r = a - q*b with 0 <= r < |b|. Division by zero panics.
 - `(a Int) Mod(b Int) Int`: Mod returns the Euclidean remainder of a/b, like Go's Mod (0 <= r < |b|).
-- `(a Int) Exp(e Int, m Int) Int`: Exp returns a**e, or a**e mod |m| when m is not zero, like Go's Exp: the sign of m is ignored and e <= 0 gives 1 for a plain power. A negative exponent with a modulus needs ModInverse, the third step of #577, and panics until then.
+- `(a Int) Exp(e Int, m Int) Int`: Exp returns a**e, or a**e mod |m| when m is not zero, like Go's Exp: the sign of m is ignored, e <= 0 gives 1 for a plain power, and a negative exponent with a modulus uses the base's modular inverse (panicking when there is none, where Go returns nil).
+- `(a Int) Sqrt() Int`: Sqrt returns the floor of the square root of a, like Go's Int.Sqrt; a negative value panics.
+- `(a Int) Gcd(b Int) Int`: Gcd returns the greatest common divisor of a and b, always non-negative, like Go's Int.GCD; Gcd(0, 0) is 0.
+- `(a Int) ModInverse(m Int) ?Int`: ModInverse returns the multiplicative inverse of a modulo m (m's sign is ignored), like Go's Int.ModInverse: the result x with a*x == 1 (mod m), or nil when a and m are not coprime. A modulus of 1 or less panics.
 
 ## seal
 
@@ -1269,6 +1278,7 @@ Package seal has cryptographic hashes (SHA-256, SHA-384, SHA-512, SHA-1, SHA3-25
 - `(a mut AEAD) Rekey(key secret []u8) !`: Rekey replaces a's key with key, of the same algorithm and length, reusing a's memory: an AEAD kept in long-lived memory (a connection's state) can change keys without allocating there.
 - `AESHardware() bool`: AESHardware reports whether AES-GCM runs on the CPU's AES instructions here (AES-NI and PCLMULQDQ, or ARMv8 AES and PMULL); without them it runs a slower constant-time software path and ChaCha20-Poly1305 is the faster choice.
 - `NewAESGCM(key secret []u8) !AEAD`: NewAESGCM is AES-GCM (16-byte tags, 12-byte nonces) with a 16-, 24- or 32-byte key (AES-128, AES-192 or AES-256).
+- `ArithDigest() str`: ArithDigest is the SHA-256 of the results of seal's multi-word arithmetic on a fixed set of operands (#488): the Montgomery multiplication and squaring for n = 2 to 48 limbs over random moduli and moduli of all-one limbs, with operands 0, 1, m-1, all-ones limbs and random values, z aliasing x and y; and the X25519 field multiplication and squaring on limbs of every size up to 2^52 - 1. Where the CPU's assembly (mont_mul, m4_mont, fe_mul_hw, fe_sq_hw) is in use the digest must equal the portable code's (run with TIN_SEAL_SOFT=1): the test pins the value.
 - `ChaCha20(key secret []u8, nonce []u8, counter u32, data []u8) ![]u8`: ChaCha20 XORs data with the ChaCha20 keystream (RFC 8439) for a 32-byte key, a 12-byte nonce and the initial block counter.
 - `ParseRSAPublicKeyDER(der []u8) !RSAPublicKey`: ParseRSAPublicKeyDER reads a DER RSAPublicKey (PKCS #1) or SubjectPublicKeyInfo holding one.
 - `VerifyECDSA(curve str, pub []u8, digest []u8, sig []u8) !`: VerifyECDSA checks a DER-encoded ECDSA signature over digest (a hash of the message) by the public key pub, an uncompressed point on curve ("P-256" or "P-384"). A digest longer than the curve's order is truncated to its leftmost bytes, as FIPS 186-5 says.
@@ -1446,7 +1456,7 @@ Package constraints contains the named generic constraints used by the standard 
 
 Package policy is the with policies (design_semantics §7.1, design/interface_policy.md): with p { body } calls p.Run(body) inside a boundary of its own, with the block as body. Slots are typed ambient values that Bind binds for a block and the tasks it spawns; Retry, Trace and Cached are the library policies.
 
-- `shape Policy[T constraints.Any] { Run(body fn() !T) !T }`: Policy is what with p { body } needs of p: Run runs body (any number of times) and gives the block's value. Run may only call body, or pass it to a function that only calls it.
+- `shape Policy[T constraints.Any] { mut Run(body fn() !T) !T }`: Policy is what with p { body } needs of p: Run runs body (any number of times) and gives the block's value. Run may only call body, or pass it to a function that only calls it. Run is mut (#644): a policy may keep state between runs (CachedPolicy).
 - `type Slot[T constraints.Any] struct`: Slot is a typed ambient value: with policy.Bind(s, v) { } binds it for the block and the tasks the block spawns.
 - `NewSlot[T constraints.Any](name str) Slot[T]`: NewSlot makes a slot named name; declare it once, in a package-level let (one per core).
 - `(s Slot[T]) Name() str`: Name is the slot's name.

@@ -73,6 +73,12 @@ fn operand(i i64) abacus.Int {
 	return randInt(bits)
 }
 
+// i64Of returns a small non-negative Int as an i64.
+fn i64Of(v abacus.Int) i64 {
+	let (x, _) = v.I64()
+	return x
+}
+
 // pow2 returns 2^n.
 fn pow2(n i64) abacus.Int {
 	mut v = abacus.FromI64(1)
@@ -167,7 +173,8 @@ fn main() {
 		}
 	}
 	let ops = []str{"add", "sub", "mul", "cmp", "text10", "text16", "text36", "bytes", "i64", "u64", "f64",
-		"quo", "rem", "div", "mod", "exp"}
+		"quo", "rem", "div", "mod", "exp",
+		"and", "or", "xor", "not", "lsh", "rsh", "sqrt", "gcd", "modinv"}
 	mut hashes = make([]u64, len(ops))
 	for i in 0..len(ops) {
 		hashes[i] = 14695981039346656037
@@ -198,6 +205,18 @@ fn main() {
 		} else {
 			xp = a.Exp(e, m)
 		}
+		let shift = b.Abs().Mod(abacus.FromI64(200))
+		let nshift = i64Of(shift)
+		mut inv = "skip"
+		let mi = b.Abs().Mod(pow2(256))
+		if mi.Cmp(abacus.FromI64(2)) >= 0 {
+			let x = a.ModInverse(mi)
+			if x == nil {
+				inv = "none"
+			} else {
+				inv = hexInt(x)
+			}
+		}
 		let results = []str{
 			hexInt(a.Add(b)),
 			hexInt(a.Sub(b)),
@@ -215,6 +234,15 @@ fn main() {
 			hexInt(dd),
 			hexInt(mm),
 			hexInt(xp),
+			hexInt(a.And(b)),
+			hexInt(a.Or(b)),
+			hexInt(a.Xor(b)),
+			hexInt(a.Not()),
+			hexInt(a.Lsh(nshift)),
+			hexInt(a.Rsh(nshift)),
+			hexInt(a.Abs().Sqrt()),
+			hexInt(a.Gcd(b)),
+			inv,
 		}
 		for k in 0..len(ops) {
 			if dump {
