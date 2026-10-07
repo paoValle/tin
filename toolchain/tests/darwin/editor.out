@@ -125,3 +125,61 @@ fn main() {
 }
 
   let z=2,3
+diags: 0
+--- editor_nav.tin row 7 col 4 dirty false
+package main
+
+import "say"
+import "twine"
+
+// helper doubles its argument.
+fn helper(x i64) i64 {
+	return x * 2
+}
+
+fn main() {
+	let parts = twine.Split("a,b", ",")
+	say.Line(helper(21), len(parts))
+}
+
+info: fn helper(x i64) i64 | helper doubles its argument.
+--- editor_nav.tin row 13 col 13 dirty false
+package main
+
+import "say"
+import "twine"
+
+// helper doubles its argument.
+fn helper(x i64) i64 {
+	return x * 2
+}
+
+fn main() {
+	let parts = twine.Split("a,b", ",")
+	say.Line(helper(21), len(parts))
+}
+
+complete Split true true
+complete Join true true
+complete NoSuchName false true
+complete Join true true
+--- editor_nav.tin row 14 col 13 dirty true
+package main
+
+import "say"
+import "twine"
+
+// helper doubles its argument.
+fn helper(x i64) i64 {
+	return x * 2
+}
+
+fn main() {
+	let parts = twine.Split("a,b", ",")
+	say.Line(helper(21), len(parts))
+		twine.Join
+}
+
+in twine.tin
+at editor_nav.tin 12 22
+message: switched to toolchain/tests/darwin/editor_nav.tin

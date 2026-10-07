@@ -4,6 +4,8 @@ import "mint"
 import "quarry"
 import "say"
 import "tide"
+import "tinjson"
+import "tinsym"
 import "twine"
 
 // tin lsp: a language server for Tin over standard input and output (LSP 3.17, full document sync). Diagnostics come
@@ -11,42 +13,11 @@ import "twine"
 // run of `tinc -symbols -json` per change, with the editor's unsaved text as an overlay (toolchain/docs/TOOLING.md 3.1
 // and 3.3). The compiler is $TINLSP_TINC, else $TIN_ROOT/bin/tinc.
 
-// Sym is one declaration of `tinc -symbols`.
-type Sym struct {
-	kind     str
-	name     str
-	pkg      str
-	file     str
-	line     i64
-	col      i64
-	endCol   i64
-	recv     str
-	exported bool
-	sig      str
-	doc      str
-	members  []Member
-}
-
-type Member struct {
-	name   str
-	detail str
-}
-
-// Diag is one error of `tinc -check -json`.
-type Diag struct {
-	line    i64
-	col     i64
-	endLine i64
-	endCol  i64
-	code    str
-	message str
-}
-
 // Server is everything the server remembers: the open documents and what the compiler said about each.
 type Server struct {
 	tinc     str
 	docs     map[str]str
-	syms     map[str][]Sym
+	syms     map[str][]tinsym.Sym
 	counter  i64
 	dir      str // a directory only this user can use, for the text of the documents being checked ("" when there is none)
 	shutdown bool
@@ -133,26 +104,26 @@ fn send(body str) {
 	rt_flush()
 }
 
-fn idJson(id J) str {
-	if id.kind == jNumber {
-		return mint.Itoa(id.int())
+fn idJson(id tinjson.J) str {
+	if id.IsNumber() {
+		return mint.Itoa(id.Int())
 	}
-	if id.kind == jString {
-		return quote(id.s)
+	if id.IsString() {
+		return tinjson.Quote(id.Text())
 	}
 	return "null"
 }
 
-fn reply(id J, result str) {
+fn reply(id tinjson.J, result str) {
 	send("{{\"jsonrpc\":\"2.0\",\"id\":" + idJson(id) + ",\"result\":" + result + "}}")
 }
 
-fn replyError(id J, code i64, message str) {
-	send("{{\"jsonrpc\":\"2.0\",\"id\":" + idJson(id) + ",\"error\":{{\"code\":" + mint.Itoa(code) + ",\"message\":" + quote(message) + "}}}}")
+fn replyError(id tinjson.J, code i64, message str) {
+	send("{{\"jsonrpc\":\"2.0\",\"id\":" + idJson(id) + ",\"error\":{{\"code\":" + mint.Itoa(code) + ",\"message\":" + tinjson.Quote(message) + "}}}}")
 }
 
 fn notify(method str, params str) {
-	send("{{\"jsonrpc\":\"2.0\",\"method\":" + quote(method) + ",\"params\":" + params + "}}")
+	send("{{\"jsonrpc\":\"2.0\",\"method\":" + tinjson.Quote(method) + ",\"params\":" + params + "}}")
 }
 
 // ---- text helpers ----
@@ -170,8 +141,8 @@ fn uriToPath(uri str) str {
 	mut out = []u8{}
 	mut i = 0
 	for i < len(s) {
-		if s[i] == '%' && i + 2 < len(s) + 0 && hexVal(s[i + 1]) >= 0 && hexVal(s[i + 2]) >= 0 {
-			out = append(out, u8(hexVal(s[i + 1]) * 16 + hexVal(s[i + 2])))
+		if s[i] == '%' && i + 2 < len(s) + 0 && tinjson.HexVal(s[i + 1]) >= 0 && tinjson.HexVal(s[i + 2]) >= 0 {
+			out = append(out, u8(tinjson.HexVal(s[i + 1]) * 16 + tinjson.HexVal(s[i + 2])))
 			i += 3
 		} else {
 			out = append(out, s[i])
@@ -254,25 +225,9 @@ fn byteCol(line str, units i64) i64 {
 	return i
 }
 
-// dirOf is the directory part of a path.
-fn dirOf(path str) str {
-	let slash = twine.LastIndex(path, "/")
-	if slash < 0 {
-		return "."
-	}
-	return path[:slash]
-}
-
+// lineOf is line n (0-based) of the text.
 fn lineOf(text str, n i64) str {
-	let lines = twine.Split(text, "\n")
-	if n < 0 || n >= len(lines) {
-		return ""
-	}
-	let l = lines[n]
-	if len(l) > 0 && l[len(l) - 1] == '\r' {
-		return l[:len(l) - 1]
-	}
-	return l
+	return tinsym.LineOf(text, n)
 }
 
 // position is a JSON position {line, character} for 1-based line and byte column col of text.
@@ -310,42 +265,26 @@ fn (s mut Server) overlayPath() str {
 	return s.dir + "/buf-" + mint.Itoa(s.counter % 4) + ".tin"
 }
 
-// check runs the compiler on the document and keeps its symbols; it returns the diagnostics.
-fn (s mut Server) check(path str) []Diag {
+// check runs the compiler on the document and keeps its symbols; it returns the document's errors.
+fn (s mut Server) check(path str) []tinsym.Diag {
 	let text = s.docs[path]
 	let tmp = s.overlayPath()
 	mut argv = []str{s.tinc, "-symbols", "-json"}
 	if len(tmp) > 0 {
 		quarry.WriteFile(tmp, text) catch _ {
-			return []Diag{}
+			return []tinsym.Diag{}
 		}
 		argv = append(argv, "-overlay")
 		argv = append(argv, path + "=" + tmp)
 	}
 	argv = append(argv, path)
 	let (code, out) = run(argv)
-	mut diags = []Diag{}
-	mut syms = []Sym{}
-	for line in twine.Split(out, "\n") {
-		if len(line) < 2 || line[0] != '{' {
-			continue
+	let (syms, all) = tinsym.Parse(out)
+	mut diags = []tinsym.Diag{}
+	for d in all {
+		if d.File == path {
+			diags = append(diags, d)
 		}
-		let (j, ok) = parseJson(line)
-		if !ok {
-			continue
-		}
-		if j.get("severity").kind == jString {
-			if j.get("file").text() == path {
-				diags = append(diags, Diag{line: j.get("line").int(), col: j.get("col").int(), endLine: j.get("endLine").int(), endCol: j.get("endCol").int(), code: j.get("code").text(), message: j.get("message").text()})
-			}
-			continue
-		}
-		let mem = j.get("members")
-		mut members = []Member{}
-		for k in 0..len(mem.items) {
-			members = append(members, Member{name: mem.items[k].get("name").text(), detail: mem.items[k].get("detail").text()})
-		}
-		syms = append(syms, Sym{kind: j.get("kind").text(), name: j.get("name").text(), pkg: j.get("pkg").text(), file: j.get("file").text(), line: j.get("line").int(), col: j.get("col").int(), endCol: j.get("endCol").int(), recv: j.get("recv").text(), exported: j.get("exported").b, sig: j.get("sig").text(), doc: j.get("doc").text(), members: members})
 	}
 	// a file that does not parse gives no declarations: keep the last ones
 	if len(syms) > 0 || code == 0 {
@@ -359,20 +298,20 @@ fn (s mut Server) publish(path str) {
 	let text = s.docs[path]
 	mut items = []str{}
 	for d in diags {
-		mut endLine = d.endLine
-		mut endCol = d.endCol
-		if d.line == 0 {
+		mut endLine = d.EndLine
+		mut endCol = d.EndCol
+		if d.Line == 0 {
 			// an error with no place belongs to the top of the file
-			items = append(items, "{{\"range\":{{\"start\":{{\"line\":0,\"character\":0}},\"end\":{{\"line\":0,\"character\":0}}}},\"severity\":1,\"code\":" + quote(d.code) + ",\"source\":\"tinc\",\"message\":" + quote(d.message) + "}}")
+			items = append(items, "{{\"range\":{{\"start\":{{\"line\":0,\"character\":0}},\"end\":{{\"line\":0,\"character\":0}}}},\"severity\":1,\"code\":" + tinjson.Quote(d.Code) + ",\"source\":\"tinc\",\"message\":" + tinjson.Quote(d.Message) + "}}")
 			continue
 		}
 		if endLine == 0 {
-			endLine = d.line
-			endCol = d.col + 1
+			endLine = d.Line
+			endCol = d.Col + 1
 		}
-		items = append(items, "{{\"range\":{{\"start\":" + position(text, d.line, d.col) + ",\"end\":" + position(text, endLine, endCol) + "}},\"severity\":1,\"code\":" + quote(d.code) + ",\"source\":\"tinc\",\"message\":" + quote(d.message) + "}}")
+		items = append(items, "{{\"range\":{{\"start\":" + position(text, d.Line, d.Col) + ",\"end\":" + position(text, endLine, endCol) + "}},\"severity\":1,\"code\":" + tinjson.Quote(d.Code) + ",\"source\":\"tinc\",\"message\":" + tinjson.Quote(d.Message) + "}}")
 	}
-	notify("textDocument/publishDiagnostics", "{{\"uri\":" + quote(pathToUri(path)) + ",\"diagnostics\":[" + twine.Join(items, ",") + "]}}")
+	notify("textDocument/publishDiagnostics", "{{\"uri\":" + tinjson.Quote(pathToUri(path)) + ",\"diagnostics\":[" + twine.Join(items, ",") + "]}}")
 }
 
 // ---- language features ----
@@ -412,201 +351,51 @@ fn completionKind(k str) i64 {
 	if k == "const" {
 		return 21
 	}
+	if k == "field" {
+		return 5
+	}
+	if k == "package" {
+		return 9
+	}
+	if k == "keyword" {
+		return 14
+	}
 	return 6
 }
 
-fn (s Server) location(sym Sym) str {
+fn (s Server) location(sym tinsym.Sym) str {
 	mut text = ""
-	if s.docs[sym.file] != "" {
-		text = s.docs[sym.file]
+	if s.docs[sym.File] != "" {
+		text = s.docs[sym.File]
 	}
-	mut start = "{{\"line\":" + mint.Itoa(sym.line - 1) + ",\"character\":" + mint.Itoa(sym.col - 1) + "}}"
-	mut end = "{{\"line\":" + mint.Itoa(sym.line - 1) + ",\"character\":" + mint.Itoa(sym.endCol - 1) + "}}"
+	mut start = "{{\"line\":" + mint.Itoa(sym.Line - 1) + ",\"character\":" + mint.Itoa(sym.Col - 1) + "}}"
+	mut end = "{{\"line\":" + mint.Itoa(sym.Line - 1) + ",\"character\":" + mint.Itoa(sym.EndCol - 1) + "}}"
 	if len(text) > 0 {
-		start = position(text, sym.line, sym.col)
-		end = position(text, sym.line, sym.endCol)
+		start = position(text, sym.Line, sym.Col)
+		end = position(text, sym.Line, sym.EndCol)
 	}
-	return "{{\"uri\":" + quote(pathToUri(sym.file)) + ",\"range\":{{\"start\":" + start + ",\"end\":" + end + "}}}}"
+	return "{{\"uri\":" + tinjson.Quote(pathToUri(sym.File)) + ",\"range\":{{\"start\":" + start + ",\"end\":" + end + "}}}}"
 }
 
-// wordAt is the identifier around (line, character) of the text and where it starts and ends in its line (bytes).
-fn wordAt(text str, line i64, character i64) (str, i64, i64) {
-	let l = lineOf(text, line)
-	let at = byteCol(l, character)
-	mut from = at
-	mut to = at
-	for from > 0 && isWordByte(l[from - 1]) {
-		from -= 1
-	}
-	for to < len(l) && isWordByte(l[to]) {
-		to += 1
-	}
-	return l[from:to], from, to
-}
-
-// importsOf are the package names the text imports (the last element of each import path).
-fn importsOf(text str) []str {
-	mut out = []str{}
-	for l in twine.Split(text, "\n") {
-		let t = twine.TrimSpace(l)
-		if twine.HasPrefix(t, "import \"") {
-			let rest = t[8:]
-			let q = twine.Index(rest, "\"")
-			if q > 0 {
-				let p = rest[:q]
-				let slash = twine.LastIndex(p, "/")
-				out = append(out, p[slash + 1:])
-			}
-		}
-	}
-	return out
-}
-
-// currentPkg is the package of the document: "" for main, as the compiler names it.
-fn currentPkg(text str) str {
-	for l in twine.Split(text, "\n") {
-		let t = twine.TrimSpace(l)
-		if twine.HasPrefix(t, "package ") {
-			let name = twine.TrimSpace(t[8:])
-			if name == "main" {
-				return ""
-			}
-			return name
-		}
-	}
-	return ""
-}
-
-// resolve is the declarations the word at the position can mean: after pkg. the exported names of that package,
-// after anything else. a method of that name, otherwise a name of the document's package (or any package).
-fn (s Server) resolve(path str, line i64, character i64) []Sym {
+// resolve is the declarations the word at the position (UTF-16 column character) can mean.
+fn (s Server) resolve(path str, line i64, character i64) []tinsym.Sym {
 	let text = s.docs[path]
-	let (word, from, to) = wordAt(text, line, character)
-	mut found = []Sym{}
-	if len(word) == 0 {
-		return found
-	}
-	let l = lineOf(text, line)
-	let all = s.syms[path]
-	if from > 0 && l[from - 1] == '.' {
-		// a qualified name: the identifier before the dot
-		mut q = from - 1
-		let qend = q
-		for q > 0 && isWordByte(l[q - 1]) {
-			q -= 1
-		}
-		let qualifier = l[q:qend]
-		let imports = importsOf(text)
-		mut isPackage = false
-		for p in imports {
-			if p == qualifier {
-				isPackage = true
-			}
-		}
-		for sym in all {
-			if isPackage && sym.pkg == qualifier && sym.name == word && sym.recv == "" {
-				found = append(found, sym)
-			} else if !isPackage && sym.kind == "method" && sym.name == word {
-				found = append(found, sym)
-			}
-		}
-		return found
-	}
-	let pkg = currentPkg(text)
-	let dir = dirOf(path)
-	for sym in all {
-		if sym.name == word && sym.recv == "" && sym.pkg == pkg && dirOf(sym.file) == dir {
-			found = append(found, sym)
-		}
-	}
-	if len(found) == 0 {
-		for sym in all {
-			if sym.name == word && sym.recv == "" {
-				found = append(found, sym)
-			}
-		}
-	}
-	return found
+	return tinsym.Resolve(s.syms[path], path, text, line, byteCol(lineOf(text, line), character))
 }
 
-fn (s Server) hover(sym Sym) str {
-	mut md = "```tin\n" + sym.sig + "\n```"
-	if len(sym.doc) > 0 {
-		md = md + "\n\n" + sym.doc
+fn (s Server) hover(sym tinsym.Sym) str {
+	mut md = "```tin\n" + sym.Sig + "\n```"
+	if len(sym.Doc) > 0 {
+		md = md + "\n\n" + sym.Doc
 	}
-	return "{{\"contents\":{{\"kind\":\"markdown\",\"value\":" + quote(md) + "}}}}"
+	return "{{\"contents\":{{\"kind\":\"markdown\",\"value\":" + tinjson.Quote(md) + "}}}}"
 }
-
-const keywords = "break case catch const continue default defer detach else enum extern fail fn for go guard if import keep let limit map match mut package parallel range return secret shared struct switch try type var while within use on shape"
 
 fn (s Server) completion(path str, line i64, character i64) str {
 	let text = s.docs[path]
-	let l = lineOf(text, line)
-	let at = byteCol(l, character)
-	// the word being typed, and what comes before it
-	mut from = at
-	for from > 0 && isWordByte(l[from - 1]) {
-		from -= 1
-	}
-	let all = s.syms[path]
 	mut items = []str{}
-	mut seen = map[str]bool{}
-	if from > 0 && l[from - 1] == '.' {
-		mut q = from - 1
-		let qend = q
-		for q > 0 && isWordByte(l[q - 1]) {
-			q -= 1
-		}
-		let qualifier = l[q:qend]
-		mut isPackage = false
-		for p in importsOf(text) {
-			if p == qualifier {
-				isPackage = true
-			}
-		}
-		for sym in all {
-			if isPackage && sym.pkg == qualifier && sym.exported && sym.recv == "" {
-				if !seen[sym.name] {
-					seen[sym.name] = true
-					items = append(items, "{{\"label\":" + quote(sym.name) + ",\"kind\":" + mint.Itoa(completionKind(sym.kind)) + ",\"detail\":" + quote(sym.sig) + "}}")
-				}
-			} else if !isPackage {
-				// a value's methods and fields: its type is not known here, so every method and every field
-				if sym.kind == "method" && !seen[sym.name] {
-					seen[sym.name] = true
-					items = append(items, "{{\"label\":" + quote(sym.name) + ",\"kind\":2,\"detail\":" + quote(sym.sig) + "}}")
-				}
-				if sym.kind == "type" {
-					for m in sym.members {
-						if !seen[m.name] {
-							seen[m.name] = true
-							items = append(items, "{{\"label\":" + quote(m.name) + ",\"kind\":5,\"detail\":" + quote(m.detail) + "}}")
-						}
-					}
-				}
-			}
-		}
-		return "{{\"isIncomplete\":false,\"items\":[" + twine.Join(items, ",") + "]}}"
-	}
-	let pkg = currentPkg(text)
-	let dir = dirOf(path)
-	for sym in all {
-		if sym.pkg == pkg && dirOf(sym.file) == dir && sym.recv == "" && sym.kind != "method" && !seen[sym.name] {
-			seen[sym.name] = true
-			items = append(items, "{{\"label\":" + quote(sym.name) + ",\"kind\":" + mint.Itoa(completionKind(sym.kind)) + ",\"detail\":" + quote(sym.sig) + "}}")
-		}
-	}
-	for p in importsOf(text) {
-		if !seen[p] {
-			seen[p] = true
-			items = append(items, "{{\"label\":" + quote(p) + ",\"kind\":9}}")
-		}
-	}
-	for k in twine.Split(keywords, " ") {
-		if !seen[k] {
-			seen[k] = true
-			items = append(items, "{{\"label\":" + quote(k) + ",\"kind\":14}}")
-		}
+	for it in tinsym.Complete(s.syms[path], path, text, line, byteCol(lineOf(text, line), character)) {
+		items = append(items, "{{\"label\":" + tinjson.Quote(it.Label) + ",\"kind\":" + mint.Itoa(completionKind(it.Kind)) + ",\"detail\":" + tinjson.Quote(it.Detail) + "}}")
 	}
 	return "{{\"isIncomplete\":false,\"items\":[" + twine.Join(items, ",") + "]}}"
 }
@@ -614,8 +403,8 @@ fn (s Server) completion(path str, line i64, character i64) str {
 fn (s Server) documentSymbols(path str) str {
 	mut items = []str{}
 	for sym in s.syms[path] {
-		if sym.file == path {
-			items = append(items, "{{\"name\":" + quote(sym.name) + ",\"kind\":" + mint.Itoa(symbolKind(sym.kind)) + ",\"location\":" + s.location(sym) + ",\"containerName\":" + quote(sym.recv) + "}}")
+		if sym.File == path {
+			items = append(items, "{{\"name\":" + tinjson.Quote(sym.Name) + ",\"kind\":" + mint.Itoa(symbolKind(sym.Kind)) + ",\"location\":" + s.location(sym) + ",\"containerName\":" + tinjson.Quote(sym.Recv) + "}}")
 		}
 	}
 	return "[" + twine.Join(items, ",") + "]"
@@ -626,8 +415,8 @@ fn (s Server) workspaceSymbols(query str) str {
 	let q = twine.ToLower(query)
 	for path, syms in s.syms {
 		for sym in syms {
-			if len(items) < 200 && sym.file == path && twine.Contains(twine.ToLower(sym.name), q) {
-				items = append(items, "{{\"name\":" + quote(sym.name) + ",\"kind\":" + mint.Itoa(symbolKind(sym.kind)) + ",\"location\":" + s.location(sym) + ",\"containerName\":" + quote(sym.recv) + "}}")
+			if len(items) < 200 && sym.File == path && twine.Contains(twine.ToLower(sym.Name), q) {
+				items = append(items, "{{\"name\":" + tinjson.Quote(sym.Name) + ",\"kind\":" + mint.Itoa(symbolKind(sym.Kind)) + ",\"location\":" + s.location(sym) + ",\"containerName\":" + tinjson.Quote(sym.Recv) + "}}")
 			}
 		}
 	}
@@ -636,11 +425,11 @@ fn (s Server) workspaceSymbols(query str) str {
 
 // ---- the loop ----
 
-fn (s mut Server) handle(msg J) bool {
-	let method = msg.get("method").text()
-	let id = msg.get("id")
-	let params = msg.get("params")
-	let td = params.get("textDocument")
+fn (s mut Server) handle(msg tinjson.J) bool {
+	let method = msg.Get("method").Text()
+	let id = msg.Get("id")
+	let params = msg.Get("params")
+	let td = params.Get("textDocument")
 	if method == "initialize" {
 		reply(id, "{{\"capabilities\":{{\"textDocumentSync\":1,\"documentSymbolProvider\":true,\"workspaceSymbolProvider\":true,\"definitionProvider\":true,\"hoverProvider\":true,\"completionProvider\":{{\"triggerCharacters\":[\".\"]}}}},\"serverInfo\":{{\"name\":\"tin lsp\",\"version\":\"1\"}}}}")
 	} else if method == "shutdown" {
@@ -649,50 +438,50 @@ fn (s mut Server) handle(msg J) bool {
 	} else if method == "exit" {
 		return false
 	} else if method == "textDocument/didOpen" {
-		let path = uriToPath(td.get("uri").text())
-		s.docs[path] = td.get("text").text()
+		let path = uriToPath(td.Get("uri").Text())
+		s.docs[path] = td.Get("text").Text()
 		s.publish(path)
 	} else if method == "textDocument/didChange" {
-		let path = uriToPath(td.get("uri").text())
-		let changes = params.get("contentChanges")
-		if len(changes.items) > 0 {
-			s.docs[path] = changes.items[len(changes.items) - 1].get("text").text()
+		let path = uriToPath(td.Get("uri").Text())
+		let changes = params.Get("contentChanges")
+		if changes.Len() > 0 {
+			s.docs[path] = changes.At(changes.Len() - 1).Get("text").Text()
 			s.publish(path)
 		}
 	} else if method == "textDocument/didSave" {
-		let path = uriToPath(td.get("uri").text())
+		let path = uriToPath(td.Get("uri").Text())
 		if s.docs[path] != "" {
 			s.publish(path)
 		}
 	} else if method == "textDocument/didClose" {
-		let path = uriToPath(td.get("uri").text())
-		notify("textDocument/publishDiagnostics", "{{\"uri\":" + quote(pathToUri(path)) + ",\"diagnostics\":[]}}")
+		let path = uriToPath(td.Get("uri").Text())
+		notify("textDocument/publishDiagnostics", "{{\"uri\":" + tinjson.Quote(pathToUri(path)) + ",\"diagnostics\":[]}}")
 	} else if method == "textDocument/documentSymbol" {
-		reply(id, s.documentSymbols(uriToPath(td.get("uri").text())))
+		reply(id, s.documentSymbols(uriToPath(td.Get("uri").Text())))
 	} else if method == "workspace/symbol" {
-		reply(id, s.workspaceSymbols(params.get("query").text()))
+		reply(id, s.workspaceSymbols(params.Get("query").Text()))
 	} else if method == "textDocument/definition" {
-		let path = uriToPath(td.get("uri").text())
-		let pos = params.get("position")
+		let path = uriToPath(td.Get("uri").Text())
+		let pos = params.Get("position")
 		mut locs = []str{}
-		for sym in s.resolve(path, pos.get("line").int(), pos.get("character").int()) {
+		for sym in s.resolve(path, pos.Get("line").Int(), pos.Get("character").Int()) {
 			locs = append(locs, s.location(sym))
 		}
 		reply(id, "[" + twine.Join(locs, ",") + "]")
 	} else if method == "textDocument/hover" {
-		let path = uriToPath(td.get("uri").text())
-		let pos = params.get("position")
-		let found = s.resolve(path, pos.get("line").int(), pos.get("character").int())
+		let path = uriToPath(td.Get("uri").Text())
+		let pos = params.Get("position")
+		let found = s.resolve(path, pos.Get("line").Int(), pos.Get("character").Int())
 		if len(found) == 0 {
 			reply(id, "null")
 		} else {
 			reply(id, s.hover(found[0]))
 		}
 	} else if method == "textDocument/completion" {
-		let path = uriToPath(td.get("uri").text())
-		let pos = params.get("position")
-		reply(id, s.completion(path, pos.get("line").int(), pos.get("character").int()))
-	} else if id.kind != jNull {
+		let path = uriToPath(td.Get("uri").Text())
+		let pos = params.Get("position")
+		reply(id, s.completion(path, pos.Get("line").Int(), pos.Get("character").Int()))
+	} else if !id.IsNull() {
 		replyError(id, -32601, "method not found: " + method)
 	}
 	return true
@@ -703,14 +492,14 @@ fn main() {
 	if len(tinc) == 0 {
 		tinc = quarry.Getenv("TIN_ROOT") + "/bin/tinc"
 	}
-	let s = Server{tinc: tinc, docs: map[str]str{}, syms: map[str][]Sym{}, counter: 0, dir: privateDir(), shutdown: false}
+	let s = Server{tinc: tinc, docs: map[str]str{}, syms: map[str][]tinsym.Sym{}, counter: 0, dir: privateDir(), shutdown: false}
 	let r = reader{buf: []u8{}, at: 0}
 	for {
 		let (body, ok) = r.message()
 		if !ok {
 			break
 		}
-		let (msg, valid) = parseJson(body)
+		let (msg, valid) = tinjson.Parse(body)
 		if !valid {
 			continue
 		}

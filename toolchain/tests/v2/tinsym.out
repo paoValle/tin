@@ -1,0 +1,16 @@
+true 3 1 x
+é🙂 true true true
+bad json: false
+"a\"b\\c\nd\te"
+6 1 E103 12 9 undefined: x
+Y i64 Point true
+plain: /p/main.tin:10 
+qualified: /lib/twine/twine.tin:7 
+method: /p/main.tin:20 
+inside the name: /lib/twine/twine.tin:7 
+nothing: 
+helper 1 7
+[twine] true geo
+after pkg: fn:Split 
+after dot: method:Dist field:X field:Y 
+plain: fn:helper type:Point package:twine keyword:break

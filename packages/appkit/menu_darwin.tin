@@ -7,6 +7,7 @@ package appkit
 const ModCmd = 1 << 20
 const ModShift = 1 << 17
 const ModAlt = 1 << 19
+const ModCtrl = 1 << 18
 
 // Menu is the menu bar being built and the queue of chosen items.
 type Menu struct {

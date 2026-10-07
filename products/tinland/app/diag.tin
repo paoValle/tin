@@ -3,71 +3,11 @@ package main
 import "appkit"
 import "mint"
 import "quarry"
+import "tinsym"
 import "twine"
 
 // Diagnostics: the compiler checks the text being edited (tinc -check -json with the buffer as an overlay) when typing
 // pauses, and the errors are underlined where they are, marked in the gutter, and explained in the status line.
-
-// Diag is one error: its place (1-based lines and byte columns, the end exclusive), its code and its message.
-type Diag struct {
-	Line    i64
-	Col     i64
-	EndLine i64
-	EndCol  i64
-	Code    str
-	Message str
-}
-
-// jsonValue is the value of "key" in one JSON object line of the compiler's diagnostics: a number as its digits, a
-// string unescaped ("" when the key is missing).
-fn jsonValue(obj str, key str) str {
-	let marker = "\"" + key + "\":"
-	let at = twine.Index(obj, marker)
-	if at < 0 {
-		return ""
-	}
-	mut i = at + len(marker)
-	if i < len(obj) && obj[i] == '"' {
-		i += 1
-		mut out = []u8{}
-		for i < len(obj) && obj[i] != '"' {
-			if obj[i] == '\\' && i + 1 < len(obj) {
-				i += 1
-				if obj[i] == 'n' {
-					out = append(out, '\n')
-				} else if obj[i] == 't' {
-					out = append(out, '\t')
-				} else {
-					out = append(out, obj[i])
-				}
-			} else {
-				out = append(out, obj[i])
-			}
-			i += 1
-		}
-		return str(out)
-	}
-	let from = i
-	for i < len(obj) && obj[i] >= '0' && obj[i] <= '9' {
-		i += 1
-	}
-	return obj[from:i]
-}
-
-// parseDiags reads the compiler's JSON lines, keeping the errors of file.
-fn parseDiags(text str, file str) []Diag {
-	mut out = []Diag{}
-	let lines = twine.Split(text, "\n")
-	mut i = 0
-	for i < len(lines) {
-		let obj = lines[i]
-		if len(obj) > 2 && obj[0] == '{' && jsonValue(obj, "file") == file {
-			out = append(out, Diag{Line: parseInt(jsonValue(obj, "line")), Col: parseInt(jsonValue(obj, "col")), EndLine: parseInt(jsonValue(obj, "endLine")), EndCol: parseInt(jsonValue(obj, "endCol")), Code: jsonValue(obj, "code"), Message: jsonValue(obj, "message")})
-		}
-		i += 1
-	}
-	return out
-}
 
 // tinRoot is the tree the compiler belongs to when it is <root>/bin/tinc ("" otherwise).
 fn tinRoot(compiler str) str {
@@ -77,14 +17,19 @@ fn tinRoot(compiler str) str {
 	return ""
 }
 
-// checkNow runs the compiler's check on the active buffer and keeps the errors it finds.
+// checkNow runs the compiler on the active buffer (tinc -symbols -json, with the unsaved text as an overlay) and keeps
+// the errors and the declarations it reports.
 fn (ed mut Editor) checkNow() {
 	ed.DiagFor = ed.Buf.Version
 	if !twine.HasSuffix(ed.Buf.Path, ".tin") {
-		ed.Diags = []Diag{}
+		ed.Diags = []tinsym.Diag{}
+		ed.Syms = []tinsym.Sym{}
 		return
 	}
-	let overlay = "/tmp/tinland-overlay.tin"
+	let overlay = ed.tmp("overlay.tin")
+	if len(overlay) == 0 {
+		return
+	}
 	quarry.WriteFile(overlay, ed.Buf.Text()) catch _ {
 		return
 	}
@@ -94,12 +39,23 @@ fn (ed mut Editor) checkNow() {
 	if len(root) > 0 {
 		env = "TIN_ROOT=" + quoted(root) + " "
 	}
-	let (code, out) = appkit.RunCapture(env + quoted(compiler) + " -check -json -overlay " + quoted(ed.Buf.Path + "=" + overlay) + " " + quoted(ed.Buf.Path))
+	let (code, out) = appkit.RunCapture(env + quoted(compiler) + " -symbols -json -overlay " + quoted(ed.Buf.Path + "=" + overlay) + " " + quoted(ed.Buf.Path))
 	if code == 127 || code == -1 {
-		ed.Diags = []Diag{}
+		ed.Diags = []tinsym.Diag{}
 		return
 	}
-	ed.Diags = parseDiags(out, ed.Buf.Path)
+	let (syms, all) = tinsym.Parse(out)
+	mut mine = []tinsym.Diag{}
+	for d in all {
+		if d.File == ed.Buf.Path {
+			mine = append(mine, d)
+		}
+	}
+	ed.Diags = mine
+	// a file that does not parse gives no declarations: keep the last ones
+	if len(syms) > 0 || code == 0 {
+		ed.Syms = syms
+	}
 	ed.Redraw = true
 }
 

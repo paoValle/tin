@@ -25,6 +25,9 @@ bin/tinc -o tinland products/tinland/app/*.tin
 | Cmd+[ and Cmd+] , Tab, Shift+Tab | unindent, indent |
 | Alt+Left/Right, Cmd+Left/Right/Up/Down | by word, line start/end, document start/end |
 | Cmd+Shift+I | format the file with the rules of `tin fmt` |
+| Cmd+B or Cmd+click, Cmd+Alt+Left | go to the declaration of the name (in another file too), and back |
+| Ctrl+Q | quick info: the signature and documentation of the name |
+| Ctrl+Space, or typing a `.` | completion: names after `pkg.`, methods and fields after another dot, the package's names (Up and Down choose, Tab or Return accepts, Escape closes) |
 | Cmd+R | compile and run the file with `tinc` (output in a panel; click a compiler message to jump to it) |
 
 Every key command is also in the menu bar. Errors are underlined while you type: after a pause the compiler checks the text (`tinc -check -json` with the

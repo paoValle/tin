@@ -1,0 +1,154 @@
+package main
+
+import "textedit"
+import "tinsym"
+import "twine"
+
+// Navigation and completion from the compiler's declarations (tinsym): go to the declaration of a name, back again, a
+// popup with a name's signature and documentation, and a list of what can be written at the caret.
+
+// Place is a position the editor was at: a file and a place in it.
+type Place struct {
+	Path str
+	Row  i64
+	Col  i64
+}
+
+// gotoDefinition moves to the declaration of the name at the caret (opening its file when it is in another).
+fn (ed mut Editor) gotoDefinition() {
+	let found = tinsym.Resolve(ed.Syms, ed.Buf.Path, ed.Buf.Text(), ed.Buf.Row, ed.Buf.Col)
+	if len(found) == 0 {
+		ed.say("no declaration found")
+		return
+	}
+	let sym = found[0]
+	let here = Place{Path: ed.Buf.Path, Row: ed.Buf.Row, Col: ed.Buf.Col}
+	if sym.File != ed.Buf.Path && !ed.load(sym.File) {
+		return
+	}
+	ed.Back = append(ed.Back, here)
+	ed.Buf.MoveTo(sym.Line - 1, sym.Col - 1, false)
+	ed.say(sym.Sig)
+}
+
+// goBack returns to where the last go to declaration came from.
+fn (ed mut Editor) goBack() {
+	if len(ed.Back) == 0 {
+		ed.say("nowhere to go back to")
+		return
+	}
+	let at = ed.Back[len(ed.Back) - 1]
+	ed.Back = ed.Back[:len(ed.Back) - 1]
+	if at.Path != ed.Buf.Path && !ed.load(at.Path) {
+		return
+	}
+	ed.Buf.MoveTo(at.Row, at.Col, false)
+}
+
+// quickInfo shows the signature and the documentation of the name at the caret.
+fn (ed mut Editor) quickInfo() {
+	let found = tinsym.Resolve(ed.Syms, ed.Buf.Path, ed.Buf.Text(), ed.Buf.Row, ed.Buf.Col)
+	if len(found) == 0 {
+		ed.say("no declaration found")
+		return
+	}
+	mut lines = []str{found[0].Sig}
+	if len(found[0].Doc) > 0 {
+		for l in twine.Split(found[0].Doc, "\n") {
+			lines = append(lines, l)
+		}
+	}
+	ed.Info = lines
+}
+
+// prefix is the word being typed: the identifier bytes just before the caret.
+fn (ed Editor) prefix() str {
+	let line = ed.Buf.Lines[ed.Buf.Row]
+	mut from = ed.Buf.Col
+	for from > 0 && wordByte(line[from - 1]) {
+		from -= 1
+	}
+	return line[from:ed.Buf.Col]
+}
+
+fn wordByte(c u8) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+// openCompletion lists what can be written at the caret, for the word typed so far.
+fn (ed mut Editor) openCompletion() {
+	let items = tinsym.Complete(ed.Syms, ed.Buf.Path, ed.Buf.Text(), ed.Buf.Row, ed.Buf.Col)
+	let want = twine.ToLower(ed.prefix())
+	mut shown = []tinsym.Item{}
+	for it in items {
+		if len(shown) < 200 && twine.HasPrefix(twine.ToLower(it.Label), want) {
+			shown = append(shown, it)
+		}
+	}
+	ed.Comp = shown
+	ed.CompSel = 0
+	ed.CompOpen = len(shown) > 0
+	if !ed.CompOpen {
+		ed.say("no completions")
+	}
+}
+
+// refilter narrows the list to the word typed since it was opened (closing it when nothing is left).
+fn (ed mut Editor) refilter() {
+	if !ed.CompOpen {
+		return
+	}
+	let want = twine.ToLower(ed.prefix())
+	let items = tinsym.Complete(ed.Syms, ed.Buf.Path, ed.Buf.Text(), ed.Buf.Row, ed.Buf.Col)
+	mut shown = []tinsym.Item{}
+	for it in items {
+		if len(shown) < 200 && twine.HasPrefix(twine.ToLower(it.Label), want) {
+			shown = append(shown, it)
+		}
+	}
+	ed.Comp = shown
+	if ed.CompSel >= len(shown) {
+		ed.CompSel = 0
+	}
+	ed.CompOpen = len(shown) > 0
+}
+
+// acceptCompletion replaces the typed word with the chosen candidate.
+fn (ed mut Editor) acceptCompletion() {
+	if !ed.CompOpen || ed.CompSel >= len(ed.Comp) {
+		return
+	}
+	let label = ed.Comp[ed.CompSel].Label
+	let typed = len(ed.prefix())
+	ed.CompOpen = false
+	if typed > 0 {
+		ed.Buf.MoveTo(ed.Buf.Row, ed.Buf.Col - typed, false)
+		ed.Buf.MoveTo(ed.Buf.Row, ed.Buf.Col + typed, true)
+	}
+	ed.Buf.Insert(label)
+}
+
+// completionKey handles a key while the list is open; it reports whether the key was used up.
+fn (ed mut Editor) completionKey(k Key) bool {
+	if k.Code == keyUp {
+		if ed.CompSel > 0 {
+			ed.CompSel -= 1
+		}
+		return true
+	}
+	if k.Code == keyDown {
+		if ed.CompSel + 1 < len(ed.Comp) {
+			ed.CompSel += 1
+		}
+		return true
+	}
+	if k.Code == keyTab || k.Code == keyReturn || k.Code == keyEnter {
+		ed.acceptCompletion()
+		return true
+	}
+	if k.Code == keyEscape {
+		ed.CompOpen = false
+		return true
+	}
+	return false
+}

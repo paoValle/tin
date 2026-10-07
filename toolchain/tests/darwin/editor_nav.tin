@@ -1,0 +1,14 @@
+package main
+
+import "say"
+import "twine"
+
+// helper doubles its argument.
+fn helper(x i64) i64 {
+	return x * 2
+}
+
+fn main() {
+	let parts = twine.Split("a,b", ",")
+	say.Line(helper(21), len(parts))
+}

@@ -282,6 +282,7 @@ fn (ed mut Editor) render() {
 		}
 	}
 	ed.scrollbar()
+	ed.popups()
 	ed.panel()
 	ed.tabBar()
 	ed.statusBar()
@@ -402,4 +403,64 @@ fn (ed mut Editor) scrollbar() {
 	let thumb = area * f64(rows) / f64(total)
 	let at = ed.tabH() + (area - thumb) * f64(ed.Scroll) / f64(total - 1)
 	ed.rect(f64(ed.Bmp.W) - ed.Scale * 8.0, at, ed.Scale * 6.0, thumb, 0.3, 0.33, 0.4)
+}
+
+// popups draws the completion list or the quick info next to the caret.
+fn (ed mut Editor) popups() {
+	mut lines = []str{}
+	mut sel = -1
+	if ed.CompOpen {
+		let first = max(0, min(ed.CompSel - 4, len(ed.Comp) - 9))
+		mut i = first
+		for i < len(ed.Comp) && i < first + 9 {
+			let it = ed.Comp[i]
+			mut l = it.Label
+			if len(it.Detail) > 0 {
+				l = l + "   " + it.Detail
+			}
+			lines = append(lines, l)
+			if i == ed.CompSel {
+				sel = i - first
+			}
+			i += 1
+		}
+	} else if len(ed.Info) > 0 {
+		lines = ed.Info
+	}
+	if len(lines) == 0 {
+		return
+	}
+	mut widest = 0
+	for l in lines {
+		widest = max(widest, len(l))
+	}
+	widest = min(widest, 100)
+	let b = ed.Buf
+	let cn = b.Row - ed.Scroll
+	let cx = ed.gutterW() + f64(textedit.DisplayCol(b.Lines[b.Row], b.Col, 4) - ed.HScroll) * ed.CharW
+	let boxW = f64(widest + 2) * ed.CharW
+	let boxH = f64(len(lines)) * ed.LineH + ed.LineH * 0.4
+	mut x = cx
+	if x + boxW > f64(ed.Bmp.W) {
+		x = f64(ed.Bmp.W) - boxW
+	}
+	mut top = ed.rowTop(cn + 1)
+	if top + boxH > f64(ed.Bmp.H) - ed.LineH * 1.4 {
+		top = ed.rowTop(cn) - boxH
+	}
+	ed.rect(x - ed.Scale, top - ed.Scale, boxW + ed.Scale * 2.0, boxH + ed.Scale * 2.0, 0.4, 0.45, 0.55)
+	ed.rect(x, top, boxW, boxH, 0.17, 0.19, 0.24)
+	mut k = 0
+	for k < len(lines) {
+		let ly = top + ed.LineH * 0.2 + f64(k) * ed.LineH
+		if k == sel {
+			ed.rect(x, ly, boxW, ed.LineH, 0.25, 0.35, 0.55)
+		}
+		mut text = lines[k]
+		if len(text) > widest {
+			text = text[:widest]
+		}
+		ed.draw(x + ed.CharW, ly, text, 0.85, 0.87, 0.92)
+		k += 1
+	}
 }

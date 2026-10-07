@@ -5,6 +5,7 @@ import "mint"
 import "quarry"
 import "textedit"
 import "tinfmt"
+import "tinsym"
 import "twine"
 
 // Modifier flags of a key event (NSEventModifierFlag).
@@ -74,8 +75,15 @@ type Editor struct {
 	fresh    bool
 	Clip     str
 	Output   []str
-	Diags    []Diag
+	Diags    []tinsym.Diag
+	Syms     []tinsym.Sym
+	Back     []Place
+	Info     []str
+	CompOpen bool
+	Comp     []tinsym.Item
+	CompSel  i64
 	DiagFor  i64
+	TmpDir   str
 	OutputOpen bool
 	Redraw   bool
 	Blink    bool
@@ -93,10 +101,10 @@ type Editor struct {
 fn newEditor(buf textedit.Buffer) Editor {
 	let ed = Editor{Buf: buf, Win: appkit.Window{}, Bmp: appkit.Bitmap{}, FindFrom: textedit.Pos{}, FontSize: 13.0, Scale: 2.0, PtW: 900.0, PtH: 600.0, Redraw: true, Blink: true}
 	ed.rawFor = -1
-	ed.Diags = []Diag{}
+	ed.Diags = []tinsym.Diag{}
 	ed.DiagFor = -1
 	ed.Tabs = []Tab{Tab{Buf: buf}}
-	ed.Diags = []Diag{}
+	ed.Diags = []tinsym.Diag{}
 	ed.DiagFor = -1
 	return ed
 }
@@ -137,7 +145,7 @@ fn (ed mut Editor) activate(i i64) {
 	ed.Scroll = ed.Tabs[i].Scroll
 	ed.HScroll = ed.Tabs[i].HScroll
 	ed.rawFor = -1
-	ed.Diags = []Diag{}
+	ed.Diags = []tinsym.Diag{}
 	ed.DiagFor = -1
 	ed.Mode = modeEdit
 	ed.Redraw = true
@@ -228,7 +236,7 @@ fn (ed mut Editor) closeTab() {
 	ed.HScroll = ed.Tabs[next].HScroll
 	ed.Active = next
 	ed.rawFor = -1
-	ed.Diags = []Diag{}
+	ed.Diags = []tinsym.Diag{}
 	ed.DiagFor = -1
 	ed.Redraw = true
 }
@@ -352,6 +360,10 @@ fn (ed mut Editor) handleKey(k Key) {
 	ed.Blink = true
 	ed.Redraw = true
 	ed.Message = ""
+	ed.Info = []str{}
+	if ed.CompOpen && ed.Mode == modeEdit && ed.completionKey(k) {
+		return
+	}
 	if ed.Mode != modeEdit {
 		ed.promptKey(k)
 		ed.ensureVisible()
@@ -362,8 +374,14 @@ fn (ed mut Editor) handleKey(k Key) {
 	let cmd = (k.Flags & flagCmd) != 0
 	let ctrl = (k.Flags & flagCtrl) != 0
 	if cmd {
+		ed.CompOpen = false
 		ed.command(k, shift)
 		ed.ensureVisible()
+		return
+	}
+	if ctrl && k.Code == 49 {
+		// Ctrl+Space: complete
+		ed.openCompletion()
 		return
 	}
 	let b = ed.Buf
@@ -435,6 +453,12 @@ fn (ed mut Editor) handleKey(k Key) {
 		ed.controlKey(k)
 	} else if typeable(k.Chars) {
 		b.Insert(k.Chars)
+		if k.Chars == "." && len(ed.Syms) > 0 {
+			ed.openCompletion()
+		}
+	}
+	if ed.CompOpen {
+		ed.refilter()
 	}
 	ed.ensureVisible()
 }
@@ -450,6 +474,8 @@ fn (ed mut Editor) controlKey(k Key) {
 		b.Home(false)
 	} else if c == 'e' || c == 5 {
 		b.End(false)
+	} else if c == 'q' || c == 17 {
+		ed.quickInfo()
 	} else if c == 'k' || c == 11 {
 		// kill to the end of the line (at the end of a line, the line break)
 		b.MoveTo(b.Row, len(b.Lines[b.Row]), true)
@@ -468,7 +494,11 @@ fn (ed mut Editor) command(k Key, shift bool) {
 	if len(k.Chars) > 0 {
 		c = k.Chars[0]
 	}
-	if k.Code == keyBackspace {
+	if k.Code == keyLeft && (k.Flags & flagAlt) != 0 {
+		ed.goBack()
+	} else if c == 'b' {
+		ed.gotoDefinition()
+	} else if k.Code == keyBackspace {
 		// delete to the start of the line
 		if !b.HasSel {
 			b.Home(true)
@@ -732,4 +762,24 @@ fn (ed mut Editor) formatDoc() {
 	}
 	ed.Buf.SetText(fresh)
 	ed.say("formatted")
+}
+
+// tmp is a file name inside this editor's private temporary directory (made on first use), or "" when there is none:
+// nothing is written to a fixed name in a shared directory.
+fn (ed mut Editor) tmp(name str) str {
+	if len(ed.TmpDir) == 0 {
+		ed.TmpDir = appkit.PrivateDir("tinland")
+	}
+	if len(ed.TmpDir) == 0 {
+		return ""
+	}
+	return ed.TmpDir + "/" + name
+}
+
+// cleanup removes the private temporary directory.
+fn (ed Editor) cleanup() {
+	if len(ed.TmpDir) > 0 {
+		quarry.RemoveAll(ed.TmpDir) catch _ {
+		}
+	}
 }

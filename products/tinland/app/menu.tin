@@ -26,6 +26,10 @@ const cmdIndent = 20
 const cmdUnindent = 21
 const cmdRun = 22
 const cmdFormat = 23
+const cmdDefinition = 24
+const cmdBack = 25
+const cmdInfo = 26
+const cmdComplete = 27
 
 // item adds a menu item: its title, the key shown beside it (with Shift when shift is set) and its command.
 fn item(m appkit.Menu, menu i64, title str, key str, shift bool, cmd i64) {
@@ -80,6 +84,12 @@ fn buildMenus(win appkit.Window) appkit.Menu {
 	item(m, find, "Find Previous", "g", true, cmdFindPrev)
 	item(m, find, "Go to Line...", "l", false, cmdGoto)
 
+	let navigate = appkit.AddMenu(m, "Navigate")
+	item(m, navigate, "Go to Declaration", "b", false, cmdDefinition)
+	appkit.AddItem(m, navigate, "Back", "\xef\x9c\x82", appkit.ModCmd | appkit.ModAlt, cmdBack)
+	appkit.AddItem(m, navigate, "Quick Info", "q", appkit.ModCtrl, cmdInfo)
+	appkit.AddItem(m, navigate, "Complete", " ", appkit.ModCtrl, cmdComplete)
+
 	let window = appkit.AddMenu(m, "Window")
 	appkit.AddSystemItem(window, "Minimize", "performMiniaturize:", "m", appkit.ModCmd)
 	appkit.AddSystemItem(window, "Zoom", "performZoom:", "", 0)
@@ -90,9 +100,23 @@ fn buildMenus(win appkit.Window) appkit.Menu {
 
 // perform does a menu command by pressing the key that does the same.
 fn (ed mut Editor) perform(cmd i64) {
+	if cmd == cmdBack {
+		ed.handleKey(Key{Code: keyLeft, Flags: flagCmd | flagAlt, Chars: ""})
+		return
+	}
+	if cmd == cmdInfo {
+		ed.handleKey(Key{Code: -1, Flags: flagCtrl, Chars: "q"})
+		return
+	}
+	if cmd == cmdComplete {
+		ed.handleKey(Key{Code: 49, Flags: flagCtrl, Chars: " "})
+		return
+	}
 	mut chars = ""
 	mut shift = false
-	if cmd == cmdNew {
+	if cmd == cmdDefinition {
+		chars = "b"
+	} else if cmd == cmdNew {
 		chars = "n"
 	} else if cmd == cmdOpen {
 		chars = "o"

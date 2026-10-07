@@ -1,0 +1,280 @@
+package tinsym
+
+import "tinjson"
+import "twine"
+
+// Package tinsym reads what the compiler says about a program (`tinc -symbols -json`: its declarations, and its errors
+// as JSON lines, toolchain/docs/TOOLING.md 3.1 and 3.3) and answers the questions an editor asks of it: which
+// declaration a name means (Resolve), and which names fit at a place (Complete). tin lsp and the Tinland editor share it.
+// Lines and columns here are 0-based and columns count bytes; the compiler's are 1-based.
+
+// Sym is one declaration.
+type Sym struct {
+	Kind     str // fn, method, type, shape, const or var
+	Name     str
+	Pkg      str // "" for main
+	File     str
+	Line     i64 // where the name is, 1-based
+	Col      i64
+	EndCol   i64
+	Recv     str
+	Exported bool
+	Sig      str
+	Doc      str
+	Members  []Member
+}
+
+// Member is a line of a struct, enum or shape body: a field and its type, a variant and its payload.
+type Member struct {
+	Name   str
+	Detail str
+}
+
+// Diag is one error.
+type Diag struct {
+	File    str
+	Line    i64 // 1-based; 0 for an error with no place
+	Col     i64
+	EndLine i64
+	EndCol  i64
+	Code    str
+	Message str
+}
+
+// Item is one candidate for completion: its text, what it is (a Sym kind, or field, package, keyword) and a description.
+type Item struct {
+	Label  str
+	Kind   str
+	Detail str
+}
+
+// Parse reads the JSON lines of `tinc -symbols -json`: the declarations and the errors.
+fn Parse(out str) ([]Sym, []Diag) {
+	mut diags = []Diag{}
+	mut syms = []Sym{}
+	for line in twine.Split(out, "\n") {
+		if len(line) < 2 || line[0] != '{' {
+			continue
+		}
+		let (j, ok) = tinjson.Parse(line)
+		if !ok {
+			continue
+		}
+		if j.Get("severity").IsString() {
+			diags = append(diags, Diag{File: j.Get("file").Text(), Line: j.Get("line").Int(), Col: j.Get("col").Int(), EndLine: j.Get("endLine").Int(), EndCol: j.Get("endCol").Int(), Code: j.Get("code").Text(), Message: j.Get("message").Text()})
+			continue
+		}
+		let mem = j.Get("members")
+		mut members = []Member{}
+		for k in 0..mem.Len() {
+			members = append(members, Member{Name: mem.At(k).Get("name").Text(), Detail: mem.At(k).Get("detail").Text()})
+		}
+		syms = append(syms, Sym{Kind: j.Get("kind").Text(), Name: j.Get("name").Text(), Pkg: j.Get("pkg").Text(), File: j.Get("file").Text(), Line: j.Get("line").Int(), Col: j.Get("col").Int(), EndCol: j.Get("endCol").Int(), Recv: j.Get("recv").Text(), Exported: j.Get("exported").Bool(), Sig: j.Get("sig").Text(), Doc: j.Get("doc").Text(), Members: members})
+	}
+	return syms, diags
+}
+
+fn isWordByte(c u8) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+// DirOf is the directory part of a path.
+fn DirOf(path str) str {
+	let slash = twine.LastIndex(path, "/")
+	if slash < 0 {
+		return "."
+	}
+	return path[:slash]
+}
+
+// LineOf is line n (0-based) of text without its line break ("" past the end).
+fn LineOf(text str, n i64) str {
+	let lines = twine.Split(text, "\n")
+	if n < 0 || n >= len(lines) {
+		return ""
+	}
+	let l = lines[n]
+	if len(l) > 0 && l[len(l) - 1] == '\r' {
+		return l[:len(l) - 1]
+	}
+	return l
+}
+
+// WordAt is the identifier around byte column col of line n of text, with where it starts and ends in the line.
+fn WordAt(text str, n i64, col i64) (str, i64, i64) {
+	let l = LineOf(text, n)
+	mut at = col
+	if at > len(l) {
+		at = len(l)
+	}
+	mut from = at
+	mut to = at
+	for from > 0 && isWordByte(l[from - 1]) {
+		from -= 1
+	}
+	for to < len(l) && isWordByte(l[to]) {
+		to += 1
+	}
+	return l[from:to], from, to
+}
+
+// ImportsOf are the package names the text imports (the last element of each import path).
+fn ImportsOf(text str) []str {
+	mut out = []str{}
+	for l in twine.Split(text, "\n") {
+		let t = twine.TrimSpace(l)
+		if twine.HasPrefix(t, "import \"") {
+			let rest = t[8:]
+			let q = twine.Index(rest, "\"")
+			if q > 0 {
+				let p = rest[:q]
+				let slash = twine.LastIndex(p, "/")
+				out = append(out, p[slash + 1:])
+			}
+		}
+	}
+	return out
+}
+
+// CurrentPkg is the package of the text: "" for main, as the compiler names it.
+fn CurrentPkg(text str) str {
+	for l in twine.Split(text, "\n") {
+		let t = twine.TrimSpace(l)
+		if twine.HasPrefix(t, "package ") {
+			let name = twine.TrimSpace(t[8:])
+			if name == "main" {
+				return ""
+			}
+			return name
+		}
+	}
+	return ""
+}
+
+// qualifierAt is the identifier before the dot that precedes the word starting at byte from ("" when there is no dot).
+fn qualifierAt(l str, from i64) (str, bool) {
+	if from == 0 || l[from - 1] != '.' {
+		return "", false
+	}
+	mut q = from - 1
+	let qend = q
+	for q > 0 && isWordByte(l[q - 1]) {
+		q -= 1
+	}
+	return l[q:qend], true
+}
+
+fn isImported(text str, name str) bool {
+	for p in ImportsOf(text) {
+		if p == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Resolve is the declarations the word at line n, byte column col of the text can mean: after pkg. the exported name in
+// that package; after any other dot a method of that name; otherwise a name of the text's package (in its directory), else
+// of any package.
+fn Resolve(syms []Sym, path str, text str, n i64, col i64) []Sym {
+	let (word, from, _) = WordAt(text, n, col)
+	mut found = []Sym{}
+	if len(word) == 0 {
+		return found
+	}
+	let l = LineOf(text, n)
+	let (qualifier, dotted) = qualifierAt(l, from)
+	if dotted {
+		let isPackage = isImported(text, qualifier)
+		for sym in syms {
+			if isPackage && sym.Pkg == qualifier && sym.Name == word && sym.Recv == "" {
+				found = append(found, sym)
+			} else if !isPackage && sym.Kind == "method" && sym.Name == word {
+				found = append(found, sym)
+			}
+		}
+		return found
+	}
+	let pkg = CurrentPkg(text)
+	let dir = DirOf(path)
+	for sym in syms {
+		if sym.Name == word && sym.Recv == "" && sym.Pkg == pkg && DirOf(sym.File) == dir {
+			found = append(found, sym)
+		}
+	}
+	if len(found) == 0 {
+		for sym in syms {
+			if sym.Name == word && sym.Recv == "" {
+				found = append(found, sym)
+			}
+		}
+	}
+	return found
+}
+
+// Keywords are the reserved words.
+const Keywords = "break case catch const continue default defer detach else enum extern fail fn for go guard if import keep let limit map match mut package parallel range return secret shared struct switch try type var while within use on shape"
+
+// Complete is the candidates at line n, byte column col of the text (the word being typed is not filtered out: the
+// caller matches it): after pkg. its exported names; after another dot every method and field name (the type of the
+// value is not known here); otherwise the package's names, the imported packages and the keywords.
+fn Complete(syms []Sym, path str, text str, n i64, col i64) []Item {
+	let l = LineOf(text, n)
+	mut at = col
+	if at > len(l) {
+		at = len(l)
+	}
+	mut from = at
+	for from > 0 && isWordByte(l[from - 1]) {
+		from -= 1
+	}
+	mut items = []Item{}
+	mut seen = map[str]bool{}
+	let (qualifier, dotted) = qualifierAt(l, from)
+	if dotted {
+		let isPackage = isImported(text, qualifier)
+		for sym in syms {
+			if isPackage {
+				if sym.Pkg == qualifier && sym.Exported && sym.Recv == "" && !seen[sym.Name] {
+					seen[sym.Name] = true
+					items = append(items, Item{Label: sym.Name, Kind: sym.Kind, Detail: sym.Sig})
+				}
+				continue
+			}
+			if sym.Kind == "method" && !seen[sym.Name] {
+				seen[sym.Name] = true
+				items = append(items, Item{Label: sym.Name, Kind: "method", Detail: sym.Sig})
+			}
+			if sym.Kind == "type" {
+				for m in sym.Members {
+					if !seen[m.Name] {
+						seen[m.Name] = true
+						items = append(items, Item{Label: m.Name, Kind: "field", Detail: m.Detail})
+					}
+				}
+			}
+		}
+		return items
+	}
+	let pkg = CurrentPkg(text)
+	let dir = DirOf(path)
+	for sym in syms {
+		if sym.Pkg == pkg && DirOf(sym.File) == dir && sym.Recv == "" && sym.Kind != "method" && !seen[sym.Name] {
+			seen[sym.Name] = true
+			items = append(items, Item{Label: sym.Name, Kind: sym.Kind, Detail: sym.Sig})
+		}
+	}
+	for p in ImportsOf(text) {
+		if !seen[p] {
+			seen[p] = true
+			items = append(items, Item{Label: p, Kind: "package", Detail: ""})
+		}
+	}
+	for k in twine.Split(Keywords, " ") {
+		if !seen[k] {
+			seen[k] = true
+			items = append(items, Item{Label: k, Kind: "keyword", Detail: ""})
+		}
+	}
+	return items
+}

@@ -43,7 +43,11 @@ fn (ed mut Editor) runFile() {
 	if ed.Buf.Dirty && !ed.save(false) {
 		return
 	}
-	let exe = "/tmp/tinland-run"
+	let exe = ed.tmp("run")
+	if len(exe) == 0 {
+		ed.say("no private temporary directory")
+		return
+	}
 	let (code, text) = capture([]str{compilerPath(), "-o", exe, ed.Buf.Path})
 	mut shown = text
 	mut title = "compile failed"

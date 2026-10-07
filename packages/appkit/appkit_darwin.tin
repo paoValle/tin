@@ -3,6 +3,8 @@
 // tools import it; libraries and servers never do (AGENTS.md, "Platforms").
 package appkit
 
+import "quarry"
+import "say"
 import "twine"
 
 @framework("CoreGraphics")
@@ -440,7 +442,7 @@ extern fn fread(buf i64, size i64, n i64, stream i64) i64
 extern fn pclose(stream i64) i64
 
 // RunCapture runs a shell command line (standard error folded into standard output) and returns its exit code
-// and everything it printed (up to a megabyte).
+// and everything it printed (up to 16 megabytes).
 fn RunCapture(command str) (i64, str) {
 	let fp = popen(rt_cstr(command + " 2>&1"), rt_cstr("r"))
 	if fp == 0 {
@@ -448,7 +450,7 @@ fn RunCapture(command str) (i64, str) {
 	}
 	let buf = calloc(65536, 1)
 	mut out = ""
-	for len(out) < 1 << 20 {
+	for len(out) < 1 << 24 {
 		let n = fread(buf, 1, 65536, fp)
 		if n <= 0 {
 			break
@@ -457,4 +459,26 @@ fn RunCapture(command str) (i64, str) {
 	}
 	let status = pclose(fp)
 	return (status >> 8) & 0xff, out
+}
+
+extern fn mkdir(path i64, mode i64) i64
+
+extern fn getpid() i64
+
+// PrivateDir creates a new directory that only this user can use, in $TMPDIR (or /tmp), named after prefix, and returns
+// its path ("" when none could be made). mkdir fails when the name is taken, also by a symbolic link someone else put
+// there, so the directory is always one this process made: files written in it cannot be redirected.
+fn PrivateDir(prefix str) str {
+	mut base = "/tmp"
+	let dir = quarry.Getenv("TMPDIR")
+	if len(dir) > 0 {
+		base = twine.TrimSuffix(dir, "/")
+	}
+	for attempt in 0..50 {
+		let path = base + "/" + prefix + "-" + say.Str(getpid()) + "-" + say.Str(attempt)
+		if (mkdir(rt_cstr(path), 448) & 0xffffffff) == 0 {
+			return path
+		}
+	}
+	return ""
 }

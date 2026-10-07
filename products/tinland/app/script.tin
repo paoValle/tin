@@ -73,6 +73,10 @@ fn (ed Editor) dump() {
 //   dump             prints the text and the cursor
 //   jump:TEXT        jumps to the place a compiler message names
 //   check            checks the text with the compiler and prints the errors
+//   complete:LABEL   opens the completion list and says whether LABEL is in it; accept takes the chosen one
+//   whereFile        prints the name of the file the caret is in
+//   where            prints the file, line and column of the caret
+//   info             prints the quick info popup
 //   output           prints the output panel
 //   prompt           prints the find or go-to-line prompt
 //   open:PATH        loads a file
@@ -105,6 +109,25 @@ fn runScript(ed mut Editor, script str) {
 			ed.dump()
 		} else if twine.HasPrefix(step, "jump:") {
 			say.Line("jumped:", ed.jumpTo(step[5:]))
+		} else if twine.HasPrefix(step, "complete:") {
+			// complete:LABEL opens the completion list at the caret and says whether LABEL is in it
+			ed.openCompletion()
+			mut has = false
+			for n, it in ed.Comp {
+				if it.Label == step[9:] {
+					has = true
+					ed.CompSel = n
+				}
+			}
+			say.Line("complete", step[9:], has, len(ed.Comp) > 0)
+		} else if step == "accept" {
+			ed.acceptCompletion()
+		} else if step == "whereFile" {
+			say.Line("in", ed.name())
+		} else if step == "where" {
+			say.Line("at", ed.name(), ed.Buf.Row + 1, ed.Buf.Col + 1)
+		} else if step == "info" {
+			say.Line("info:", twine.Join(ed.Info, " | "))
 		} else if step == "check" {
 			ed.checkNow()
 			mut d = 0

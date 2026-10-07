@@ -74,7 +74,7 @@ case $1 in
     shift
     case $(uname -s) in Darwin) os=darwin ;; *) os=linux ;; esac
     exe=$cache/tinlsp.$$; trap 'rm -f "$exe"' EXIT
-    "$tinc" -o "$exe" "$root/tools/lsp/main.tin" "$root/tools/lsp/json.tin" "$root/tools/lsp/exec_$os.tin"
+    "$tinc" -o "$exe" "$root/tools/lsp/main.tin" "$root/tools/lsp/exec_$os.tin"
     TINLSP_TINC=$tinc "$exe" ;;
   fmt)
     # tin fmt: the formatter (tools/fmt, packages/tinfmt) built here; a directory stands for the .tin files under it

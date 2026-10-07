@@ -22,9 +22,11 @@ fn main() {
 		ed.Scale = 1.0
 		ed.fontFor()
 		runScript(mut ed, script)
+		ed.cleanup()
 		return
 	}
 	run(mut ed)
+	ed.cleanup()
 }
 
 // pointToCell moves the caret to where the mouse is (x and y in points from the window's bottom left).
@@ -75,6 +77,11 @@ fn (ed mut Editor) handleEvent(e i64) {
 			ed.Mode = modeEdit
 			let clicks = appkit.EventClicks(e)
 			ed.mouseTo(x, y, t == 6 && ed.dragging)
+			if t == 1 && (appkit.EventFlags(e) & flagCmd) != 0 {
+				// Cmd+click: go to the declaration of the name clicked
+				ed.gotoDefinition()
+				return
+			}
 			if t == 1 && clicks == 2 {
 				ed.Buf.SelectWordAt(ed.Buf.Row, ed.Buf.Col)
 			} else if t == 1 && clicks >= 3 {

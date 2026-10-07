@@ -1,0 +1,73 @@
+package main
+
+import "say"
+import "tinjson"
+import "tinsym"
+
+// The compiler's declarations and errors as JSON lines, and what an editor asks of them: which declaration a name is,
+// and what can be written at a place.
+fn sym(kind str, name str, pkg str, file str, line i64, recv str, sig str, members str) str {
+	return "{{\"kind\":\"" + kind + "\",\"name\":\"" + name + "\",\"pkg\":\"" + pkg + "\",\"file\":\"" + file + "\",\"line\":" + say.Str(line) + ",\"col\":4,\"endCol\":9,\"recv\":\"" + recv + "\",\"exported\":" + exported(name) + ",\"sig\":\"" + sig + "\",\"doc\":\"\",\"members\":" + members + "}}\n"
+}
+
+fn exported(name str) str {
+	if name[0] >= 'A' && name[0] <= 'Z' {
+		return "true"
+	}
+	return "false"
+}
+
+fn names(items []tinsym.Item) str {
+	mut out = ""
+	for it in items {
+		out = out + it.Kind + ":" + it.Label + " "
+	}
+	return out
+}
+
+fn found(syms []tinsym.Sym) str {
+	mut out = ""
+	for s in syms {
+		out = out + s.File + ":" + say.Str(s.Line) + " "
+	}
+	return out
+}
+
+fn main() {
+	// JSON values
+	let (j, ok) = tinjson.Parse("{{\"a\":[1,2.5,\"x\\n\\u00e9\\ud83d\\ude42\"],\"b\":{{\"c\":true,\"d\":null}}}}")
+	say.Line(ok, j.Get("a").Len(), j.Get("a").At(0).Int(), j.Get("a").At(2).Text(), j.Get("b").Get("c").Bool(), j.Get("b").Get("d").IsNull(), j.Get("zz").IsNull())
+	let (_, bad) = tinjson.Parse("{{\"a\":")
+	say.Line("bad json:", bad)
+	say.Line(tinjson.Quote("a\"b\\c\nd\te"))
+
+	// the lines of tinc -symbols -json
+	let out = sym("fn", "helper", "", "/p/main.tin", 10, "", "fn helper(a i64) i64", "[]") +
+		sym("method", "Dist", "", "/p/main.tin", 20, "Point", "fn (p Point) Dist() i64", "[]") +
+		sym("type", "Point", "", "/p/main.tin", 5, "", "type Point struct", "[{{\"name\":\"X\",\"detail\":\"i64\"}},{{\"name\":\"Y\",\"detail\":\"i64\"}}]") +
+		sym("fn", "Split", "twine", "/lib/twine/twine.tin", 7, "", "fn Split(s str, sep str) []str", "[]") +
+		sym("fn", "hidden", "twine", "/lib/twine/twine.tin", 9, "", "fn hidden()", "[]") +
+		sym("fn", "helper", "", "/lib/rt/runtime.tin", 3, "", "fn helper()", "[]") +
+		"{{\"file\":\"/p/main.tin\",\"line\":12,\"col\":5,\"endLine\":12,\"endCol\":9,\"code\":\"E103\",\"name\":\"UNDEFINED\",\"severity\":\"error\",\"message\":\"undefined: x\",\"fix\":\"\"}}\n"
+	let (syms, diags) = tinsym.Parse(out)
+	say.Line(len(syms), len(diags), diags[0].Code, diags[0].Line, diags[0].EndCol, diags[0].Message)
+	say.Line(syms[2].Members[1].Name, syms[2].Members[1].Detail, syms[1].Recv, syms[3].Exported)
+
+	let text = "package main\n\nimport \"twine\"\n\nfn main() {{\n\tlet p = Point{{X: 1}}\n\tlet parts = twine.Split(\"a\", \",\")\n\thelper(p.Dist())\n}}\n"
+	let path = "/p/main.tin"
+	// Resolve: a name of the package (not the runtime's of the same name), a package's exported name, a method
+	say.Line("plain:", found(tinsym.Resolve(syms, path, text, 7, 3)))
+	say.Line("qualified:", found(tinsym.Resolve(syms, path, text, 6, 24)))
+	say.Line("method:", found(tinsym.Resolve(syms, path, text, 7, 14)))
+	say.Line("inside the name:", found(tinsym.Resolve(syms, path, text, 6, 21)))
+	say.Line("nothing:", found(tinsym.Resolve(syms, path, text, 0, 1)))
+	let (word, from, to) = tinsym.WordAt(text, 7, 3)
+	say.Line(word, from, to)
+	say.Line(tinsym.ImportsOf(text), tinsym.CurrentPkg(text) == "", tinsym.CurrentPkg("package geo\n"))
+
+	// Complete: after a package, after a value's dot, and plain
+	say.Line("after pkg:", names(tinsym.Complete(syms, path, text, 6, 23)))
+	say.Line("after dot:", names(tinsym.Complete(syms, path, text, 7, 12)))
+	let plain = names(tinsym.Complete(syms, path, text, 7, 1))
+	say.Line("plain:", plain[:48])
+}

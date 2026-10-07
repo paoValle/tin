@@ -1,9 +1,10 @@
-package main
+package tinjson
 
 import "mint"
 import "twine"
 
-// A small JSON reader and writer for the language server's messages.
+// Package tinjson is a small JSON reader and writer for the language server's messages and the editor's reading of
+// the compiler's JSON lines: Parse a value, walk it with Get and At, Quote a string for output.
 
 // J is a parsed JSON value.
 type J struct {
@@ -15,15 +16,15 @@ type J struct {
 	keys  []str
 }
 
-const jNull = 0
-const jBool = 1
-const jNumber = 2
-const jString = 3
-const jArray = 4
-const jObject = 5
+const kNull = 0
+const kBool = 1
+const kNumber = 2
+const kString = 3
+const kArray = 4
+const kObject = 5
 
-fn jnull() J {
-	return J{kind: jNull, s: "", n: 0.0, b: false, items: []J{}, keys: []str{}}
+fn null() J {
+	return J{kind: kNull, s: "", n: 0.0, b: false, items: []J{}, keys: []str{}}
 }
 
 // parser holds the text and the position while a value is read.
@@ -39,7 +40,7 @@ fn (p mut parser) skip() {
 	}
 }
 
-fn hexVal(c u8) i64 {
+fn HexVal(c u8) i64 {
 	if c >= '0' && c <= '9' {
 		return i64(c) - '0'
 	}
@@ -81,7 +82,7 @@ fn (p mut parser) hex4() i64 {
 			p.ok = false
 			return 0
 		}
-		let h = hexVal(p.text[p.at])
+		let h = HexVal(p.text[p.at])
 		if h < 0 {
 			p.ok = false
 			return 0
@@ -141,18 +142,18 @@ fn (p mut parser) value() J {
 	p.skip()
 	if p.at >= len(p.text) {
 		p.ok = false
-		return jnull()
+		return null()
 	}
 	let c = p.text[p.at]
 	if c == '"' {
-		let v = jnull()
-		v.kind = jString
+		let v = null()
+		v.kind = kString
 		v.s = p.str()
 		return v
 	}
 	if c == '{' {
-		let v = jnull()
-		v.kind = jObject
+		let v = null()
+		v.kind = kObject
 		p.at += 1
 		p.skip()
 		if p.at < len(p.text) && p.text[p.at] == '}' {
@@ -189,8 +190,8 @@ fn (p mut parser) value() J {
 		return v
 	}
 	if c == '[' {
-		let v = jnull()
-		v.kind = jArray
+		let v = null()
+		v.kind = kArray
 		p.at += 1
 		p.skip()
 		if p.at < len(p.text) && p.text[p.at] == ']' {
@@ -215,20 +216,20 @@ fn (p mut parser) value() J {
 	}
 	if twine.HasPrefix(p.text[p.at:], "true") {
 		p.at += 4
-		let v = jnull()
-		v.kind = jBool
+		let v = null()
+		v.kind = kBool
 		v.b = true
 		return v
 	}
 	if twine.HasPrefix(p.text[p.at:], "false") {
 		p.at += 5
-		let v = jnull()
-		v.kind = jBool
+		let v = null()
+		v.kind = kBool
 		return v
 	}
 	if twine.HasPrefix(p.text[p.at:], "null") {
 		p.at += 4
-		return jnull()
+		return null()
 	}
 	// a number
 	let from = p.at
@@ -237,60 +238,60 @@ fn (p mut parser) value() J {
 	}
 	if p.at == from {
 		p.ok = false
-		return jnull()
+		return null()
 	}
-	let v = jnull()
-	v.kind = jNumber
+	let v = null()
+	v.kind = kNumber
 	v.n = mint.ParseFloat(p.text[from:p.at]) catch _ {
 		0.0
 	}
 	return v
 }
 
-// parseJson reads one JSON value; ok is false when the text is not valid.
-fn parseJson(text str) (J, bool) {
+// Parse reads one JSON value; ok is false when the text is not valid.
+fn Parse(text str) (J, bool) {
 	let p = parser{text: text, at: 0, ok: true}
 	let v = p.value()
 	return v, p.ok
 }
 
-// get is the member of an object with that key (null when there is none).
-fn (j J) get(key str) J {
-	if j.kind != jObject {
-		return jnull()
+// Get is the member of an object with that key (null when there is none).
+fn (j J) Get(key str) J {
+	if j.kind != kObject {
+		return null()
 	}
 	for i in 0..len(j.keys) {
 		if j.keys[i] == key {
 			return j.items[i]
 		}
 	}
-	return jnull()
+	return null()
 }
 
-// at is element i of an array (null past the end).
-fn (j J) at(i i64) J {
-	if j.kind != jArray || i < 0 || i >= len(j.items) {
-		return jnull()
+// At is element i of an array (null past the end).
+fn (j J) At(i i64) J {
+	if j.kind != kArray || i < 0 || i >= len(j.items) {
+		return null()
 	}
 	return j.items[i]
 }
 
-fn (j J) text() str {
-	if j.kind == jString {
+fn (j J) Text() str {
+	if j.kind == kString {
 		return j.s
 	}
 	return ""
 }
 
-fn (j J) int() i64 {
-	if j.kind == jNumber {
+fn (j J) Int() i64 {
+	if j.kind == kNumber {
 		return i64(j.n)
 	}
 	return 0
 }
 
-// quote is s as a JSON string.
-fn quote(s str) str {
+// Quote is s as a JSON string.
+fn Quote(s str) str {
 	mut out = []u8{}
 	out = append(out, '"')
 	for i in 0..len(s) {
@@ -321,4 +322,34 @@ fn quote(s str) str {
 	}
 	out = append(out, '"')
 	return str(out)
+}
+
+// Len is the number of elements of an array (or members of an object).
+fn (j J) Len() i64 {
+	return len(j.items)
+}
+
+// Bool is the value of a true or false (false for anything else).
+fn (j J) Bool() bool {
+	return j.kind == kBool && j.b
+}
+
+// IsString reports whether the value is a string.
+fn (j J) IsString() bool {
+	return j.kind == kString
+}
+
+// IsNull reports whether the value is null (or missing).
+fn (j J) IsNull() bool {
+	return j.kind == kNull
+}
+
+// IsNumber reports whether the value is a number.
+fn (j J) IsNumber() bool {
+	return j.kind == kNumber
+}
+
+// Items are the elements of an array.
+fn (j J) Items() []J {
+	return j.items
 }

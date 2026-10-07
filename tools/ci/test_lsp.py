@@ -100,7 +100,7 @@ class LanguageServer(unittest.TestCase):
         cls.work = tempfile.TemporaryDirectory()
         cls.exe = Path(cls.work.name) / 'tinlsp'
         os_name = 'darwin' if platform.system() == 'Darwin' else 'linux'
-        subprocess.run([str(tinc()), '-o', str(cls.exe), str(ROOT / 'tools/lsp/main.tin'), str(ROOT / 'tools/lsp/json.tin'),
+        subprocess.run([str(tinc()), '-o', str(cls.exe), str(ROOT / 'tools/lsp/main.tin'),
                         str(ROOT / f'tools/lsp/exec_{os_name}.tin')], check=True, timeout=300, env=dict(os.environ, TIN_ROOT=str(ROOT)))
 
     @classmethod
