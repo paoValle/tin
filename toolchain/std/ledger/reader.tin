@@ -200,21 +200,27 @@ fn (r mut Reader) line() !(str, bool, bool) {
 		if r.tpos >= len(r.text) {
 			return "", false, false
 		}
-		let rest = r.text[r.tpos:len(r.text)]
-		let j = twine.IndexByte(rest, '\n')
-		if j < 0 {
-			mut line = rest
-			if line[len(line)-1] == '\r' {
-				line = line[0:len(line)-1]
+		// Search the text in place and copy only the line: a slice of the rest would copy all of
+		// it once per line (#655).
+		let n = len(r.text)
+		let base = cast(i64, r.text) + 8
+		let p = memchr(base+r.tpos, i64('\n'), n-r.tpos)
+		if p == 0 {
+			mut end = n
+			if r.text[end-1] == '\r' {
+				end -= 1
 			}
-			r.tpos = len(r.text)
+			let line = r.text[r.tpos:end]
+			r.tpos = n
 			return line, false, true
 		}
-		mut line = rest[0:j]
-		if j > 0 && line[j-1] == '\r' {
-			line = line[0:j-1]
+		let j = p - base
+		mut end = j
+		if end > r.tpos && r.text[end-1] == '\r' {
+			end -= 1
 		}
-		r.tpos += j + 1
+		let line = r.text[r.tpos:end]
+		r.tpos = j + 1
 		return line, true, true
 	}
 	for {

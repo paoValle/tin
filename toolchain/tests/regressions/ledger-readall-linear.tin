@@ -1,0 +1,42 @@
+package main
+
+import "dice"
+import "ledger"
+import "say"
+
+fn randomRecords(seed u64, n i64, alphabet str) [][]str {
+	mut r = dice.New(seed)
+	mut recs = make([][]str, 0, n)
+	for i in 0..n {
+		let nf = i64(r.Intn(5)) + 1
+		mut rec = make([]str, 0, nf)
+		for j in 0..nf {
+			let length = i64(r.Intn(20))
+			mut f = r.Str(length, alphabet)
+			if nf == 1 && len(f) == 0 {
+				f = "x"
+			}
+			rec = append(rec, f)
+		}
+		recs = append(recs, rec)
+	}
+	return recs
+}
+
+// #655: ReadAll copied the rest of the text for every line, about 5 GB for this input; with
+// TIN_POOL_WARN_MB=64 the case fails on the pool warning if the copies come back.
+fn main() {
+	let alphabet = "abcXYZ019 \t\"',;é🙂\n"
+	let want = randomRecords(42, 10000, alphabet)
+	mut w2 = ledger.NewWriter()
+	w2.WriteAll(want) catch _ {
+		return
+	}
+	let csv = w2.String()
+	mut r2 = ledger.NewReader(csv)
+	r2.FieldsPerRecord = -1
+	let got = r2.ReadAll() catch _ {
+		[][]str{}
+	}
+	say.Line(len(csv), len(got))
+}

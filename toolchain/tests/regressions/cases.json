@@ -1027,5 +1027,18 @@
       "exit": 1,
       "stderr_contains": "E513 METHOD_SIGNATURE: type Dog does not satisfy shape Namer: Name has a mut receiver and Namer.Name does not"
     }
+  },
+  {
+    "source": "ledger-readall-linear.tin",
+    "issue": 655,
+    "env": {
+      "TIN_POOL_WARN_MB": "64"
+    },
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "440082 10000\n",
+      "stderr": ""
+    }
   }
 ]
