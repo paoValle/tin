@@ -4046,13 +4046,16 @@ Fix: create the directory first, or choose a writable path.
 
 ### E905 TOO_MANY_LOCALS
 
-On arm64 a function's stack frame (its local variables, temporaries and saved registers) is
-at most 4095 bytes, about 500 eight-byte locals.
+On arm64 a function's stack frame (its local variables, temporaries and saved registers) is at
+most 16769024 bytes: the prologue adjusts the stack pointer with one sub sp, sp, #imm12 plus one
+sub sp, sp, #imm12, lsl #12, and every frame slot past the 32760 bytes a scaled imm12 of ldr/str
+reaches needs that second instruction too (#570). The 8 KiB below 16 MiB are for the caller's
+stack arguments, which sit above the frame. The message names the frame the function needs.
 
-No example: it takes a function with hundreds of local variables.
+No example: it takes a function with tens of thousands of local variables.
 
 Fix: split the function, or keep the values in a slice or a struct instead of separate
-locals.
+locals. A frame larger than the stack guard page can step over it; stack probes are #570.
 
 ### E906 FIX_USAGE
 
