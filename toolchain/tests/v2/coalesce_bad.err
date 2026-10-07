@@ -1,0 +1,3 @@
+toolchain/tests/v2/coalesce_bad.tin:8:12: error E422 COALESCE: ?? needs an optional on the left, not i64
+toolchain/tests/v2/coalesce_bad.tin:10:15: error E422 COALESCE: ?? nil does nothing: the result is nil whenever the optional is
+toolchain/tests/v2/coalesce_bad.tin:11:15: error E230 TYPE_MISMATCH: cannot use str as i64

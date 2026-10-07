@@ -1,2 +1,1 @@
 toolchain/tests/v2/not_yet_forms_bad.tin:8:1: error E295 NOT_YET: a variadic parameter is not implemented yet (#562): take a []T parameter and pass a slice
-toolchain/tests/v2/not_yet_forms_bad.tin:18:13: error E295 NOT_YET: opt ?? fallback is not implemented yet (#561): test it with if let v = opt and an else branch (LANGUAGE.md section 9)

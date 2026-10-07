@@ -2163,27 +2163,26 @@ Fix: end each block arm with its value, or leave from it.
 
 ### E295 NOT_YET
 
-A few edition 1 forms are read by the parser but not built yet: `opt ?? fallback` (#561),
-a variadic parameter `xs ...T` in a function that is not `extern` (#562, reported as `a
-variadic parameter is not implemented yet`) and a generic tuple alias. Until they are, write
-the form out another way.
+A few edition 1 forms are read by the parser but not built yet: a variadic parameter
+`xs ...T` in a function that is not `extern` (#562) and a generic tuple alias. Until they
+are, write the form out another way.
 
 ```tin edition=1
 package main
 
+fn sum(xs ...i64) i64 {
+	return 0
+}
+
 fn main() {
-	let n ?i64 = nil
-	let v = n ?? 5
-	_ = v
 }
 ```
 
 ```text
-example.tin:5:12: error E295 NOT_YET: opt ?? fallback is not implemented yet (#561): test it with if let v = opt and an else branch (LANGUAGE.md section 9)
+example.tin:3:1: error E295 NOT_YET: a variadic parameter is not implemented yet (#562): take a []T parameter and pass a slice
 ```
 
-Fix: `if let x = n { ... } else { ... }`, or `if n != nil` and the narrowed `n` (section 9);
-for a variadic parameter, take a `[]T` and pass a slice.
+Fix: take a `[]T` parameter and pass a slice.
 
 ## E3xx Memory and regions
 
@@ -2734,6 +2733,27 @@ example.tin:8:7: error E421 UNCHECKED_OPTIONAL: cannot use a field of optional ?
 ```
 
 Fix: check it first: `if u != nil { return u.Name }`.
+
+### E422 COALESCE
+
+`opt ?? fallback` takes an optional on the left and a fallback that is not `nil` (a `nil`
+fallback is reported as `?? nil does nothing`).
+
+```tin edition=1
+package main
+
+fn main() {
+	let n = 3
+	let v = n ?? 4
+	_ = v
+}
+```
+
+```text
+example.tin:5:12: error E422 COALESCE: ?? needs an optional on the left, not i64
+```
+
+Fix: use the value as it is, or make it optional (`let n ?i64 = 3`) where it can be missing.
 
 ## E5xx Generics, shapes and dyn
 

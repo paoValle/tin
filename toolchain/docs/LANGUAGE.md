@@ -33,10 +33,9 @@ Contents: 1 Programs and packages · 2 Lexical elements · 3 Types · 4 Constant
 23 Differences from Go
 
 **Status.** A few edition 1 forms are read by the parser but not yet accepted by the
-checker, and are marked *not yet implemented* where they appear: `opt ?? fallback`, `arena`
-blocks (#236) and variadic parameters (`xs ...i64`). The checker reports `??` and variadic
-parameters as E295 NOT_YET. The checker
-also does not yet reject reassigning a `let` name.
+checker, and are marked *not yet implemented* where they appear: `arena` blocks (#236) and
+variadic parameters (`xs ...i64`). The checker reports variadic parameters as E295 NOT_YET.
+The checker also does not yet reject reassigning a `let` name.
 
 ---
 
@@ -865,8 +864,11 @@ slice or map literal, the element type may be left out of struct elements:
 ### Nil coalescing
 
 `opt ?? fallback` is the value of an optional, or `fallback` when it is nil:
-`let name = maybe ?? "anonymous"` (*not yet implemented*: the parser reads it, the
-checker does not; write `if let`, section 9).
+`let name = maybe ?? "anonymous"`. The optional is evaluated once and the fallback only
+when the optional is nil. With a fallback of type `T` the result is a `T` (a `?i64` gives an
+`i64`); with a fallback of type `?T` it stays a `?T`, so `a ?? b ?? 0` tries `a`, then `b`.
+`??` is a postfix operator: `x ?? y + 1` is `(x ?? y) + 1`. The left side must be an
+optional and the fallback must not be `nil` (E422).
 
 ---
 

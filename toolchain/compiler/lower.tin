@@ -114,18 +114,87 @@ fn chk_kind(e i64, want i64) i64 {
 		return chk(cast(Node, cast(MutArg, e).x), want)
 	}
 	if k == EX_COALESCE {
-		// The parser reads opt ?? fallback; the checker does not have it yet (#558, #561).
-		err_code_at(cast(Node, e).pos, "E295 NOT_YET", "opt ?? fallback is not implemented yet (#561): test it with if let v = opt and an else branch (LANGUAGE.md section 9)")
-		let ct = cast(Ty, chk(cast(Node, cast(Coalesce, e).x), 0))
-		mut et = ty_int
-		if kind_of(ct) == K_OPT {
-			et = ct.elem
-		}
-		chk(cast(Node, cast(Coalesce, e).fallback), et)
-		return et
+		return chk_coalesce(e)
 	}
 	err_code_at(cast(Node, e).pos, "E990 INTERNAL", "unexpected expression")
 	return ty_int
+}
+
+// chk_coalesce checks opt ?? fallback (#561): the optional's value when it is not nil, else
+// the fallback, which is evaluated only then. With a ?T fallback the result stays ?T. It
+// becomes a hidden local holding the optional and an if:
+//   a reference (or a ?T result): $x = opt; if $x == nil { $x = fallback }; $x as the result
+//   a boxed number:               $x = opt; $r = 0; if $x == nil { $r = fallback } else { $r = *$x }
+fn chk_coalesce(e i64) i64 {
+	let pos = cast(Node, e).pos
+	let x = cast(Coalesce, e).x
+	let fb = cast(Coalesce, e).fallback
+	let xt = cast(Ty, chk(cast(Node, x), 0))
+	if kind_of(xt) != K_OPT {
+		err_code_type(pos, "E422 COALESCE", "?? needs an optional on the left, not ", cast(i64, xt), "")
+		chk(cast(Node, fb), cast(i64, xt))
+		return cast(i64, xt)
+	}
+	if cast(Node, fb).kind == EX_NIL {
+		err_code_at(cast(Node, fb).pos, "E422 COALESCE", "?? nil does nothing: the result is nil whenever the optional is")
+		return cast(i64, xt)
+	}
+	let scalar = opt_scalar(xt)
+	mut et = scalar
+	if et == 0 {
+		et = xt.elem
+	}
+	let ft = chk(cast(Node, fb), et)
+	mut rt = et
+	if ft == cast(i64, xt) {
+		rt = cast(i64, xt)
+	} else {
+		check_assignable(cast(Node, fb), ft, cast(Ty, et))
+		if is_untyped(ft) != 0 {
+			reconvert(cast(Node, fb), et)
+		}
+	}
+	mut stmts = []i64{}
+	let tx = temp(pos, x, cast(i64, xt))
+	let xs = cast(Sym, tx.sym)
+	xs.reads = xs.reads + 1
+	stmts = append(stmts, cast(i64, tx))
+	let ifs = cast(IfStmt, node_new(ST_IF, pos))
+	ifs.cond = mk_bin(pos, "==", sym_ref_node(pos, xs), mk_int(pos, 0, cast(i64, xt)), ty_bool)
+	ifs.then = empty_block(pos)
+	if scalar == 0 || rt == cast(i64, xt) {
+		// One word (a reference or a box) either way: nil takes the fallback's.
+		mut then1 = cast([]i64, cast(Block, ifs.then).stmts)
+		then1 = append(then1, assign_stmt(pos, sym_ref_node(pos, xs), fb))
+		cast(Block, ifs.then).stmts = then1
+		stmts = append(stmts, cast(i64, ifs))
+		let v = sym_ref_node(pos, xs)
+		cast(Node, v).type_ = rt
+		return set_seq(e, mk_seq(pos, cast(i64, stmts), v, rt), rt)
+	}
+	let tr = temp(pos, zero_value(pos, scalar), scalar)
+	let rs = cast(Sym, tr.sym)
+	rs.reads = rs.reads + 1
+	stmts = append(stmts, cast(i64, tr))
+	mut then2 = cast([]i64, cast(Block, ifs.then).stmts)
+	then2 = append(then2, assign_stmt(pos, sym_ref_node(pos, rs), fb))
+	cast(Block, ifs.then).stmts = then2
+	let base = sym_ref_node(pos, xs)
+	cast(Node, base).type_ = ty_int
+	let els = cast(Block, empty_block(pos))
+	mut st3 = cast([]i64, els.stmts)
+	st3 = append(st3, assign_stmt(pos, sym_ref_node(pos, rs), mk_mem(pos, base, 0, 0, 0, scalar)))
+	els.stmts = st3
+	ifs.else_ = cast(i64, els)
+	stmts = append(stmts, cast(i64, ifs))
+	return set_seq(e, mk_seq(pos, cast(i64, stmts), sym_ref_node(pos, rs), scalar), scalar)
+}
+
+// set_seq makes e the sequence seq and returns its type t.
+fn set_seq(e i64, seq i64, t i64) i64 {
+	replace_node(e, seq)
+	cast(Node, e).type_ = 0
+	return t
 }
 
 // int_fits reports whether constant v is representable in integer type t.

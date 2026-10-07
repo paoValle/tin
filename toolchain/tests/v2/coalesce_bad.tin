@@ -1,0 +1,15 @@
+package main
+
+// ?? needs an optional on the left, a fallback other than nil, and a fallback of the
+// optional's type (#561).
+
+fn main() {
+	let n = 3
+	let a = n ?? 4
+	let o ?i64 = nil
+	let b = o ?? nil
+	let c = o ?? "four"
+	_ = a
+	_ = b
+	_ = c
+}

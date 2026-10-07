@@ -1,0 +1,99 @@
+package main
+
+import "say"
+
+// opt ?? fallback (#561): the optional's value, or the fallback, which runs only when the
+// optional is nil; the left side runs once; a ?T fallback keeps the result optional.
+
+type User struct {
+	name str
+}
+
+shape Named {
+	Name() str
+}
+
+fn (u User) Name() str {
+	return u.name
+}
+
+fn find(id i64) ?User {
+	if id == 1 {
+		return User{name: "ann"}
+	}
+	return nil
+}
+
+mut calls = 0
+
+fn dflt() i64 {
+	calls += 1
+	return 99
+}
+
+mut lefts = 0
+
+fn next(give bool) ?i64 {
+	lefts += 1
+	if give {
+		return 3
+	}
+	return nil
+}
+
+fn label(n ?str) str {
+	return n ?? "none"
+}
+
+fn pick(a ?i64, b ?i64) ?i64 {
+	return a ?? b
+}
+
+type Box struct {
+	size i64
+	tag str
+}
+
+fn main() {
+	mut x ?i64 = nil
+	say.Line("i64", x ?? 5)
+	x = 7
+	say.Line("set", x ?? 5, x ?? dflt(), "fallback calls", calls)
+	let f ?f64 = nil
+	let g ?f32 = f32(1.25)
+	let ok ?bool = nil
+	let by ?u8 = u8(200)
+	say.Line("scalars", f ?? 2.5, g ?? f32(0), ok ?? true, by ?? u8(1))
+	let s ?str = nil
+	say.Line("str", s ?? "anon", label(nil), label("bo"))
+	let u = find(2) ?? User{name: "guest"}
+	say.Line("struct", u.name, (find(1) ?? User{name: "guest"}).name)
+	let xs ?[]i64 = nil
+	say.Line("slice", len(xs ?? []i64{1, 2, 3}))
+	let m ?map[str]i64 = nil
+	say.Line("map", (m ?? map[str]i64{"k": 4})["k"])
+	let d ?dyn Named = nil
+	let dd dyn Named = User{name: "dyn"}
+	say.Line("dyn", (d ?? dd).Name())
+	let a ?i64 = nil
+	let b ?i64 = 4
+	say.Line("chain", a ?? b ?? 6, a ?? dflt(), "fallback calls", calls)
+	say.Line("optional result", pick(nil, 8) ?? -1, pick(nil, nil) ?? -1)
+	let left = next(true) ?? dflt()
+	let right = next(false) ?? 11
+	say.Line("left side once", left, right, "lefts", lefts, "fallback calls", calls)
+	let n = (a ?? 1) + 10
+	let name = s ?? "anon"
+	say.Line("expr", n, "hi {name}")
+	let bx = Box{size: a ?? 2, tag: s ?? "t"}
+	say.Line("literal", bx.size, bx.tag)
+	mut total = 0
+	for i in 0..5 {
+		mut v ?i64 = nil
+		if i % 2 == 0 {
+			v = i
+		}
+		total += v ?? 100
+	}
+	say.Line("loop", total)
+}
