@@ -36,7 +36,7 @@ moving or deleting the tree breaks it.
 | `tin asm FILE.tin...` | print the generated ARM64 assembly (clang syntax) |
 | `tin fix -edition 1 FILE.tin...` | rewrite edition-0 (Go-like) files to edition 1 in place (LANGUAGE.md §22) |
 | `tin audit secrets [-edition 1] FILE.tin...` | check the program and list every place a `secret` leaves the checker's protection: each `reveal(x)` and each secret passed to a library parameter declared `secret`, as `file:line:col: ...` sorted by position, then a count; exit status 1 (with the errors) when the program does not check |
-| `tin test [-bench] [DIR]` | build DIR (default `.`) with its `*_test.tin` files and run every `TestXxx(t mut crucible.T)`, then `BenchmarkXxx(b mut crucible.B)` with `-bench`; exit status 1 when a test fails, 2 for a wrong test signature (see §5.1) |
+| `tin test [-bench] [-run REGEX] [-json] [DIR]` | build DIR (default `.`) with its `*_test.tin` files and run every `TestXxx(t mut crucible.T)`, then `BenchmarkXxx(b mut crucible.B)` with `-bench`; exit status 1 when a test fails, 2 for a wrong test signature (see §5.1); `-run REGEX` runs only the tests and benchmarks whose names match (a lasso regular expression, found anywhere in the name), `-json` prints events instead of text (§5.2) |
 | `tin replay CAPSULE --against BUILD [--live KIND]... [--save-test NAME --issue N]` | run a recorded request again with every effect served from its capsule, and report the first divergence (see §8.1) |
 | `tin fix -edition 1 FILE.tin...` | translate each file to edition 1 in place, and declare `mut` every `let` the program reassigns (E711). A file whose translation does not parse as edition 1, or changes when translated again, is left unchanged with the reason (for example a `const` in a nested block, which has to move by hand); exit status 1 when any file was left unchanged |
 | `tin vendor [DIR]` | copy every package `DIR/tin.mod` requires (transitively, from local source directories) into `DIR/vendor/<path>` and write `DIR/tin.lock` with each vendored file's SHA-256 (see §2.1) |
@@ -202,6 +202,25 @@ Never renumber or reuse a code; when a diagnostic goes away, its entry stays, ma
 
 Writing to files in tests: use paths under `/tmp/tin-test-*` (they work on macOS and
 Linux).
+
+### 5.2 Test events (`tin test -json`, protocol version 1)
+
+`tin test -json` prints one JSON object per line on standard output, as the tests run, so a reader can follow them
+incrementally. Fields: `event`, `test` (the function name, `""` for the summary) and, by event:
+
+| `event` | when | more fields |
+|---|---|---|
+| `run` | a test starts | |
+| `output` | for each line the test printed (`say` and the like) and each `t.Log` or failed check | `message` |
+| `pass`, `fail` | a test ends | `elapsed_ms` |
+| `bench` | a benchmark ends (with `-bench`) | `n`, `ns_per_op` |
+| `summary` | at the end | `pass`, `fail` |
+
+Exit statuses are those of the text form (1 when a test failed, 2 for a wrong signature or a bad `-run` pattern).
+The lines a test prints are taken from the runtime's 64 KiB output buffer: a test that prints more than that, or
+whose output is a terminal, has the rest written directly as plain lines between events, so a reader should skip
+lines that do not start with `{`. A failed check's message is an `output` event (`label: got X, want Y`); a failure's
+position is not known, so an editor maps a failure to the test function and the label.
 
 ## 6. Linux on a Mac (Docker)
 

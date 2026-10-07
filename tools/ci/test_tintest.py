@@ -1,4 +1,5 @@
 """tin test: builds a package with its *_test.tin files and reports each TestXxx."""
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -120,6 +121,28 @@ fn TestNoParam() {
 '''
 
 
+# Output a test prints, and a log line, are events of that test (-json).
+CHATTY = '''package geo
+
+import "crucible"
+import "say"
+
+fn TestLoud(t mut crucible.T) {
+	say.Line("hello from the test")
+	t.Log("a logged line")
+	crucible.Equal(mut t, "area", Area(2, 2), 4)
+}
+
+fn TestBroken(t mut crucible.T) {
+	crucible.Equal(mut t, "area", Area(2, 2), 5)
+}
+
+fn TestOther(t mut crucible.T) {
+	t.True("fine", true)
+}
+'''
+
+
 def tin_test(files, *args):
     with tempfile.TemporaryDirectory() as d:
         for name, text in files.items():
@@ -168,6 +191,43 @@ class TinTestCommand(unittest.TestCase):
         code, out = tin_test({'main.tin': APP, 'main_test.tin': APP_TEST})
         self.assertEqual(code, 0, out)
         self.assertIn('--- PASS: TestDouble', out)
+
+    def test_run_picks_tests_by_pattern(self):
+        files = {'geo.tin': LIB, 'geo_test.tin': TESTS}
+        code, out = tin_test(files, '-run', '^TestArea$')
+        self.assertEqual(code, 0, out)
+        self.assertIn('--- PASS: TestArea', out)
+        self.assertNotIn('TestPrivate', out)
+        self.assertIn('PASS: 1 tests', out)
+        code, out = tin_test(files, '-run', 'Priv|Nothing')
+        self.assertEqual(code, 0, out)
+        self.assertIn('--- PASS: TestPrivate', out)
+        self.assertNotIn('TestArea', out)
+        code, out = tin_test(files, '-run', '(')
+        self.assertEqual(code, 2, out)
+        self.assertIn('bad pattern', out)
+
+    def test_json_events(self):
+        code, out = tin_test({'geo.tin': LIB, 'geo_test.tin': CHATTY}, '-json')
+        self.assertEqual(code, 1, out)
+        events = [json.loads(line) for line in out.splitlines()]
+        kinds = [(e['event'], e['test']) for e in events]
+        self.assertEqual(kinds, [
+            ('run', 'TestLoud'), ('output', 'TestLoud'), ('output', 'TestLoud'), ('pass', 'TestLoud'),
+            ('run', 'TestBroken'), ('output', 'TestBroken'), ('fail', 'TestBroken'),
+            ('run', 'TestOther'), ('pass', 'TestOther'), ('summary', '')])
+        self.assertEqual(events[1]['message'], 'hello from the test')
+        self.assertEqual(events[2]['message'], 'a logged line')
+        self.assertEqual(events[5]['message'], 'area: got 4, want 5')
+        self.assertIsInstance(events[3]['elapsed_ms'], int)
+        self.assertEqual((events[-1]['pass'], events[-1]['fail']), (2, 1))
+
+    def test_json_with_run(self):
+        code, out = tin_test({'geo.tin': LIB, 'geo_test.tin': CHATTY}, '-json', '-run', 'Other')
+        self.assertEqual(code, 0, out)
+        events = [json.loads(line) for line in out.splitlines()]
+        self.assertEqual([(e['event'], e['test']) for e in events],
+                         [('run', 'TestOther'), ('pass', 'TestOther'), ('summary', '')])
 
     def test_no_test_files(self):
         code, out = tin_test({'geo.tin': LIB})

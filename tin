@@ -7,7 +7,7 @@
 #   tin asm FILE.tin...             print the generated ARM64 assembly
 #   tin audit secrets [-edition 1] FILE.tin...  list every reveal and secret library argument
 #   tin fix -edition 1 FILES...    rewrite legacy syntax to edition 1
-#   tin test [-bench] [DIR]         run DIR's *_test.tin tests (TestXxx, BenchmarkXxx)
+#   tin test [-bench] [-run REGEX] [-json] [DIR]  run DIR's *_test.tin tests (TestXxx, BenchmarkXxx)
 #   tin replay CAPSULE --against BUILD [--live KIND]... [--save-test NAME --issue N]  replay a recorded request
 #   tin vendor [DIR]                copy tin.mod's requires into vendor/ and write tin.lock
 #   tin caps FILE.tin...            print the capabilities each package can reach
@@ -115,14 +115,20 @@ case $1 in
   test)
     # tin test [-bench] [DIR]: build DIR's package with its *_test.tin files and a generated
     # runner, then run every TestXxx(t mut crucible.T) (and BenchmarkXxx with -bench).
-    shift; bench=0; dir=
+    shift; bench=0; dir=; runpat=; json=false; skip=
     for a do
+      case $skip in
+        r) runpat=$a; skip=; continue ;;
+      esac
       case $a in
         -bench) bench=1 ;;
+        -json) json=true ;;
+        -run) skip=r ;;
         -*) echo "tin: test: unknown option $a" >&2; exit 2 ;;
         *) [ -z "$dir" ] || { echo "tin: test: one directory at a time" >&2; exit 2; }; dir=$a ;;
       esac
     done
+    [ -z "$skip" ] || { echo "tin: test: -run needs a pattern" >&2; exit 2; }
     [ -n "$dir" ] || dir=.
     [ -d "$dir" ] || { echo "tin: test: $dir is not a directory" >&2; exit 2; }
     set --
@@ -139,6 +145,8 @@ case $1 in
       echo "package $pkg"
       echo 'import "crucible"'
       echo 'fn TinTestMain() {'
+      # -run and -json: the pattern goes into the runner as a string literal (quotes and backslashes escaped)
+      printf '\tcrucible.Configure("%s", %s)\n' "$(printf '%s' "$runpat" | sed 's/\\/\\\\/g; s/"/\\"/g; s/{/{{/g; s/}/}}/g')" "$json"
       # As in go test, every TestXxx/BenchmarkXxx in a *_test.tin file (Xxx not starting with a
       # lowercase letter) must be declared on one line as fn TestXxx(name mut crucible.T) {
       # (crucible.B for a benchmark); any other signature is an error, not a skipped test.

@@ -6,6 +6,7 @@
 package crucible
 
 import "constraints"
+import "lasso"
 import "say"
 
 
@@ -143,6 +144,83 @@ type B struct {
 
 mut testsRun i64
 mut testsFailed i64
+mut jsonEvents bool
+mut runFilter []lasso.Regexp
+
+// Configure sets how tin test runs the tests: pattern (a lasso regular expression, "" for every test) picks
+// the tests and benchmarks whose names match, and json prints one JSON event per line instead of text
+// (toolchain/docs/TOOLING.md section 5.2). A pattern that is not a regular expression ends the run with status 2.
+fn Configure(pattern str, json bool) {
+	jsonEvents = json
+	runFilter = []lasso.Regexp{}
+	if len(pattern) > 0 {
+		let re = lasso.Compile(pattern) catch _ {
+			say.Line("tin: test: -run: bad pattern:", pattern)
+			rt_flush()
+			rt_sys_exit(2)
+			return
+		}
+		runFilter = append(runFilter, re)
+	}
+}
+
+// selected reports whether the test or benchmark called name is to run.
+fn selected(name str) bool {
+	return len(runFilter) == 0 || runFilter[0].Match(name)
+}
+
+// jsonText is s as a JSON string.
+fn jsonText(s str) str {
+	mut out = []u8{}
+	out = append(out, '"')
+	for i in 0..len(s) {
+		let c = s[i]
+		if c == '"' || c == '\\' {
+			out = append(out, '\\')
+			out = append(out, c)
+		} else if c == '\n' {
+			out = append(out, '\\')
+			out = append(out, 'n')
+		} else if c == '\t' {
+			out = append(out, '\\')
+			out = append(out, 't')
+		} else if c < 32 {
+			out = append(out, '?')
+		} else {
+			out = append(out, c)
+		}
+	}
+	out = append(out, '"')
+	return str(out)
+}
+
+// event prints one JSON event: {"event":kind,"test":name,...rest} (rest starts with a comma or is empty).
+fn event(kind str, name str, rest str) {
+	say.Line("{{\"event\":" + jsonText(kind) + ",\"test\":" + jsonText(name) + rest + "}}")
+}
+
+// takeOutput returns what the code run since the last call printed to standard output (the runtime's output
+// buffer, 64 KiB at most; more is already on its way to the terminal as plain lines).
+fn takeOutput() str {
+	let n = rtOut[0]
+	let text = rt_str_from_raw(rtOut[2], n)
+	rtOut[0] = 0
+	return text
+}
+
+// outputEvents reports each line of text as an output event of test name.
+fn outputEvents(name str, text str) {
+	mut start = 0
+	for i in 0..len(text) {
+		if text[i] == '\n' {
+			event("output", name, ",\"message\":" + jsonText(text[start:i]))
+			start = i + 1
+		}
+	}
+	if start < len(text) {
+		event("output", name, ",\"message\":" + jsonText(text[start:]))
+	}
+}
 
 // Error marks the test failed with msg (it keeps running).
 fn (t mut T) Error(msg str) {
@@ -195,9 +273,33 @@ fn Equal[V constraints.Comparable](t mut T, label str, got V, want V) {
 	}
 }
 
-// Run runs one test and prints its result like go test -v.
+// Run runs one test and prints its result like go test -v (or as JSON events, see Configure); a test that does
+// not match the -run pattern is not run.
 fn Run(name str, f fn(mut T)) {
+	if !selected(name) {
+		return
+	}
 	let t = T{Name: name, failed: false, logs: []str{}}
+	if jsonEvents {
+		event("run", name, "")
+		rt_flush()
+		takeOutput()
+		let t0 = rt_mono_ns()
+		f(mut t)
+		let ms = (rt_mono_ns() - t0) / 1000000
+		outputEvents(name, takeOutput())
+		for _, l in t.logs {
+			event("output", name, ",\"message\":" + jsonText(l))
+		}
+		testsRun += 1
+		if t.failed {
+			testsFailed += 1
+			event("fail", name, ",\"elapsed_ms\":" + say.Str(ms))
+		} else {
+			event("pass", name, ",\"elapsed_ms\":" + say.Str(ms))
+		}
+		return
+	}
 	f(mut t)
 	testsRun += 1
 	if t.failed {
@@ -214,6 +316,9 @@ fn Run(name str, f fn(mut T)) {
 // RunBench runs one benchmark with b.N doubling until it takes at least 1 s, then prints
 // the time per operation.
 fn RunBench(name str, f fn(mut B)) {
+	if !selected(name) {
+		return
+	}
 	mut n = 1
 	for {
 		let b = B{Name: name, N: n}
@@ -221,6 +326,10 @@ fn RunBench(name str, f fn(mut B)) {
 		f(mut b)
 		let dt = rt_mono_ns() - t0
 		if dt >= 1000000000 || n >= 1 << 40 {
+			if jsonEvents {
+				event("bench", name, ",\"n\":" + say.Str(n) + ",\"ns_per_op\":" + say.Str(dt / n))
+				return
+			}
 			say.Out("%-30s %12d %12.1f ns/op\n", name, n, f64(dt)/f64(n))
 			return
 		}
@@ -234,6 +343,14 @@ fn RunBench(name str, f fn(mut B)) {
 
 // Finish prints PASS or FAIL and exits with status 1 when a test failed.
 fn Finish() {
+	if jsonEvents {
+		event("summary", "", ",\"pass\":" + say.Str(testsRun - testsFailed) + ",\"fail\":" + say.Str(testsFailed))
+		if testsFailed > 0 {
+			rt_flush()
+			rt_sys_exit(1)
+		}
+		return
+	}
 	if testsFailed > 0 {
 		say.Line("FAIL:", testsFailed, "of", testsRun, "tests failed")
 		rt_flush()
