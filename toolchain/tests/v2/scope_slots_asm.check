@@ -1,0 +1,8 @@
+# Locals of disjoint scopes share frame slots (#570): main's frame stays under 256 bytes (it
+# was 4832 on arm64 and 4816 on x86-64), so the prologue moves the stack pointer once, right
+# after the label, and probes no page.
+[arm64]
+CHECK: _main\.main:\n\tstp x29, x30, \[sp, #-(?:[0-9]{1,2}|1[0-9]{2}|2[0-4][0-9]|25[0-5])\]!\n\tadd x29, sp, #0\n
+
+[amd64]
+CHECK: (?m)^L1:\npush rbp\nmov rbp,rsp\nsub rsp,0x[0-9a-f]{1,2}\n(?!test QWORD PTR)

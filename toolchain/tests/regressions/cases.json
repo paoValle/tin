@@ -925,5 +925,14 @@
       "exit": 0,
       "stdout": "cat 1 1 cat 2\n"
     }
+  },
+  {
+    "source": "large-frame-main-overflow.tin",
+    "issue": 570,
+    "expected": {
+      "phase": "run",
+      "exit": 2,
+      "stderr_contains": "panic: stack overflow"
+    }
   }
 ]

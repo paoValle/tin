@@ -2974,6 +2974,7 @@ fn x_assign_homes(f Fn) i64 {
 		r = r + 1
 	}
 	mut nslots = 0
+	slots_share_reset()
 	mut i = 0
 	for i < len(locals) {
 		let s = cast(Sym, locals[i])
@@ -3019,8 +3020,13 @@ fn x_assign_homes(f Fn) i64 {
 			next = next + 1
 		} else {
 			best.reg = REG_SLOT
-			best.off = -8 - 8 * nslots
-			nslots = nslots + 1
+			// A slot of a local whose live range does not meet this one's (#570).
+			best.off = slot_shared(best)
+			if best.off == 1 {
+				best.off = -8 - 8 * nslots
+				nslots = nslots + 1
+				slot_shared_new(best, best.off)
+			}
 		}
 	}
 	// Leftover callee-saved registers survive calls for free; caller-saved ones cost

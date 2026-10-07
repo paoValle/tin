@@ -189,6 +189,13 @@ Registers:
 | x28 | the core context (like Go's g): pool pointers, per-core globals at x28 + 8·(32+i) |
 | x29, x30, sp | frame pointer (kept for backtraces), link register, stack |
 
+- A local that gets no register spills to an 8-byte frame slot, and shares it with spilled
+  locals whose live ranges do not meet (#570): `analyze_fn` numbers the references in walk
+  order, makes every local of a statement live for the whole statement (code generation does
+  not evaluate an expression's parts in walk order), extends ranges over loops, and starts
+  parameters and a closure's descriptor at entry. Locals of disjoint scopes, and those used
+  one after the other, take the same slot. Address-taken and two-word (dyn) locals keep slots
+  of their own. Both back ends share the choice (`slot_shared`, opt.tin).
 - Expressions evaluate into a stack of temporary registers indexed by depth; calls use
   three strategies (direct into argument registers, nested with live-depth tracking, or
   push-all) depending on the arguments.

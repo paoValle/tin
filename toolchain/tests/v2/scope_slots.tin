@@ -1,0 +1,475 @@
+package main
+
+import "say"
+
+// Frame slots shared by locals whose live ranges do not meet (#570): blocks with more live
+// locals than there are callee-saved registers spill, and later blocks reuse the slots.
+// Values carried by loops, read by later iterations or after the loop, and used by indirect
+// and variadic calls must keep their own slots while block temporaries come and go.
+// Generated once by a script; main's compiler prints the same output.
+
+shape Namer {
+	Name() str
+}
+
+type Box struct {
+	n i64
+	tag str
+}
+
+fn (b Box) Name() str {
+	return "box {b.n} {b.tag}"
+}
+
+fn sum(xs ...i64) i64 {
+	mut t = 0
+	for x in xs {
+		t += x
+	}
+	return t
+}
+
+fn twice(x i64) i64 {
+	return x * 2
+}
+
+fn blocks(seed i64) i64 {
+	mut acc = seed
+	if acc >= 0 {
+		let b0_0 = acc % 97 + 0
+		let b0_1 = acc % 98 + 1
+		let b0_2 = acc % 99 + 2
+		let b0_3 = acc % 100 + 3
+		let b0_4 = acc % 101 + 4
+		let b0_5 = acc % 102 + 5
+		let b0_6 = acc % 103 + 6
+		let b0_7 = acc % 104 + 7
+		let b0_8 = acc % 105 + 8
+		let b0_9 = acc % 106 + 9
+		let b0_10 = acc % 107 + 10
+		let b0_11 = acc % 108 + 11
+		let b0_12 = acc % 109 + 12
+		let b0_13 = acc % 110 + 13
+		acc = (acc + b0_0 + b0_1 + b0_2 + b0_3 + b0_4 + b0_5 + b0_6 + b0_7 + b0_8 + b0_9 + b0_10 + b0_11 + b0_12 + b0_13) % 1000003
+	}
+	if acc >= 0 {
+		let b1_0 = acc % 97 + 14
+		let b1_1 = acc % 98 + 15
+		let b1_2 = acc % 99 + 16
+		let b1_3 = acc % 100 + 17
+		let b1_4 = acc % 101 + 18
+		let b1_5 = acc % 102 + 19
+		let b1_6 = acc % 103 + 20
+		let b1_7 = acc % 104 + 21
+		let b1_8 = acc % 105 + 22
+		let b1_9 = acc % 106 + 23
+		let b1_10 = acc % 107 + 24
+		let b1_11 = acc % 108 + 25
+		let b1_12 = acc % 109 + 26
+		let b1_13 = acc % 110 + 27
+		acc = (acc + b1_0 + b1_1 + b1_2 + b1_3 + b1_4 + b1_5 + b1_6 + b1_7 + b1_8 + b1_9 + b1_10 + b1_11 + b1_12 + b1_13) % 1000003
+	}
+	if acc >= 0 {
+		let b2_0 = acc % 97 + 28
+		let b2_1 = acc % 98 + 29
+		let b2_2 = acc % 99 + 30
+		let b2_3 = acc % 100 + 31
+		let b2_4 = acc % 101 + 32
+		let b2_5 = acc % 102 + 33
+		let b2_6 = acc % 103 + 34
+		let b2_7 = acc % 104 + 35
+		let b2_8 = acc % 105 + 36
+		let b2_9 = acc % 106 + 37
+		let b2_10 = acc % 107 + 38
+		let b2_11 = acc % 108 + 39
+		let b2_12 = acc % 109 + 40
+		let b2_13 = acc % 110 + 41
+		acc = (acc + b2_0 + b2_1 + b2_2 + b2_3 + b2_4 + b2_5 + b2_6 + b2_7 + b2_8 + b2_9 + b2_10 + b2_11 + b2_12 + b2_13) % 1000003
+	}
+	if acc >= 0 {
+		let b3_0 = acc % 97 + 42
+		let b3_1 = acc % 98 + 43
+		let b3_2 = acc % 99 + 44
+		let b3_3 = acc % 100 + 45
+		let b3_4 = acc % 101 + 46
+		let b3_5 = acc % 102 + 47
+		let b3_6 = acc % 103 + 48
+		let b3_7 = acc % 104 + 49
+		let b3_8 = acc % 105 + 50
+		let b3_9 = acc % 106 + 51
+		let b3_10 = acc % 107 + 52
+		let b3_11 = acc % 108 + 53
+		let b3_12 = acc % 109 + 54
+		let b3_13 = acc % 110 + 55
+		acc = (acc + b3_0 + b3_1 + b3_2 + b3_3 + b3_4 + b3_5 + b3_6 + b3_7 + b3_8 + b3_9 + b3_10 + b3_11 + b3_12 + b3_13) % 1000003
+	}
+	if acc >= 0 {
+		let b4_0 = acc % 97 + 56
+		let b4_1 = acc % 98 + 57
+		let b4_2 = acc % 99 + 58
+		let b4_3 = acc % 100 + 59
+		let b4_4 = acc % 101 + 60
+		let b4_5 = acc % 102 + 61
+		let b4_6 = acc % 103 + 62
+		let b4_7 = acc % 104 + 63
+		let b4_8 = acc % 105 + 64
+		let b4_9 = acc % 106 + 65
+		let b4_10 = acc % 107 + 66
+		let b4_11 = acc % 108 + 67
+		let b4_12 = acc % 109 + 68
+		let b4_13 = acc % 110 + 69
+		acc = (acc + b4_0 + b4_1 + b4_2 + b4_3 + b4_4 + b4_5 + b4_6 + b4_7 + b4_8 + b4_9 + b4_10 + b4_11 + b4_12 + b4_13) % 1000003
+	}
+	if acc >= 0 {
+		let b5_0 = acc % 97 + 70
+		let b5_1 = acc % 98 + 71
+		let b5_2 = acc % 99 + 72
+		let b5_3 = acc % 100 + 73
+		let b5_4 = acc % 101 + 74
+		let b5_5 = acc % 102 + 75
+		let b5_6 = acc % 103 + 76
+		let b5_7 = acc % 104 + 77
+		let b5_8 = acc % 105 + 78
+		let b5_9 = acc % 106 + 79
+		let b5_10 = acc % 107 + 80
+		let b5_11 = acc % 108 + 81
+		let b5_12 = acc % 109 + 82
+		let b5_13 = acc % 110 + 83
+		acc = (acc + b5_0 + b5_1 + b5_2 + b5_3 + b5_4 + b5_5 + b5_6 + b5_7 + b5_8 + b5_9 + b5_10 + b5_11 + b5_12 + b5_13) % 1000003
+	}
+	if acc >= 0 {
+		let b6_0 = acc % 97 + 84
+		let b6_1 = acc % 98 + 85
+		let b6_2 = acc % 99 + 86
+		let b6_3 = acc % 100 + 87
+		let b6_4 = acc % 101 + 88
+		let b6_5 = acc % 102 + 89
+		let b6_6 = acc % 103 + 90
+		let b6_7 = acc % 104 + 91
+		let b6_8 = acc % 105 + 92
+		let b6_9 = acc % 106 + 93
+		let b6_10 = acc % 107 + 94
+		let b6_11 = acc % 108 + 95
+		let b6_12 = acc % 109 + 96
+		let b6_13 = acc % 110 + 97
+		acc = (acc + b6_0 + b6_1 + b6_2 + b6_3 + b6_4 + b6_5 + b6_6 + b6_7 + b6_8 + b6_9 + b6_10 + b6_11 + b6_12 + b6_13) % 1000003
+	}
+	if acc >= 0 {
+		let b7_0 = acc % 97 + 98
+		let b7_1 = acc % 98 + 99
+		let b7_2 = acc % 99 + 100
+		let b7_3 = acc % 100 + 101
+		let b7_4 = acc % 101 + 102
+		let b7_5 = acc % 102 + 103
+		let b7_6 = acc % 103 + 104
+		let b7_7 = acc % 104 + 105
+		let b7_8 = acc % 105 + 106
+		let b7_9 = acc % 106 + 107
+		let b7_10 = acc % 107 + 108
+		let b7_11 = acc % 108 + 109
+		let b7_12 = acc % 109 + 110
+		let b7_13 = acc % 110 + 111
+		acc = (acc + b7_0 + b7_1 + b7_2 + b7_3 + b7_4 + b7_5 + b7_6 + b7_7 + b7_8 + b7_9 + b7_10 + b7_11 + b7_12 + b7_13) % 1000003
+	}
+	if acc >= 0 {
+		let b8_0 = acc % 97 + 112
+		let b8_1 = acc % 98 + 113
+		let b8_2 = acc % 99 + 114
+		let b8_3 = acc % 100 + 115
+		let b8_4 = acc % 101 + 116
+		let b8_5 = acc % 102 + 117
+		let b8_6 = acc % 103 + 118
+		let b8_7 = acc % 104 + 119
+		let b8_8 = acc % 105 + 120
+		let b8_9 = acc % 106 + 121
+		let b8_10 = acc % 107 + 122
+		let b8_11 = acc % 108 + 123
+		let b8_12 = acc % 109 + 124
+		let b8_13 = acc % 110 + 125
+		acc = (acc + b8_0 + b8_1 + b8_2 + b8_3 + b8_4 + b8_5 + b8_6 + b8_7 + b8_8 + b8_9 + b8_10 + b8_11 + b8_12 + b8_13) % 1000003
+	}
+	if acc >= 0 {
+		let b9_0 = acc % 97 + 126
+		let b9_1 = acc % 98 + 127
+		let b9_2 = acc % 99 + 128
+		let b9_3 = acc % 100 + 129
+		let b9_4 = acc % 101 + 130
+		let b9_5 = acc % 102 + 131
+		let b9_6 = acc % 103 + 132
+		let b9_7 = acc % 104 + 133
+		let b9_8 = acc % 105 + 134
+		let b9_9 = acc % 106 + 135
+		let b9_10 = acc % 107 + 136
+		let b9_11 = acc % 108 + 137
+		let b9_12 = acc % 109 + 138
+		let b9_13 = acc % 110 + 139
+		acc = (acc + b9_0 + b9_1 + b9_2 + b9_3 + b9_4 + b9_5 + b9_6 + b9_7 + b9_8 + b9_9 + b9_10 + b9_11 + b9_12 + b9_13) % 1000003
+	}
+	if acc >= 0 {
+		let b10_0 = acc % 97 + 140
+		let b10_1 = acc % 98 + 141
+		let b10_2 = acc % 99 + 142
+		let b10_3 = acc % 100 + 143
+		let b10_4 = acc % 101 + 144
+		let b10_5 = acc % 102 + 145
+		let b10_6 = acc % 103 + 146
+		let b10_7 = acc % 104 + 147
+		let b10_8 = acc % 105 + 148
+		let b10_9 = acc % 106 + 149
+		let b10_10 = acc % 107 + 150
+		let b10_11 = acc % 108 + 151
+		let b10_12 = acc % 109 + 152
+		let b10_13 = acc % 110 + 153
+		acc = (acc + b10_0 + b10_1 + b10_2 + b10_3 + b10_4 + b10_5 + b10_6 + b10_7 + b10_8 + b10_9 + b10_10 + b10_11 + b10_12 + b10_13) % 1000003
+	}
+	if acc >= 0 {
+		let b11_0 = acc % 97 + 154
+		let b11_1 = acc % 98 + 155
+		let b11_2 = acc % 99 + 156
+		let b11_3 = acc % 100 + 157
+		let b11_4 = acc % 101 + 158
+		let b11_5 = acc % 102 + 159
+		let b11_6 = acc % 103 + 160
+		let b11_7 = acc % 104 + 161
+		let b11_8 = acc % 105 + 162
+		let b11_9 = acc % 106 + 163
+		let b11_10 = acc % 107 + 164
+		let b11_11 = acc % 108 + 165
+		let b11_12 = acc % 109 + 166
+		let b11_13 = acc % 110 + 167
+		acc = (acc + b11_0 + b11_1 + b11_2 + b11_3 + b11_4 + b11_5 + b11_6 + b11_7 + b11_8 + b11_9 + b11_10 + b11_11 + b11_12 + b11_13) % 1000003
+	}
+	return acc
+}
+
+fn loops(n i64) i64 {
+	mut carry = 1
+	mut prev = 7
+	mut total = 0
+	let f = twice
+	for i in 0..n {
+		if i % 5 == 4 {
+			continue
+		}
+		let t0 = carry + i * 1 + prev
+		let t1 = carry + i * 2 + prev
+		let t2 = carry + i * 3 + prev
+		let t3 = carry + i * 4 + prev
+		let t4 = carry + i * 5 + prev
+		let t5 = carry + i * 6 + prev
+		let t6 = carry + i * 7 + prev
+		let t7 = carry + i * 8 + prev
+		let t8 = carry + i * 9 + prev
+		let t9 = carry + i * 10 + prev
+		let t10 = carry + i * 11 + prev
+		let t11 = carry + i * 12 + prev
+		let s = t0 + t1 + t2 + t3 + t4 + t5 + t6 + t7 + t8 + t9 + t10 + t11
+		prev = carry
+		carry = (carry * 31 + s) % 65521
+		for k in 0..3 {
+			let u0 = k * 3 + carry
+			let u1 = k * 4 + carry
+			let u2 = k * 5 + carry
+			let u3 = k * 6 + carry
+			let u4 = k * 7 + carry
+			let u5 = k * 8 + carry
+			let u6 = k * 9 + carry
+			let u7 = k * 10 + carry
+			let u8 = k * 11 + carry
+			let u9 = k * 12 + carry
+			total = (total + u0 + u1 + u2 + u3 + u4 + u5 + u6 + u7 + u8 + u9 + f(k)) % 1000003
+			if k == 2 && i == n - 1 {
+				break
+			}
+		}
+		total = (total + sum(carry, prev, i) + f(total % 100)) % 1000003
+	}
+	return total + carry + prev
+}
+
+fn mixed(n i64) str {
+	mut out = ""
+	mut fl = 0.5
+	let d dyn Namer = Box{n: n, tag: "d"}
+	if n > 0 {
+		let s0_0 = "x00"
+		let f0_0 = fl + 0.25
+		let s0_1 = "x01"
+		let f0_1 = fl + 1.25
+		let s0_2 = "x02"
+		let f0_2 = fl + 2.25
+		let s0_3 = "x03"
+		let f0_3 = fl + 3.25
+		let s0_4 = "x04"
+		let f0_4 = fl + 4.25
+		let s0_5 = "x05"
+		let f0_5 = fl + 5.25
+		let s0_6 = "x06"
+		let f0_6 = fl + 6.25
+		let s0_7 = "x07"
+		let f0_7 = fl + 7.25
+		let s0_8 = "x08"
+		let f0_8 = fl + 8.25
+		let s0_9 = "x09"
+		let f0_9 = fl + 9.25
+		let s0_10 = "x010"
+		let f0_10 = fl + 10.25
+		let e0 dyn Namer = Box{n: 0, tag: s0_0}
+		let add0 = fn(x i64) i64 { return x + 0 }
+		out = out + s0_0 + s0_1 + s0_2 + s0_3 + s0_4 + s0_5 + s0_6 + s0_7 + s0_8 + s0_9 + s0_10 + e0.Name() + d.Name()
+		fl = (f0_0 + f0_1 + f0_2 + f0_3 + f0_4 + f0_5 + f0_6 + f0_7 + f0_8 + f0_9 + f0_10) / 11.0
+		out = out + "{add0(n)};"
+	}
+	if n > 0 {
+		let s1_0 = "x10"
+		let f1_0 = fl + 0.25
+		let s1_1 = "x11"
+		let f1_1 = fl + 1.25
+		let s1_2 = "x12"
+		let f1_2 = fl + 2.25
+		let s1_3 = "x13"
+		let f1_3 = fl + 3.25
+		let s1_4 = "x14"
+		let f1_4 = fl + 4.25
+		let s1_5 = "x15"
+		let f1_5 = fl + 5.25
+		let s1_6 = "x16"
+		let f1_6 = fl + 6.25
+		let s1_7 = "x17"
+		let f1_7 = fl + 7.25
+		let s1_8 = "x18"
+		let f1_8 = fl + 8.25
+		let s1_9 = "x19"
+		let f1_9 = fl + 9.25
+		let s1_10 = "x110"
+		let f1_10 = fl + 10.25
+		let e1 dyn Namer = Box{n: 1, tag: s1_0}
+		let add1 = fn(x i64) i64 { return x + 1 }
+		out = out + s1_0 + s1_1 + s1_2 + s1_3 + s1_4 + s1_5 + s1_6 + s1_7 + s1_8 + s1_9 + s1_10 + e1.Name() + d.Name()
+		fl = (f1_0 + f1_1 + f1_2 + f1_3 + f1_4 + f1_5 + f1_6 + f1_7 + f1_8 + f1_9 + f1_10) / 11.0
+		out = out + "{add1(n)};"
+	}
+	if n > 0 {
+		let s2_0 = "x20"
+		let f2_0 = fl + 0.25
+		let s2_1 = "x21"
+		let f2_1 = fl + 1.25
+		let s2_2 = "x22"
+		let f2_2 = fl + 2.25
+		let s2_3 = "x23"
+		let f2_3 = fl + 3.25
+		let s2_4 = "x24"
+		let f2_4 = fl + 4.25
+		let s2_5 = "x25"
+		let f2_5 = fl + 5.25
+		let s2_6 = "x26"
+		let f2_6 = fl + 6.25
+		let s2_7 = "x27"
+		let f2_7 = fl + 7.25
+		let s2_8 = "x28"
+		let f2_8 = fl + 8.25
+		let s2_9 = "x29"
+		let f2_9 = fl + 9.25
+		let s2_10 = "x210"
+		let f2_10 = fl + 10.25
+		let e2 dyn Namer = Box{n: 2, tag: s2_0}
+		let add2 = fn(x i64) i64 { return x + 2 }
+		out = out + s2_0 + s2_1 + s2_2 + s2_3 + s2_4 + s2_5 + s2_6 + s2_7 + s2_8 + s2_9 + s2_10 + e2.Name() + d.Name()
+		fl = (f2_0 + f2_1 + f2_2 + f2_3 + f2_4 + f2_5 + f2_6 + f2_7 + f2_8 + f2_9 + f2_10) / 11.0
+		out = out + "{add2(n)};"
+	}
+	if n > 0 {
+		let s3_0 = "x30"
+		let f3_0 = fl + 0.25
+		let s3_1 = "x31"
+		let f3_1 = fl + 1.25
+		let s3_2 = "x32"
+		let f3_2 = fl + 2.25
+		let s3_3 = "x33"
+		let f3_3 = fl + 3.25
+		let s3_4 = "x34"
+		let f3_4 = fl + 4.25
+		let s3_5 = "x35"
+		let f3_5 = fl + 5.25
+		let s3_6 = "x36"
+		let f3_6 = fl + 6.25
+		let s3_7 = "x37"
+		let f3_7 = fl + 7.25
+		let s3_8 = "x38"
+		let f3_8 = fl + 8.25
+		let s3_9 = "x39"
+		let f3_9 = fl + 9.25
+		let s3_10 = "x310"
+		let f3_10 = fl + 10.25
+		let e3 dyn Namer = Box{n: 3, tag: s3_0}
+		let add3 = fn(x i64) i64 { return x + 3 }
+		out = out + s3_0 + s3_1 + s3_2 + s3_3 + s3_4 + s3_5 + s3_6 + s3_7 + s3_8 + s3_9 + s3_10 + e3.Name() + d.Name()
+		fl = (f3_0 + f3_1 + f3_2 + f3_3 + f3_4 + f3_5 + f3_6 + f3_7 + f3_8 + f3_9 + f3_10) / 11.0
+		out = out + "{add3(n)};"
+	}
+	if n > 0 {
+		let s4_0 = "x40"
+		let f4_0 = fl + 0.25
+		let s4_1 = "x41"
+		let f4_1 = fl + 1.25
+		let s4_2 = "x42"
+		let f4_2 = fl + 2.25
+		let s4_3 = "x43"
+		let f4_3 = fl + 3.25
+		let s4_4 = "x44"
+		let f4_4 = fl + 4.25
+		let s4_5 = "x45"
+		let f4_5 = fl + 5.25
+		let s4_6 = "x46"
+		let f4_6 = fl + 6.25
+		let s4_7 = "x47"
+		let f4_7 = fl + 7.25
+		let s4_8 = "x48"
+		let f4_8 = fl + 8.25
+		let s4_9 = "x49"
+		let f4_9 = fl + 9.25
+		let s4_10 = "x410"
+		let f4_10 = fl + 10.25
+		let e4 dyn Namer = Box{n: 4, tag: s4_0}
+		let add4 = fn(x i64) i64 { return x + 4 }
+		out = out + s4_0 + s4_1 + s4_2 + s4_3 + s4_4 + s4_5 + s4_6 + s4_7 + s4_8 + s4_9 + s4_10 + e4.Name() + d.Name()
+		fl = (f4_0 + f4_1 + f4_2 + f4_3 + f4_4 + f4_5 + f4_6 + f4_7 + f4_8 + f4_9 + f4_10) / 11.0
+		out = out + "{add4(n)};"
+	}
+	if n > 0 {
+		let s5_0 = "x50"
+		let f5_0 = fl + 0.25
+		let s5_1 = "x51"
+		let f5_1 = fl + 1.25
+		let s5_2 = "x52"
+		let f5_2 = fl + 2.25
+		let s5_3 = "x53"
+		let f5_3 = fl + 3.25
+		let s5_4 = "x54"
+		let f5_4 = fl + 4.25
+		let s5_5 = "x55"
+		let f5_5 = fl + 5.25
+		let s5_6 = "x56"
+		let f5_6 = fl + 6.25
+		let s5_7 = "x57"
+		let f5_7 = fl + 7.25
+		let s5_8 = "x58"
+		let f5_8 = fl + 8.25
+		let s5_9 = "x59"
+		let f5_9 = fl + 9.25
+		let s5_10 = "x510"
+		let f5_10 = fl + 10.25
+		let e5 dyn Namer = Box{n: 5, tag: s5_0}
+		let add5 = fn(x i64) i64 { return x + 5 }
+		out = out + s5_0 + s5_1 + s5_2 + s5_3 + s5_4 + s5_5 + s5_6 + s5_7 + s5_8 + s5_9 + s5_10 + e5.Name() + d.Name()
+		fl = (f5_0 + f5_1 + f5_2 + f5_3 + f5_4 + f5_5 + f5_6 + f5_7 + f5_8 + f5_9 + f5_10) / 11.0
+		out = out + "{add5(n)};"
+	}
+	return "{len(out)} {out[0:40]} {fl}"
+}
+
+fn main() {
+	say.Line("blocks", blocks(12345))
+	say.Line("loops", loops(40))
+	say.Line("mixed", mixed(3))
+}

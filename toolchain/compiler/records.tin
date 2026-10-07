@@ -419,6 +419,9 @@ type Sym struct {
 	stale_by i64 // the variable append grew
 	unbox i64 // a narrowed ?number: the variable holds the box, reads load its field (#353)
 	fixed i64 // declared with let: assigning it is E711 (#526)
+	live_lo i64  // first position analyze_fn saw the local at (-1: never), loops included (#570)
+	live_hi i64  // last position, loops included
+	live_def i64 // the first reference is the local's let
 }
 
 type ScopeStmt struct {

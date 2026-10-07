@@ -33,7 +33,7 @@ shared mut dyn_tables []i64 // [concrete type, dyn type, keep function, methods,
 shared mut ck_escaping_cells []str // variable names that must be allocated in heap cells
 
 fn sym_new(kind i64, name str, pos i64) Sym {
-	let s = cast(Sym, calloc(37, 8))
+	let s = cast(Sym, calloc(40, 8))
 	s.kind = kind
 	s.name = name
 	s.pos = pos

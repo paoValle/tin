@@ -1,0 +1,1513 @@
+package main
+
+import "say"
+
+// Locals of disjoint scopes share frame slots (#570): 300 blocks of two locals each, with
+// only a few live at a time, keep main's frame small (it was 4832 bytes on arm64). Each
+// block's locals are live from their let to their last read, so the blocks reuse one or
+// two slots. Generated once by a script.
+
+fn main() {
+	mut t = 0
+	if t >= 0 {
+		let a0 = t + 0
+		let b0 = a0 * 2
+		t = b0 - a0
+	}
+	if t >= 0 {
+		let a1 = t + 1
+		let b1 = a1 * 2
+		t = b1 - a1
+	}
+	if t >= 0 {
+		let a2 = t + 2
+		let b2 = a2 * 2
+		t = b2 - a2
+	}
+	if t >= 0 {
+		let a3 = t + 3
+		let b3 = a3 * 2
+		t = b3 - a3
+	}
+	if t >= 0 {
+		let a4 = t + 4
+		let b4 = a4 * 2
+		t = b4 - a4
+	}
+	if t >= 0 {
+		let a5 = t + 5
+		let b5 = a5 * 2
+		t = b5 - a5
+	}
+	if t >= 0 {
+		let a6 = t + 6
+		let b6 = a6 * 2
+		t = b6 - a6
+	}
+	if t >= 0 {
+		let a7 = t + 7
+		let b7 = a7 * 2
+		t = b7 - a7
+	}
+	if t >= 0 {
+		let a8 = t + 8
+		let b8 = a8 * 2
+		t = b8 - a8
+	}
+	if t >= 0 {
+		let a9 = t + 9
+		let b9 = a9 * 2
+		t = b9 - a9
+	}
+	if t >= 0 {
+		let a10 = t + 10
+		let b10 = a10 * 2
+		t = b10 - a10
+	}
+	if t >= 0 {
+		let a11 = t + 11
+		let b11 = a11 * 2
+		t = b11 - a11
+	}
+	if t >= 0 {
+		let a12 = t + 12
+		let b12 = a12 * 2
+		t = b12 - a12
+	}
+	if t >= 0 {
+		let a13 = t + 13
+		let b13 = a13 * 2
+		t = b13 - a13
+	}
+	if t >= 0 {
+		let a14 = t + 14
+		let b14 = a14 * 2
+		t = b14 - a14
+	}
+	if t >= 0 {
+		let a15 = t + 15
+		let b15 = a15 * 2
+		t = b15 - a15
+	}
+	if t >= 0 {
+		let a16 = t + 16
+		let b16 = a16 * 2
+		t = b16 - a16
+	}
+	if t >= 0 {
+		let a17 = t + 17
+		let b17 = a17 * 2
+		t = b17 - a17
+	}
+	if t >= 0 {
+		let a18 = t + 18
+		let b18 = a18 * 2
+		t = b18 - a18
+	}
+	if t >= 0 {
+		let a19 = t + 19
+		let b19 = a19 * 2
+		t = b19 - a19
+	}
+	if t >= 0 {
+		let a20 = t + 20
+		let b20 = a20 * 2
+		t = b20 - a20
+	}
+	if t >= 0 {
+		let a21 = t + 21
+		let b21 = a21 * 2
+		t = b21 - a21
+	}
+	if t >= 0 {
+		let a22 = t + 22
+		let b22 = a22 * 2
+		t = b22 - a22
+	}
+	if t >= 0 {
+		let a23 = t + 23
+		let b23 = a23 * 2
+		t = b23 - a23
+	}
+	if t >= 0 {
+		let a24 = t + 24
+		let b24 = a24 * 2
+		t = b24 - a24
+	}
+	if t >= 0 {
+		let a25 = t + 25
+		let b25 = a25 * 2
+		t = b25 - a25
+	}
+	if t >= 0 {
+		let a26 = t + 26
+		let b26 = a26 * 2
+		t = b26 - a26
+	}
+	if t >= 0 {
+		let a27 = t + 27
+		let b27 = a27 * 2
+		t = b27 - a27
+	}
+	if t >= 0 {
+		let a28 = t + 28
+		let b28 = a28 * 2
+		t = b28 - a28
+	}
+	if t >= 0 {
+		let a29 = t + 29
+		let b29 = a29 * 2
+		t = b29 - a29
+	}
+	if t >= 0 {
+		let a30 = t + 30
+		let b30 = a30 * 2
+		t = b30 - a30
+	}
+	if t >= 0 {
+		let a31 = t + 31
+		let b31 = a31 * 2
+		t = b31 - a31
+	}
+	if t >= 0 {
+		let a32 = t + 32
+		let b32 = a32 * 2
+		t = b32 - a32
+	}
+	if t >= 0 {
+		let a33 = t + 33
+		let b33 = a33 * 2
+		t = b33 - a33
+	}
+	if t >= 0 {
+		let a34 = t + 34
+		let b34 = a34 * 2
+		t = b34 - a34
+	}
+	if t >= 0 {
+		let a35 = t + 35
+		let b35 = a35 * 2
+		t = b35 - a35
+	}
+	if t >= 0 {
+		let a36 = t + 36
+		let b36 = a36 * 2
+		t = b36 - a36
+	}
+	if t >= 0 {
+		let a37 = t + 37
+		let b37 = a37 * 2
+		t = b37 - a37
+	}
+	if t >= 0 {
+		let a38 = t + 38
+		let b38 = a38 * 2
+		t = b38 - a38
+	}
+	if t >= 0 {
+		let a39 = t + 39
+		let b39 = a39 * 2
+		t = b39 - a39
+	}
+	if t >= 0 {
+		let a40 = t + 40
+		let b40 = a40 * 2
+		t = b40 - a40
+	}
+	if t >= 0 {
+		let a41 = t + 41
+		let b41 = a41 * 2
+		t = b41 - a41
+	}
+	if t >= 0 {
+		let a42 = t + 42
+		let b42 = a42 * 2
+		t = b42 - a42
+	}
+	if t >= 0 {
+		let a43 = t + 43
+		let b43 = a43 * 2
+		t = b43 - a43
+	}
+	if t >= 0 {
+		let a44 = t + 44
+		let b44 = a44 * 2
+		t = b44 - a44
+	}
+	if t >= 0 {
+		let a45 = t + 45
+		let b45 = a45 * 2
+		t = b45 - a45
+	}
+	if t >= 0 {
+		let a46 = t + 46
+		let b46 = a46 * 2
+		t = b46 - a46
+	}
+	if t >= 0 {
+		let a47 = t + 47
+		let b47 = a47 * 2
+		t = b47 - a47
+	}
+	if t >= 0 {
+		let a48 = t + 48
+		let b48 = a48 * 2
+		t = b48 - a48
+	}
+	if t >= 0 {
+		let a49 = t + 49
+		let b49 = a49 * 2
+		t = b49 - a49
+	}
+	if t >= 0 {
+		let a50 = t + 50
+		let b50 = a50 * 2
+		t = b50 - a50
+	}
+	if t >= 0 {
+		let a51 = t + 51
+		let b51 = a51 * 2
+		t = b51 - a51
+	}
+	if t >= 0 {
+		let a52 = t + 52
+		let b52 = a52 * 2
+		t = b52 - a52
+	}
+	if t >= 0 {
+		let a53 = t + 53
+		let b53 = a53 * 2
+		t = b53 - a53
+	}
+	if t >= 0 {
+		let a54 = t + 54
+		let b54 = a54 * 2
+		t = b54 - a54
+	}
+	if t >= 0 {
+		let a55 = t + 55
+		let b55 = a55 * 2
+		t = b55 - a55
+	}
+	if t >= 0 {
+		let a56 = t + 56
+		let b56 = a56 * 2
+		t = b56 - a56
+	}
+	if t >= 0 {
+		let a57 = t + 57
+		let b57 = a57 * 2
+		t = b57 - a57
+	}
+	if t >= 0 {
+		let a58 = t + 58
+		let b58 = a58 * 2
+		t = b58 - a58
+	}
+	if t >= 0 {
+		let a59 = t + 59
+		let b59 = a59 * 2
+		t = b59 - a59
+	}
+	if t >= 0 {
+		let a60 = t + 60
+		let b60 = a60 * 2
+		t = b60 - a60
+	}
+	if t >= 0 {
+		let a61 = t + 61
+		let b61 = a61 * 2
+		t = b61 - a61
+	}
+	if t >= 0 {
+		let a62 = t + 62
+		let b62 = a62 * 2
+		t = b62 - a62
+	}
+	if t >= 0 {
+		let a63 = t + 63
+		let b63 = a63 * 2
+		t = b63 - a63
+	}
+	if t >= 0 {
+		let a64 = t + 64
+		let b64 = a64 * 2
+		t = b64 - a64
+	}
+	if t >= 0 {
+		let a65 = t + 65
+		let b65 = a65 * 2
+		t = b65 - a65
+	}
+	if t >= 0 {
+		let a66 = t + 66
+		let b66 = a66 * 2
+		t = b66 - a66
+	}
+	if t >= 0 {
+		let a67 = t + 67
+		let b67 = a67 * 2
+		t = b67 - a67
+	}
+	if t >= 0 {
+		let a68 = t + 68
+		let b68 = a68 * 2
+		t = b68 - a68
+	}
+	if t >= 0 {
+		let a69 = t + 69
+		let b69 = a69 * 2
+		t = b69 - a69
+	}
+	if t >= 0 {
+		let a70 = t + 70
+		let b70 = a70 * 2
+		t = b70 - a70
+	}
+	if t >= 0 {
+		let a71 = t + 71
+		let b71 = a71 * 2
+		t = b71 - a71
+	}
+	if t >= 0 {
+		let a72 = t + 72
+		let b72 = a72 * 2
+		t = b72 - a72
+	}
+	if t >= 0 {
+		let a73 = t + 73
+		let b73 = a73 * 2
+		t = b73 - a73
+	}
+	if t >= 0 {
+		let a74 = t + 74
+		let b74 = a74 * 2
+		t = b74 - a74
+	}
+	if t >= 0 {
+		let a75 = t + 75
+		let b75 = a75 * 2
+		t = b75 - a75
+	}
+	if t >= 0 {
+		let a76 = t + 76
+		let b76 = a76 * 2
+		t = b76 - a76
+	}
+	if t >= 0 {
+		let a77 = t + 77
+		let b77 = a77 * 2
+		t = b77 - a77
+	}
+	if t >= 0 {
+		let a78 = t + 78
+		let b78 = a78 * 2
+		t = b78 - a78
+	}
+	if t >= 0 {
+		let a79 = t + 79
+		let b79 = a79 * 2
+		t = b79 - a79
+	}
+	if t >= 0 {
+		let a80 = t + 80
+		let b80 = a80 * 2
+		t = b80 - a80
+	}
+	if t >= 0 {
+		let a81 = t + 81
+		let b81 = a81 * 2
+		t = b81 - a81
+	}
+	if t >= 0 {
+		let a82 = t + 82
+		let b82 = a82 * 2
+		t = b82 - a82
+	}
+	if t >= 0 {
+		let a83 = t + 83
+		let b83 = a83 * 2
+		t = b83 - a83
+	}
+	if t >= 0 {
+		let a84 = t + 84
+		let b84 = a84 * 2
+		t = b84 - a84
+	}
+	if t >= 0 {
+		let a85 = t + 85
+		let b85 = a85 * 2
+		t = b85 - a85
+	}
+	if t >= 0 {
+		let a86 = t + 86
+		let b86 = a86 * 2
+		t = b86 - a86
+	}
+	if t >= 0 {
+		let a87 = t + 87
+		let b87 = a87 * 2
+		t = b87 - a87
+	}
+	if t >= 0 {
+		let a88 = t + 88
+		let b88 = a88 * 2
+		t = b88 - a88
+	}
+	if t >= 0 {
+		let a89 = t + 89
+		let b89 = a89 * 2
+		t = b89 - a89
+	}
+	if t >= 0 {
+		let a90 = t + 90
+		let b90 = a90 * 2
+		t = b90 - a90
+	}
+	if t >= 0 {
+		let a91 = t + 91
+		let b91 = a91 * 2
+		t = b91 - a91
+	}
+	if t >= 0 {
+		let a92 = t + 92
+		let b92 = a92 * 2
+		t = b92 - a92
+	}
+	if t >= 0 {
+		let a93 = t + 93
+		let b93 = a93 * 2
+		t = b93 - a93
+	}
+	if t >= 0 {
+		let a94 = t + 94
+		let b94 = a94 * 2
+		t = b94 - a94
+	}
+	if t >= 0 {
+		let a95 = t + 95
+		let b95 = a95 * 2
+		t = b95 - a95
+	}
+	if t >= 0 {
+		let a96 = t + 96
+		let b96 = a96 * 2
+		t = b96 - a96
+	}
+	if t >= 0 {
+		let a97 = t + 97
+		let b97 = a97 * 2
+		t = b97 - a97
+	}
+	if t >= 0 {
+		let a98 = t + 98
+		let b98 = a98 * 2
+		t = b98 - a98
+	}
+	if t >= 0 {
+		let a99 = t + 99
+		let b99 = a99 * 2
+		t = b99 - a99
+	}
+	if t >= 0 {
+		let a100 = t + 100
+		let b100 = a100 * 2
+		t = b100 - a100
+	}
+	if t >= 0 {
+		let a101 = t + 101
+		let b101 = a101 * 2
+		t = b101 - a101
+	}
+	if t >= 0 {
+		let a102 = t + 102
+		let b102 = a102 * 2
+		t = b102 - a102
+	}
+	if t >= 0 {
+		let a103 = t + 103
+		let b103 = a103 * 2
+		t = b103 - a103
+	}
+	if t >= 0 {
+		let a104 = t + 104
+		let b104 = a104 * 2
+		t = b104 - a104
+	}
+	if t >= 0 {
+		let a105 = t + 105
+		let b105 = a105 * 2
+		t = b105 - a105
+	}
+	if t >= 0 {
+		let a106 = t + 106
+		let b106 = a106 * 2
+		t = b106 - a106
+	}
+	if t >= 0 {
+		let a107 = t + 107
+		let b107 = a107 * 2
+		t = b107 - a107
+	}
+	if t >= 0 {
+		let a108 = t + 108
+		let b108 = a108 * 2
+		t = b108 - a108
+	}
+	if t >= 0 {
+		let a109 = t + 109
+		let b109 = a109 * 2
+		t = b109 - a109
+	}
+	if t >= 0 {
+		let a110 = t + 110
+		let b110 = a110 * 2
+		t = b110 - a110
+	}
+	if t >= 0 {
+		let a111 = t + 111
+		let b111 = a111 * 2
+		t = b111 - a111
+	}
+	if t >= 0 {
+		let a112 = t + 112
+		let b112 = a112 * 2
+		t = b112 - a112
+	}
+	if t >= 0 {
+		let a113 = t + 113
+		let b113 = a113 * 2
+		t = b113 - a113
+	}
+	if t >= 0 {
+		let a114 = t + 114
+		let b114 = a114 * 2
+		t = b114 - a114
+	}
+	if t >= 0 {
+		let a115 = t + 115
+		let b115 = a115 * 2
+		t = b115 - a115
+	}
+	if t >= 0 {
+		let a116 = t + 116
+		let b116 = a116 * 2
+		t = b116 - a116
+	}
+	if t >= 0 {
+		let a117 = t + 117
+		let b117 = a117 * 2
+		t = b117 - a117
+	}
+	if t >= 0 {
+		let a118 = t + 118
+		let b118 = a118 * 2
+		t = b118 - a118
+	}
+	if t >= 0 {
+		let a119 = t + 119
+		let b119 = a119 * 2
+		t = b119 - a119
+	}
+	if t >= 0 {
+		let a120 = t + 120
+		let b120 = a120 * 2
+		t = b120 - a120
+	}
+	if t >= 0 {
+		let a121 = t + 121
+		let b121 = a121 * 2
+		t = b121 - a121
+	}
+	if t >= 0 {
+		let a122 = t + 122
+		let b122 = a122 * 2
+		t = b122 - a122
+	}
+	if t >= 0 {
+		let a123 = t + 123
+		let b123 = a123 * 2
+		t = b123 - a123
+	}
+	if t >= 0 {
+		let a124 = t + 124
+		let b124 = a124 * 2
+		t = b124 - a124
+	}
+	if t >= 0 {
+		let a125 = t + 125
+		let b125 = a125 * 2
+		t = b125 - a125
+	}
+	if t >= 0 {
+		let a126 = t + 126
+		let b126 = a126 * 2
+		t = b126 - a126
+	}
+	if t >= 0 {
+		let a127 = t + 127
+		let b127 = a127 * 2
+		t = b127 - a127
+	}
+	if t >= 0 {
+		let a128 = t + 128
+		let b128 = a128 * 2
+		t = b128 - a128
+	}
+	if t >= 0 {
+		let a129 = t + 129
+		let b129 = a129 * 2
+		t = b129 - a129
+	}
+	if t >= 0 {
+		let a130 = t + 130
+		let b130 = a130 * 2
+		t = b130 - a130
+	}
+	if t >= 0 {
+		let a131 = t + 131
+		let b131 = a131 * 2
+		t = b131 - a131
+	}
+	if t >= 0 {
+		let a132 = t + 132
+		let b132 = a132 * 2
+		t = b132 - a132
+	}
+	if t >= 0 {
+		let a133 = t + 133
+		let b133 = a133 * 2
+		t = b133 - a133
+	}
+	if t >= 0 {
+		let a134 = t + 134
+		let b134 = a134 * 2
+		t = b134 - a134
+	}
+	if t >= 0 {
+		let a135 = t + 135
+		let b135 = a135 * 2
+		t = b135 - a135
+	}
+	if t >= 0 {
+		let a136 = t + 136
+		let b136 = a136 * 2
+		t = b136 - a136
+	}
+	if t >= 0 {
+		let a137 = t + 137
+		let b137 = a137 * 2
+		t = b137 - a137
+	}
+	if t >= 0 {
+		let a138 = t + 138
+		let b138 = a138 * 2
+		t = b138 - a138
+	}
+	if t >= 0 {
+		let a139 = t + 139
+		let b139 = a139 * 2
+		t = b139 - a139
+	}
+	if t >= 0 {
+		let a140 = t + 140
+		let b140 = a140 * 2
+		t = b140 - a140
+	}
+	if t >= 0 {
+		let a141 = t + 141
+		let b141 = a141 * 2
+		t = b141 - a141
+	}
+	if t >= 0 {
+		let a142 = t + 142
+		let b142 = a142 * 2
+		t = b142 - a142
+	}
+	if t >= 0 {
+		let a143 = t + 143
+		let b143 = a143 * 2
+		t = b143 - a143
+	}
+	if t >= 0 {
+		let a144 = t + 144
+		let b144 = a144 * 2
+		t = b144 - a144
+	}
+	if t >= 0 {
+		let a145 = t + 145
+		let b145 = a145 * 2
+		t = b145 - a145
+	}
+	if t >= 0 {
+		let a146 = t + 146
+		let b146 = a146 * 2
+		t = b146 - a146
+	}
+	if t >= 0 {
+		let a147 = t + 147
+		let b147 = a147 * 2
+		t = b147 - a147
+	}
+	if t >= 0 {
+		let a148 = t + 148
+		let b148 = a148 * 2
+		t = b148 - a148
+	}
+	if t >= 0 {
+		let a149 = t + 149
+		let b149 = a149 * 2
+		t = b149 - a149
+	}
+	if t >= 0 {
+		let a150 = t + 150
+		let b150 = a150 * 2
+		t = b150 - a150
+	}
+	if t >= 0 {
+		let a151 = t + 151
+		let b151 = a151 * 2
+		t = b151 - a151
+	}
+	if t >= 0 {
+		let a152 = t + 152
+		let b152 = a152 * 2
+		t = b152 - a152
+	}
+	if t >= 0 {
+		let a153 = t + 153
+		let b153 = a153 * 2
+		t = b153 - a153
+	}
+	if t >= 0 {
+		let a154 = t + 154
+		let b154 = a154 * 2
+		t = b154 - a154
+	}
+	if t >= 0 {
+		let a155 = t + 155
+		let b155 = a155 * 2
+		t = b155 - a155
+	}
+	if t >= 0 {
+		let a156 = t + 156
+		let b156 = a156 * 2
+		t = b156 - a156
+	}
+	if t >= 0 {
+		let a157 = t + 157
+		let b157 = a157 * 2
+		t = b157 - a157
+	}
+	if t >= 0 {
+		let a158 = t + 158
+		let b158 = a158 * 2
+		t = b158 - a158
+	}
+	if t >= 0 {
+		let a159 = t + 159
+		let b159 = a159 * 2
+		t = b159 - a159
+	}
+	if t >= 0 {
+		let a160 = t + 160
+		let b160 = a160 * 2
+		t = b160 - a160
+	}
+	if t >= 0 {
+		let a161 = t + 161
+		let b161 = a161 * 2
+		t = b161 - a161
+	}
+	if t >= 0 {
+		let a162 = t + 162
+		let b162 = a162 * 2
+		t = b162 - a162
+	}
+	if t >= 0 {
+		let a163 = t + 163
+		let b163 = a163 * 2
+		t = b163 - a163
+	}
+	if t >= 0 {
+		let a164 = t + 164
+		let b164 = a164 * 2
+		t = b164 - a164
+	}
+	if t >= 0 {
+		let a165 = t + 165
+		let b165 = a165 * 2
+		t = b165 - a165
+	}
+	if t >= 0 {
+		let a166 = t + 166
+		let b166 = a166 * 2
+		t = b166 - a166
+	}
+	if t >= 0 {
+		let a167 = t + 167
+		let b167 = a167 * 2
+		t = b167 - a167
+	}
+	if t >= 0 {
+		let a168 = t + 168
+		let b168 = a168 * 2
+		t = b168 - a168
+	}
+	if t >= 0 {
+		let a169 = t + 169
+		let b169 = a169 * 2
+		t = b169 - a169
+	}
+	if t >= 0 {
+		let a170 = t + 170
+		let b170 = a170 * 2
+		t = b170 - a170
+	}
+	if t >= 0 {
+		let a171 = t + 171
+		let b171 = a171 * 2
+		t = b171 - a171
+	}
+	if t >= 0 {
+		let a172 = t + 172
+		let b172 = a172 * 2
+		t = b172 - a172
+	}
+	if t >= 0 {
+		let a173 = t + 173
+		let b173 = a173 * 2
+		t = b173 - a173
+	}
+	if t >= 0 {
+		let a174 = t + 174
+		let b174 = a174 * 2
+		t = b174 - a174
+	}
+	if t >= 0 {
+		let a175 = t + 175
+		let b175 = a175 * 2
+		t = b175 - a175
+	}
+	if t >= 0 {
+		let a176 = t + 176
+		let b176 = a176 * 2
+		t = b176 - a176
+	}
+	if t >= 0 {
+		let a177 = t + 177
+		let b177 = a177 * 2
+		t = b177 - a177
+	}
+	if t >= 0 {
+		let a178 = t + 178
+		let b178 = a178 * 2
+		t = b178 - a178
+	}
+	if t >= 0 {
+		let a179 = t + 179
+		let b179 = a179 * 2
+		t = b179 - a179
+	}
+	if t >= 0 {
+		let a180 = t + 180
+		let b180 = a180 * 2
+		t = b180 - a180
+	}
+	if t >= 0 {
+		let a181 = t + 181
+		let b181 = a181 * 2
+		t = b181 - a181
+	}
+	if t >= 0 {
+		let a182 = t + 182
+		let b182 = a182 * 2
+		t = b182 - a182
+	}
+	if t >= 0 {
+		let a183 = t + 183
+		let b183 = a183 * 2
+		t = b183 - a183
+	}
+	if t >= 0 {
+		let a184 = t + 184
+		let b184 = a184 * 2
+		t = b184 - a184
+	}
+	if t >= 0 {
+		let a185 = t + 185
+		let b185 = a185 * 2
+		t = b185 - a185
+	}
+	if t >= 0 {
+		let a186 = t + 186
+		let b186 = a186 * 2
+		t = b186 - a186
+	}
+	if t >= 0 {
+		let a187 = t + 187
+		let b187 = a187 * 2
+		t = b187 - a187
+	}
+	if t >= 0 {
+		let a188 = t + 188
+		let b188 = a188 * 2
+		t = b188 - a188
+	}
+	if t >= 0 {
+		let a189 = t + 189
+		let b189 = a189 * 2
+		t = b189 - a189
+	}
+	if t >= 0 {
+		let a190 = t + 190
+		let b190 = a190 * 2
+		t = b190 - a190
+	}
+	if t >= 0 {
+		let a191 = t + 191
+		let b191 = a191 * 2
+		t = b191 - a191
+	}
+	if t >= 0 {
+		let a192 = t + 192
+		let b192 = a192 * 2
+		t = b192 - a192
+	}
+	if t >= 0 {
+		let a193 = t + 193
+		let b193 = a193 * 2
+		t = b193 - a193
+	}
+	if t >= 0 {
+		let a194 = t + 194
+		let b194 = a194 * 2
+		t = b194 - a194
+	}
+	if t >= 0 {
+		let a195 = t + 195
+		let b195 = a195 * 2
+		t = b195 - a195
+	}
+	if t >= 0 {
+		let a196 = t + 196
+		let b196 = a196 * 2
+		t = b196 - a196
+	}
+	if t >= 0 {
+		let a197 = t + 197
+		let b197 = a197 * 2
+		t = b197 - a197
+	}
+	if t >= 0 {
+		let a198 = t + 198
+		let b198 = a198 * 2
+		t = b198 - a198
+	}
+	if t >= 0 {
+		let a199 = t + 199
+		let b199 = a199 * 2
+		t = b199 - a199
+	}
+	if t >= 0 {
+		let a200 = t + 200
+		let b200 = a200 * 2
+		t = b200 - a200
+	}
+	if t >= 0 {
+		let a201 = t + 201
+		let b201 = a201 * 2
+		t = b201 - a201
+	}
+	if t >= 0 {
+		let a202 = t + 202
+		let b202 = a202 * 2
+		t = b202 - a202
+	}
+	if t >= 0 {
+		let a203 = t + 203
+		let b203 = a203 * 2
+		t = b203 - a203
+	}
+	if t >= 0 {
+		let a204 = t + 204
+		let b204 = a204 * 2
+		t = b204 - a204
+	}
+	if t >= 0 {
+		let a205 = t + 205
+		let b205 = a205 * 2
+		t = b205 - a205
+	}
+	if t >= 0 {
+		let a206 = t + 206
+		let b206 = a206 * 2
+		t = b206 - a206
+	}
+	if t >= 0 {
+		let a207 = t + 207
+		let b207 = a207 * 2
+		t = b207 - a207
+	}
+	if t >= 0 {
+		let a208 = t + 208
+		let b208 = a208 * 2
+		t = b208 - a208
+	}
+	if t >= 0 {
+		let a209 = t + 209
+		let b209 = a209 * 2
+		t = b209 - a209
+	}
+	if t >= 0 {
+		let a210 = t + 210
+		let b210 = a210 * 2
+		t = b210 - a210
+	}
+	if t >= 0 {
+		let a211 = t + 211
+		let b211 = a211 * 2
+		t = b211 - a211
+	}
+	if t >= 0 {
+		let a212 = t + 212
+		let b212 = a212 * 2
+		t = b212 - a212
+	}
+	if t >= 0 {
+		let a213 = t + 213
+		let b213 = a213 * 2
+		t = b213 - a213
+	}
+	if t >= 0 {
+		let a214 = t + 214
+		let b214 = a214 * 2
+		t = b214 - a214
+	}
+	if t >= 0 {
+		let a215 = t + 215
+		let b215 = a215 * 2
+		t = b215 - a215
+	}
+	if t >= 0 {
+		let a216 = t + 216
+		let b216 = a216 * 2
+		t = b216 - a216
+	}
+	if t >= 0 {
+		let a217 = t + 217
+		let b217 = a217 * 2
+		t = b217 - a217
+	}
+	if t >= 0 {
+		let a218 = t + 218
+		let b218 = a218 * 2
+		t = b218 - a218
+	}
+	if t >= 0 {
+		let a219 = t + 219
+		let b219 = a219 * 2
+		t = b219 - a219
+	}
+	if t >= 0 {
+		let a220 = t + 220
+		let b220 = a220 * 2
+		t = b220 - a220
+	}
+	if t >= 0 {
+		let a221 = t + 221
+		let b221 = a221 * 2
+		t = b221 - a221
+	}
+	if t >= 0 {
+		let a222 = t + 222
+		let b222 = a222 * 2
+		t = b222 - a222
+	}
+	if t >= 0 {
+		let a223 = t + 223
+		let b223 = a223 * 2
+		t = b223 - a223
+	}
+	if t >= 0 {
+		let a224 = t + 224
+		let b224 = a224 * 2
+		t = b224 - a224
+	}
+	if t >= 0 {
+		let a225 = t + 225
+		let b225 = a225 * 2
+		t = b225 - a225
+	}
+	if t >= 0 {
+		let a226 = t + 226
+		let b226 = a226 * 2
+		t = b226 - a226
+	}
+	if t >= 0 {
+		let a227 = t + 227
+		let b227 = a227 * 2
+		t = b227 - a227
+	}
+	if t >= 0 {
+		let a228 = t + 228
+		let b228 = a228 * 2
+		t = b228 - a228
+	}
+	if t >= 0 {
+		let a229 = t + 229
+		let b229 = a229 * 2
+		t = b229 - a229
+	}
+	if t >= 0 {
+		let a230 = t + 230
+		let b230 = a230 * 2
+		t = b230 - a230
+	}
+	if t >= 0 {
+		let a231 = t + 231
+		let b231 = a231 * 2
+		t = b231 - a231
+	}
+	if t >= 0 {
+		let a232 = t + 232
+		let b232 = a232 * 2
+		t = b232 - a232
+	}
+	if t >= 0 {
+		let a233 = t + 233
+		let b233 = a233 * 2
+		t = b233 - a233
+	}
+	if t >= 0 {
+		let a234 = t + 234
+		let b234 = a234 * 2
+		t = b234 - a234
+	}
+	if t >= 0 {
+		let a235 = t + 235
+		let b235 = a235 * 2
+		t = b235 - a235
+	}
+	if t >= 0 {
+		let a236 = t + 236
+		let b236 = a236 * 2
+		t = b236 - a236
+	}
+	if t >= 0 {
+		let a237 = t + 237
+		let b237 = a237 * 2
+		t = b237 - a237
+	}
+	if t >= 0 {
+		let a238 = t + 238
+		let b238 = a238 * 2
+		t = b238 - a238
+	}
+	if t >= 0 {
+		let a239 = t + 239
+		let b239 = a239 * 2
+		t = b239 - a239
+	}
+	if t >= 0 {
+		let a240 = t + 240
+		let b240 = a240 * 2
+		t = b240 - a240
+	}
+	if t >= 0 {
+		let a241 = t + 241
+		let b241 = a241 * 2
+		t = b241 - a241
+	}
+	if t >= 0 {
+		let a242 = t + 242
+		let b242 = a242 * 2
+		t = b242 - a242
+	}
+	if t >= 0 {
+		let a243 = t + 243
+		let b243 = a243 * 2
+		t = b243 - a243
+	}
+	if t >= 0 {
+		let a244 = t + 244
+		let b244 = a244 * 2
+		t = b244 - a244
+	}
+	if t >= 0 {
+		let a245 = t + 245
+		let b245 = a245 * 2
+		t = b245 - a245
+	}
+	if t >= 0 {
+		let a246 = t + 246
+		let b246 = a246 * 2
+		t = b246 - a246
+	}
+	if t >= 0 {
+		let a247 = t + 247
+		let b247 = a247 * 2
+		t = b247 - a247
+	}
+	if t >= 0 {
+		let a248 = t + 248
+		let b248 = a248 * 2
+		t = b248 - a248
+	}
+	if t >= 0 {
+		let a249 = t + 249
+		let b249 = a249 * 2
+		t = b249 - a249
+	}
+	if t >= 0 {
+		let a250 = t + 250
+		let b250 = a250 * 2
+		t = b250 - a250
+	}
+	if t >= 0 {
+		let a251 = t + 251
+		let b251 = a251 * 2
+		t = b251 - a251
+	}
+	if t >= 0 {
+		let a252 = t + 252
+		let b252 = a252 * 2
+		t = b252 - a252
+	}
+	if t >= 0 {
+		let a253 = t + 253
+		let b253 = a253 * 2
+		t = b253 - a253
+	}
+	if t >= 0 {
+		let a254 = t + 254
+		let b254 = a254 * 2
+		t = b254 - a254
+	}
+	if t >= 0 {
+		let a255 = t + 255
+		let b255 = a255 * 2
+		t = b255 - a255
+	}
+	if t >= 0 {
+		let a256 = t + 256
+		let b256 = a256 * 2
+		t = b256 - a256
+	}
+	if t >= 0 {
+		let a257 = t + 257
+		let b257 = a257 * 2
+		t = b257 - a257
+	}
+	if t >= 0 {
+		let a258 = t + 258
+		let b258 = a258 * 2
+		t = b258 - a258
+	}
+	if t >= 0 {
+		let a259 = t + 259
+		let b259 = a259 * 2
+		t = b259 - a259
+	}
+	if t >= 0 {
+		let a260 = t + 260
+		let b260 = a260 * 2
+		t = b260 - a260
+	}
+	if t >= 0 {
+		let a261 = t + 261
+		let b261 = a261 * 2
+		t = b261 - a261
+	}
+	if t >= 0 {
+		let a262 = t + 262
+		let b262 = a262 * 2
+		t = b262 - a262
+	}
+	if t >= 0 {
+		let a263 = t + 263
+		let b263 = a263 * 2
+		t = b263 - a263
+	}
+	if t >= 0 {
+		let a264 = t + 264
+		let b264 = a264 * 2
+		t = b264 - a264
+	}
+	if t >= 0 {
+		let a265 = t + 265
+		let b265 = a265 * 2
+		t = b265 - a265
+	}
+	if t >= 0 {
+		let a266 = t + 266
+		let b266 = a266 * 2
+		t = b266 - a266
+	}
+	if t >= 0 {
+		let a267 = t + 267
+		let b267 = a267 * 2
+		t = b267 - a267
+	}
+	if t >= 0 {
+		let a268 = t + 268
+		let b268 = a268 * 2
+		t = b268 - a268
+	}
+	if t >= 0 {
+		let a269 = t + 269
+		let b269 = a269 * 2
+		t = b269 - a269
+	}
+	if t >= 0 {
+		let a270 = t + 270
+		let b270 = a270 * 2
+		t = b270 - a270
+	}
+	if t >= 0 {
+		let a271 = t + 271
+		let b271 = a271 * 2
+		t = b271 - a271
+	}
+	if t >= 0 {
+		let a272 = t + 272
+		let b272 = a272 * 2
+		t = b272 - a272
+	}
+	if t >= 0 {
+		let a273 = t + 273
+		let b273 = a273 * 2
+		t = b273 - a273
+	}
+	if t >= 0 {
+		let a274 = t + 274
+		let b274 = a274 * 2
+		t = b274 - a274
+	}
+	if t >= 0 {
+		let a275 = t + 275
+		let b275 = a275 * 2
+		t = b275 - a275
+	}
+	if t >= 0 {
+		let a276 = t + 276
+		let b276 = a276 * 2
+		t = b276 - a276
+	}
+	if t >= 0 {
+		let a277 = t + 277
+		let b277 = a277 * 2
+		t = b277 - a277
+	}
+	if t >= 0 {
+		let a278 = t + 278
+		let b278 = a278 * 2
+		t = b278 - a278
+	}
+	if t >= 0 {
+		let a279 = t + 279
+		let b279 = a279 * 2
+		t = b279 - a279
+	}
+	if t >= 0 {
+		let a280 = t + 280
+		let b280 = a280 * 2
+		t = b280 - a280
+	}
+	if t >= 0 {
+		let a281 = t + 281
+		let b281 = a281 * 2
+		t = b281 - a281
+	}
+	if t >= 0 {
+		let a282 = t + 282
+		let b282 = a282 * 2
+		t = b282 - a282
+	}
+	if t >= 0 {
+		let a283 = t + 283
+		let b283 = a283 * 2
+		t = b283 - a283
+	}
+	if t >= 0 {
+		let a284 = t + 284
+		let b284 = a284 * 2
+		t = b284 - a284
+	}
+	if t >= 0 {
+		let a285 = t + 285
+		let b285 = a285 * 2
+		t = b285 - a285
+	}
+	if t >= 0 {
+		let a286 = t + 286
+		let b286 = a286 * 2
+		t = b286 - a286
+	}
+	if t >= 0 {
+		let a287 = t + 287
+		let b287 = a287 * 2
+		t = b287 - a287
+	}
+	if t >= 0 {
+		let a288 = t + 288
+		let b288 = a288 * 2
+		t = b288 - a288
+	}
+	if t >= 0 {
+		let a289 = t + 289
+		let b289 = a289 * 2
+		t = b289 - a289
+	}
+	if t >= 0 {
+		let a290 = t + 290
+		let b290 = a290 * 2
+		t = b290 - a290
+	}
+	if t >= 0 {
+		let a291 = t + 291
+		let b291 = a291 * 2
+		t = b291 - a291
+	}
+	if t >= 0 {
+		let a292 = t + 292
+		let b292 = a292 * 2
+		t = b292 - a292
+	}
+	if t >= 0 {
+		let a293 = t + 293
+		let b293 = a293 * 2
+		t = b293 - a293
+	}
+	if t >= 0 {
+		let a294 = t + 294
+		let b294 = a294 * 2
+		t = b294 - a294
+	}
+	if t >= 0 {
+		let a295 = t + 295
+		let b295 = a295 * 2
+		t = b295 - a295
+	}
+	if t >= 0 {
+		let a296 = t + 296
+		let b296 = a296 * 2
+		t = b296 - a296
+	}
+	if t >= 0 {
+		let a297 = t + 297
+		let b297 = a297 * 2
+		t = b297 - a297
+	}
+	if t >= 0 {
+		let a298 = t + 298
+		let b298 = a298 * 2
+		t = b298 - a298
+	}
+	if t >= 0 {
+		let a299 = t + 299
+		let b299 = a299 * 2
+		t = b299 - a299
+	}
+	say.Line(t)
+}

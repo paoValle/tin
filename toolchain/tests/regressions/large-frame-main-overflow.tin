@@ -2,11 +2,10 @@ package main
 
 import "say"
 
-// A task recursing through a 64 KiB frame (8000 locals), four times its 16 KiB guard: the
-// prologue touches each page on the way down, so the overflow meets the guard and is the
-// task's own recoverable panic, not a fault elsewhere that ends the process (#570). Every
-// local is read again after the others are made, so all of them are live at once and the
-// frame keeps one slot each (#570 part 3 shares the slots of locals whose ranges do not meet).
+// The main thread recursing through a 64 KiB frame (8000 locals, all live at once): the
+// prologue touches each page on the way down, so the overflow meets the guard below the
+// main stack and is reported as a stack overflow, not a fault somewhere else (#570). The
+// task case is large-frame-task-overflow.tin.
 
 fn deep(n i64) i64 {
 	let v0 = n + 0
@@ -16013,18 +16012,6 @@ fn deep(n i64) i64 {
 	return deep(n + 1) + t
 }
 
-fn spin() ! {
-	say.Line(deep(0))
-}
-
-fn run() ! {
-	scope s {
-		s.spawn(spin)
-	}
-}
-
 fn main() {
-	run() catch _ {
-		say.Line("caught")
-	}
+	say.Line(deep(0))
 }
