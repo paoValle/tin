@@ -2575,7 +2575,7 @@ fn get_cell_addr(pos i64, os Sym) i64 {
 // closure_keeper builds keep$N(d), which copies closure descriptor d and its captured
 // variables into the long-lived heap, each value kept by its type (a str, slice, struct or
 // closure deeply), so a kept closure never reads request memory (#170). It returns 0 when
-// no captured variable holds a reference.
+// no captured variable holds a reference and every cell is one word.
 fn closure_keeper(pos i64, cf Fn) i64 {
 	let caps = cast([]i64, cf.captures)
 	let k = len(caps)
@@ -2583,7 +2583,9 @@ fn closure_keeper(pos i64, cf Fn) i64 {
 	mut i = 0
 	for i < k {
 		let ct = cast(Sym, caps[i]).type_
-		if is_ref(ct) != 0 || is_dyn_value(cast(Ty, ct)) != 0 {
+		if is_ref(ct) != 0 || is_dyn_value(cast(Ty, ct)) != 0 || cell_bytes(ct) > 8 {
+			// A cell wider than a word (a value struct's bytes, #631) needs a keeper too: the
+			// runtime's own copy moves one word per cell.
 			refs = 1
 		}
 		i = i + 1
@@ -2955,8 +2957,17 @@ fn chk_parallel(e i64) i64 {
 	return rt
 }
 
+// result_cell is the size of the cell a block's value of type vt is stored in: two words, or a
+// value struct's bytes when it is wider (#669).
+fn result_cell(vt i64) i64 {
+	if is_value_struct(cast(Ty, vt)) != 0 && cast(Ty, vt).size > 16 {
+		return align_up(cast(Ty, vt).size, 8)
+	}
+	return 16
+}
+
 // parallel_wrapper builds parallel$N(c1..cn) (T1..Tn, fault): it spawns each ci with its own
-// 16-byte result cell in an implicit scope, waits for all of them, and returns the values.
+// result cell (result_cell) in an implicit scope, waits for all of them, and returns the values.
 fn parallel_wrapper(pos i64, lits []i64, vts []i64) i64 {
 	lifted_count = lifted_count + 1
 	let f = fn_new(pos, "parallel")
@@ -2996,13 +3007,21 @@ fn parallel_wrapper(pos i64, lits []i64, vts []i64) i64 {
 	}
 	f.slots = n
 	mut body = cast(Block, f.body).stmts
-	let r = temp(pos, rt_call(pos, "rt_alloc", args1(mk_int(pos, 16 * n, ty_int)), ty_int), ty_int)
+	mut cells = []i64{}
+	mut total = 0
+	i = 0
+	for i < n {
+		cells = append(cells, total)
+		total = total + result_cell(vts[i])
+		i = i + 1
+	}
+	let r = temp(pos, rt_call(pos, "rt_alloc", args1(mk_int(pos, total, ty_int)), ty_int), ty_int)
 	body = append(body, cast(i64, r))
 	let sc = temp(pos, rt_call(pos, "rt_scope_open_word", cast(i64, []i64{}), ty_int), ty_int)
 	body = append(body, cast(i64, sc))
 	i = 0
 	for i < n {
-		let at = mk_bin(pos, "+", sym_ref_node(pos, cast(Sym, r.sym)), mk_int(pos, 16 * i, ty_int), ty_int)
+		let at = mk_bin(pos, "+", sym_ref_node(pos, cast(Sym, r.sym)), mk_int(pos, cells[i], ty_int), ty_int)
 		mut sa = cast([]i64, args2(sym_ref_node(pos, cast(Sym, sc.sym)), sym_ref_node(pos, syms[i])))
 		sa = append(sa, at)
 		body = append(body, expr_stmt(cast(Node, rt_call(pos, "rt_scope_spawn_arg", cast(i64, sa), ty_void))))
@@ -3021,7 +3040,7 @@ fn parallel_wrapper(pos i64, lits []i64, vts []i64) i64 {
 	mut rv = []i64{}
 	i = 0
 	for i < n {
-		rv = append(rv, mk_mem(pos, sym_ref_node(pos, cast(Sym, r.sym)), 0, 0, 16 * i, vts[i]))
+		rv = append(rv, mk_mem(pos, sym_ref_node(pos, cast(Sym, r.sym)), 0, 0, cells[i], vts[i]))
 		i = i + 1
 	}
 	rv = append(rv, mk_int(pos, 0, ty_error))
@@ -3080,7 +3099,7 @@ fn one_elem_slice(x i64) i64 {
 	return cast(i64, v)
 }
 
-// boundary_wrapper builds boundary$N(c, a): it runs closure c (type ct) with a 16-byte result
+// boundary_wrapper builds boundary$N(c, a): it runs closure c (type ct) with a result_cell-sized result
 // cell inside the boundary and returns the value of type vt (ty_void: none) or the fault.
 fn boundary_wrapper(pos i64, kind i64, ct i64, vt i64) i64 {
 	lifted_count = lifted_count + 1
@@ -3126,7 +3145,7 @@ fn boundary_wrapper(pos i64, kind i64, ct i64, vt i64) i64 {
 	mut vs11 = cast([]i64, f.locals)
 	vs11 = append(vs11, cast(i64, a2sym))
 	mut body = cast(Block, f.body).stmts
-	let r = temp(pos, rt_call(pos, "rt_alloc", args1(mk_int(pos, 16, ty_int)), ty_int), ty_int)
+	let r = temp(pos, rt_call(pos, "rt_alloc", args1(mk_int(pos, result_cell(vt), ty_int)), ty_int), ty_int)
 	body = append(body, cast(i64, r))
 	let rref = sym_ref_node(pos, cast(Sym, r.sym))
 	mut fe = cast(LetStmt, 0)
@@ -3262,7 +3281,7 @@ fn arena_value_check(pos i64, vt i64) {
 	}
 }
 
-// arena_wrapper builds arena$N(c): it runs closure c (type ct) with a 16-byte result cell in
+// arena_wrapper builds arena$N(c): it runs closure c (type ct) with a result cell (result_cell) in
 // a new arena and returns the copied value of type vt (ty_void: none), and the fault if fails.
 fn arena_wrapper(pos i64, ct i64, vt i64, fails i64) i64 {
 	lifted_count = lifted_count + 1
@@ -3300,7 +3319,7 @@ fn arena_wrapper(pos i64, ct i64, vt i64, fails i64) i64 {
 	body = append(body, cast(i64, a))
 	// The result cell lives in the arena, so an arena leaves nothing in the enclosing pool:
 	// a plain program's loop of arenas stays flat (#629).
-	let r = temp(pos, rt_call(pos, "rt_alloc", args1(mk_int(pos, 16, ty_int)), ty_int), ty_int)
+	let r = temp(pos, rt_call(pos, "rt_alloc", args1(mk_int(pos, result_cell(vt), ty_int)), ty_int), ty_int)
 	body = append(body, cast(i64, r))
 	let fe = temp(pos, rt_call(pos, "rt_arena_run", args2(sym_ref_node(pos, cs), sym_ref_node(pos, cast(Sym, r.sym))), ty_error), ty_error)
 	body = append(body, cast(i64, fe))

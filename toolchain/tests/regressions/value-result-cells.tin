@@ -1,0 +1,45 @@
+package main
+
+// A value struct wider than 16 bytes as the value of a parallel, guard or arena block (#669):
+// each branch's value went into a 16-byte cell, so a parallel's next cell overwrote it
+// ({1 2 10 11} for {1 2 3 4}) and a guard or arena wrote past its cell. Cells are now as wide
+// as the value.
+
+import "say"
+
+type W value struct {
+	a i64
+	b i64
+	c i64
+	d i64
+}
+
+fn one(n i64) !W {
+	return W{a: n, b: n + 1, c: n + 2, d: n + 3}
+}
+
+fn both() !(W, W, i64) {
+	let (x, y, z) = try parallel {
+		one(1)
+		one(10)
+		7
+	}
+	return x, y, z
+}
+
+fn main() {
+	let (x, y, z) = both() catch err {
+		say.Line(err)
+		return
+	}
+	let g = guard {
+		W{a: 5, b: 6, c: 7, d: 8}
+	} catch err {
+		say.Line(err)
+		W{a: 0, b: 0, c: 0, d: 0}
+	}
+	let ar = arena {
+		W{a: 9, b: 9, c: 9, d: 9}
+	}
+	say.Line(x, y, z, g, ar)
+}
