@@ -1743,7 +1743,7 @@ Package replay records a request's effects into a sealed capsule and reads capsu
 
 ## stencil
 
-Package stencil renders templates loaded at run time, like Go's text/template over a dynamic value tree: {{.user.name}}, {{if}}, {{range}}, {{with}}, pipelines with the builtins (len, index, eq, ne, lt, le, gt, ge, and, or, not, printf, print, println, html, urlquery, js), {{define}}, {{template}} and {{block}}, and user functions registered with Func. Parse errors carry line and column; execution is bounded by a template recursion limit and a maximum output size. Contextual HTML escaping is the next part of #578.
+Package stencil renders templates loaded at run time, like Go's text/template over a dynamic value tree: {{.user.name}}, {{if}}, {{range}}, {{with}}, pipelines with the builtins (len, index, eq, ne, lt, le, gt, ge, and, or, not, printf, print, println, html, urlquery, js), {{define}}, {{template}} and {{block}}, and user functions registered with Func. Parse errors carry line and column; execution is bounded by a template recursion limit and a maximum output size. ParseHTML renders in HTML mode instead: an action's escaping follows its context in the surrounding markup (element text, attribute values, URL attributes and JavaScript inside <script>), and a context the mode cannot judge is a parse error rather than a guess.
 
 Value is a struct with constructor functions rather than the issue's enum: a compiler-generated enum constructor has no region summary, so an enum value passed to a function that stores it (as Execute does) is E312 ARG_ESCAPE even when it is request memory. The constructors below are ordinary functions, and Execute keeps the data and the variables in a cell bound to a runtime slot (the pattern policy.Bind uses), so the store happens inside the runtime.
 
@@ -1755,6 +1755,7 @@ Value is a struct with constructor functions rather than the issue's enum: a com
 - `type Pipe struct`: Pipe is a pipeline: commands joined by |.
 - `type Cmd struct`: Cmd is one command: its operands.
 - `type Arg enum`: Arg is one operand of a command.
+- `ParseHTML(name str, text str) !Template`: ParseHTML parses text into a Template whose actions are escaped by their HTML context, as Go's html/template does; a context the mode does not support is a parse error. A {{template}} call renders its own template in element text, so a called template cannot open a tag.
 - `Parse(name str, text str) !Template`: Parse parses text into a Template; errors carry name, line and column.
 - `type Parser struct`: Parser walks text.
 - `type Value struct`: Value is the data a template renders: a tree of strings, numbers, booleans, lists and maps.

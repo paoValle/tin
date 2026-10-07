@@ -3,7 +3,9 @@
 // index, eq, ne, lt, le, gt, ge, and, or, not, printf, print, println, html, urlquery, js),
 // {{define}}, {{template}} and {{block}}, and user functions registered with Func. Parse errors
 // carry line and column; execution is bounded by a template recursion limit and a maximum output
-// size. Contextual HTML escaping is the next part of #578.
+// size. ParseHTML renders in HTML mode instead: an action's escaping follows its context in the
+// surrounding markup (element text, attribute values, URL attributes and JavaScript inside
+// <script>), and a context the mode cannot judge is a parse error rather than a guess.
 //
 // Value is a struct with constructor functions rather than the issue's enum: a compiler-generated
 // enum constructor has no region summary, so an enum value passed to a function that stores it

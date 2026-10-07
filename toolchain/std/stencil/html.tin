@@ -1,0 +1,434 @@
+package stencil
+
+// Contextual HTML escaping, as Go's html/template does: an action's escaping depends on where it
+// sits in the surrounding markup. The contexts this mode understands are element text, attribute
+// values, URL attributes (href, src, action, formaction, poster and background, where a
+// javascript: URL becomes the #ZgotmplZ sentinel), and JavaScript inside <script>. Anything it
+// cannot judge is refused at parse time: <style>, <title> and actions inside comments or event
+// handler attributes.
+
+import "say"
+
+// The escape modes of an action.
+const escNone = 0 // text/template: no escaping
+
+const escHTML = 1 // element text and ordinary attribute values
+
+const escURL = 2 // URL attributes
+
+const escJS = 3 // inside a JavaScript string literal in <script>
+
+const escUnq = 4 // an unquoted attribute value
+
+const escUnqURL = 5 // an unquoted URL attribute value
+
+// The scanner's states.
+const stText = 0
+
+const stTag = 1
+
+const stAttrValue = 2
+
+const stScript = 3
+
+// htmlState is the scanner's position in the markup.
+type htmlState struct {
+	state     i64
+	quote     u8
+	attr      str // the current attribute's lowercased name
+	closing   bool
+	tagName   str
+	inAttr    bool // after "=": the next token is the attribute's value
+	valueSeen bool // an unquoted value has started (or an action supplied it)
+	jsQuote   u8   // the open string literal's quote inside <script>, 0 outside one
+	jsUnknown bool // the script has a construct the scanner cannot judge (a comment, regexp or division, ${)
+	jsEsc     bool // the previous byte in a JavaScript string was a backslash
+}
+
+// newHTMLState is the state at the start of a template: element text.
+fn newHTMLState() htmlState {
+	return htmlState{state: stText, quote: 0, attr: "", closing: false, tagName: "", inAttr: false, valueSeen: false, jsQuote: 0, jsUnknown: false, jsEsc: false}
+}
+
+// sameContext reports whether two states are in the same markup context, which a block's
+// branches must preserve.
+fn sameContext(a htmlState, b htmlState) bool {
+	return a.state == b.state && a.quote == b.quote && a.inAttr == b.inAttr && a.valueSeen == b.valueSeen &&
+		a.attr == b.attr && a.tagName == b.tagName && a.jsQuote == b.jsQuote && a.jsUnknown == b.jsUnknown &&
+		a.jsEsc == b.jsEsc
+}
+
+// annotateHTML walks the parsed nodes and sets each action's escape mode from the surrounding
+// text. It refuses the contexts the mode does not support.
+fn annotateHTML(nodes []Node, st htmlState) !htmlState {
+	mut s = copyState(st)
+	for i in 0..len(nodes) {
+		match nodes[i] {
+			Text(t) => {
+				s = try scanHTML(t, s)
+			}
+			Action(p, _) => {
+				if s.state == stTag && !s.inAttr {
+					if len(s.tagName) == 0 {
+						fail say.Fault("stencil: an action as a tag name is not supported")
+					}
+					fail say.Fault("stencil: an action inside a tag, outside an attribute value, is not supported")
+				}
+				if s.state == stScript && (s.jsQuote == 0 || s.jsUnknown) {
+					fail say.Fault("stencil: an action in <script> must be inside a JavaScript string literal")
+				}
+				let mode = modeFor(s)
+				if s.state == stTag {
+					s.valueSeen = true // the action is the unquoted value
+				}
+				nodes[i] = Node.Action(p, mode)
+			}
+			If(b) => {
+				let s1 = try annotateHTML(b.then, s)
+				let s2 = try annotateHTML(b.otherwise, s)
+				if !sameContext(s1, s) || !sameContext(s2, s) {
+					fail say.Fault("stencil: an if block crosses an HTML context boundary")
+				}
+			}
+			Range(r) => {
+				let s1 = try annotateHTML(r.body, s)
+				let s2 = try annotateHTML(r.otherwise, s)
+				if !sameContext(s1, s) || !sameContext(s2, s) {
+					fail say.Fault("stencil: a range block crosses an HTML context boundary")
+				}
+			}
+			With(b) => {
+				let s1 = try annotateHTML(b.then, s)
+				let s2 = try annotateHTML(b.otherwise, s)
+				if !sameContext(s1, s) || !sameContext(s2, s) {
+					fail say.Fault("stencil: a with block crosses an HTML context boundary")
+				}
+			}
+			Call(_) => {
+				// A called template starts and ends in text; see the note in ParseHTML.
+			}
+		}
+	}
+	return s
+}
+
+// modeFor is the escape mode for an action at state s.
+fn modeFor(s htmlState) i64 {
+	if s.state == stScript {
+		return escJS
+	}
+	let unquoted = s.state == stTag
+	if s.state == stAttrValue || s.inAttr {
+		if isURLAttr(s.attr) {
+			if unquoted {
+				return escUnqURL
+			}
+			return escURL
+		}
+		if unquoted {
+			return escUnq
+		}
+		return escHTML
+	}
+	return escHTML
+}
+
+// isURLAttr reports the attributes whose values are URLs.
+fn isURLAttr(name str) bool {
+	return name == "href" || name == "src" || name == "action" || name == "formaction" ||
+		name == "poster" || name == "background"
+}
+
+// isRefusedAttr reports the attributes the mode refuses (event handlers and style).
+fn isRefusedAttr(name str) bool {
+	return name == "style" || len(name) > 2 && name[0] == 'o' && name[1] == 'n'
+}
+
+// copyState is a fresh copy: a struct is a reference in Tin, so the scanner must not write
+// through its caller's state.
+fn copyState(st htmlState) htmlState {
+	return htmlState{state: st.state, quote: st.quote, attr: st.attr, closing: st.closing, tagName: st.tagName, inAttr: st.inAttr,
+		valueSeen: st.valueSeen, jsQuote: st.jsQuote, jsUnknown: st.jsUnknown, jsEsc: st.jsEsc}
+}
+
+// scanHTML advances the scanner over one text segment.
+fn scanHTML(t str, st htmlState) !htmlState {
+	mut s = copyState(st)
+	mut i = 0
+	for i < len(t) {
+		if s.state == stText {
+			if t[i] == '<' {
+				if i + 3 < len(t) && t[i+1] == '!' && t[i+2] == '-' && t[i+3] == '-' {
+					// A comment: actions inside are refused.
+					fail say.Fault("stencil: an action inside an HTML comment is not supported")
+				}
+				s.closing = i + 1 < len(t) && t[i+1] == '/'
+				s.state = stTag
+				s.tagName = ""
+				s.attr = ""
+				s.inAttr = false
+				s.quote = 0
+			}
+			i += 1
+			continue
+		}
+		if s.state == stTag {
+			let c = t[i]
+			if isSpaceByte(c) {
+				if s.inAttr && s.valueSeen {
+					// An unquoted value ends at whitespace.
+					s.inAttr = false
+					s.valueSeen = false
+					s.attr = ""
+				} else if !s.inAttr && len(s.attr) > 0 && !equalsFollows(t, i) {
+					s.attr = "" // a boolean attribute: the next word is a new name
+				}
+				i += 1
+				continue
+			}
+			if (c == '"' || c == '\'') && !(s.inAttr && s.valueSeen) {
+				s.quote = c
+				s.state = stAttrValue
+				i += 1
+				continue
+			}
+			if c == '>' {
+				if s.tagName == "style" {
+					fail say.Fault("stencil: <style> is not supported")
+				}
+				if !s.closing && s.tagName == "script" {
+					s.state = stScript
+					s.jsQuote = 0
+					s.jsUnknown = false
+					s.jsEsc = false
+				} else if !s.closing && s.tagName == "title" {
+					fail say.Fault("stencil: <title> is not supported")
+				} else {
+					s.state = stText
+				}
+				s.tagName = ""
+				s.attr = ""
+				s.inAttr = false
+				s.valueSeen = false
+				i += 1
+				continue
+			}
+			if s.inAttr {
+				// Part of an unquoted value.
+				s.valueSeen = true
+				i += 1
+				continue
+			}
+			if c == '=' {
+				s.inAttr = true
+				s.valueSeen = false
+				i += 1
+				continue
+			}
+			if isNameByte(c) {
+				mut j = i
+				for j < len(t) && isNameByte(t[j]) {
+					j += 1
+				}
+				let word = t[i:j]
+				if len(s.tagName) == 0 && !s.closing {
+					s.tagName = lower(word)
+				} else if len(s.attr) == 0 {
+					s.attr = lower(word)
+					if isRefusedAttr(s.attr) {
+						fail say.Fault("stencil: the %s attribute is not supported", s.attr)
+					}
+				}
+				i = j
+				continue
+			}
+			i += 1
+			continue
+		}
+		if s.state == stAttrValue {
+			if s.quote != 0 && t[i] == s.quote {
+				s.state = stTag
+				s.quote = 0
+				s.inAttr = false
+				s.valueSeen = false
+				s.attr = ""
+				i += 1
+				continue
+			}
+			i += 1
+			continue
+		}
+		// stScript: </script ends the element wherever it appears, even inside a string.
+		if t[i] == '<' && i + 7 < len(t) && lower(t[i+1:i+8]) == "/script" {
+			s.state = stText
+			s.closing = true
+			s.tagName = "script"
+			s.jsQuote = 0
+			s.jsUnknown = false
+			s.jsEsc = false
+			i += 1
+			continue
+		}
+		scanJS(mut s, t[i], i + 1 < len(t) && t[i+1] == '{')
+		i += 1
+	}
+	return s
+}
+
+// scanJS advances the script scanner over one byte. It tracks string literals only; a comment,
+// a regexp or a division (a "/" outside a string) or a "${" in a template literal makes the rest
+// of the script unjudgeable, so an action after it is refused.
+fn scanJS(s mut htmlState, c u8, braceNext bool) {
+	if s.jsQuote != 0 {
+		if s.jsEsc {
+			s.jsEsc = false
+		} else if c == '\\' {
+			s.jsEsc = true
+		} else if c == s.jsQuote {
+			s.jsQuote = 0
+		} else if s.jsQuote == '`' && c == '$' && braceNext {
+			s.jsUnknown = true
+		}
+		return
+	}
+	if c == '"' || c == '\'' || c == '`' {
+		s.jsQuote = c
+	} else if c == '/' {
+		s.jsUnknown = true
+	}
+}
+
+// isSpaceByte is an HTML space.
+fn isSpaceByte(c u8) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 12
+}
+
+// equalsFollows reports whether the next non-space byte of t after position i is "=".
+fn equalsFollows(t str, i i64) bool {
+	mut j = i
+	for j < len(t) && isSpaceByte(t[j]) {
+		j += 1
+	}
+	return j < len(t) && t[j] == '='
+}
+
+// isNameByte is a tag or attribute name byte.
+fn isNameByte(c u8) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_'
+}
+
+// lower lowercases ASCII.
+fn lower(s str) str {
+	mut out = []u8{}
+	for i in 0..len(s) {
+		mut c = s[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 32
+		}
+		out = append(out, c)
+	}
+	return rt_str_from_raw(cast(i64, out)[2], len(out))
+}
+
+// isRefusedTag reports the tags the mode refuses.
+fn isRefusedTag(name str) bool {
+	return name == "style" || name == "title"
+}
+
+// escapeFor applies an action's mode to its value.
+fn escapeFor(mode i64, s str) str {
+	if mode == escNone {
+		return s
+	}
+	if mode == escURL {
+		return escapeURLAttr(s)
+	}
+	if mode == escUnq {
+		return escapeUnquoted(escapeHTML(s))
+	}
+	if mode == escUnqURL {
+		return escapeUnquoted(escapeURLAttr(s))
+	}
+	if mode == escJS {
+		return escapeJS(s)
+	}
+	return escapeHTML(s)
+}
+
+// escapeUnquoted escapes what ends or splits an unquoted attribute value (whitespace, "=" and the
+// backtick), on text that is already HTML-escaped, as Go's html/template does.
+fn escapeUnquoted(s str) str {
+	mut out = ""
+	for i in 0..len(s) {
+		let c = s[i]
+		if c == ' ' {
+			out += "&#32;"
+		} else if c == '\t' {
+			out += "&#9;"
+		} else if c == '\n' {
+			out += "&#10;"
+		} else if c == '\r' {
+			out += "&#13;"
+		} else if c == 12 {
+			out += "&#12;"
+		} else if c == '=' {
+			out += "&#61;"
+		} else if c == '`' {
+			out += "&#96;"
+		} else {
+			out += s[i:i+1]
+		}
+	}
+	return out
+}
+
+// escapeURLAttr escapes a URL attribute value, as Go does: a URL whose scheme is not safe becomes
+// the #ZgotmplZ sentinel.
+fn escapeURLAttr(s str) str {
+	let t = trimSpaceASCII(s)
+	if len(t) == 0 {
+		return s
+	}
+	if !isSafeURL(t) {
+		return "#ZgotmplZ"
+	}
+	return escapeHTML(s)
+}
+
+// isSafeURL accepts relative URLs and the http, https and mailto schemes.
+fn isSafeURL(s str) bool {
+	let colon = indexOfByte(s, ':')
+	if colon < 0 {
+		return true // relative
+	}
+	// A colon before any slash is a scheme.
+	let slash = indexOfByte(s, '/')
+	if slash >= 0 && slash < colon {
+		return true
+	}
+	let scheme = lower(s[0:colon])
+	return scheme == "http" || scheme == "https" || scheme == "mailto"
+}
+
+// indexOfByte returns the first position of c, or -1.
+fn indexOfByte(s str, c u8) i64 {
+	for i in 0..len(s) {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+
+// trimSpaceASCII trims ASCII spaces.
+fn trimSpaceASCII(s str) str {
+	mut a = 0
+	mut b = len(s)
+	for a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\n' || s[a] == '\r') {
+		a += 1
+	}
+	for b > a && (s[b-1] == ' ' || s[b-1] == '\t' || s[b-1] == '\n' || s[b-1] == '\r') {
+		b -= 1
+	}
+	return s[a:b]
+}

@@ -193,7 +193,7 @@ fn escapeJS(s str) str {
 	mut out = ""
 	for i in 0..len(s) {
 		let c = s[i]
-		if c < 0x20 || c == '<' || c == '>' || c == '&' || c == '=' || c == '\'' || c == '"' || c >= 0x7f {
+		if c < 0x20 || c == '<' || c == '>' || c == '&' || c == '=' || c == '\'' || c == '"' || c == '\\' || c == '`' || c == '$' || c >= 0x7f {
 			out += say.Fmt("\\u%04X", u64(c))
 		} else {
 			out += s[i:i+1]

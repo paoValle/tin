@@ -9,7 +9,7 @@ import "say"
 // Node is one piece of a parsed template.
 type Node enum {
 	Text(str)
-	Action(Pipe) // {{pipeline}}; a variable assignment sets Assign
+	Action(Pipe, i64) // {{pipeline}} and its escape mode; a variable assignment sets Assign
 	If(Branch)
 	Range(RangeNode)
 	With(Branch)
@@ -64,6 +64,26 @@ type Arg enum {
 	Bool(bool)
 	Fn(str) // a function name (or a builtin)
 	Pipe(Pipe) // a parenthesized pipeline
+}
+
+// ParseHTML parses text into a Template whose actions are escaped by their HTML context, as Go's
+// html/template does; a context the mode does not support is a parse error. A {{template}} call
+// renders its own template in element text, so a called template cannot open a tag.
+fn ParseHTML(name str, text str) !Template {
+	let t = try Parse(name, text)
+	let st = newHTMLState()
+	let end = try annotateHTML(t.root, st)
+	if end.state != stText {
+		fail say.Fault("stencil: %s: the template ends inside an HTML context", name)
+	}
+	for _, body in t.defs {
+		let st2 = newHTMLState()
+		let e2 = try annotateHTML(body, st2)
+		if e2.state != stText {
+			fail say.Fault("stencil: %s: a defined template ends inside an HTML context", name)
+		}
+	}
+	return t
 }
 
 // Parse parses text into a Template; errors carry name, line and column.
@@ -237,7 +257,7 @@ fn (p mut Parser) parseAction() !?Node {
 	// A pipeline action.
 	let pipe = try p.parsePipe(true)
 	try p.expectClose()
-	return Node.Action(pipe)
+	return Node.Action(pipe, escNone)
 }
 
 // peekWord reads the current word without consuming.

@@ -47,13 +47,13 @@ fn (st State) walk(nodes []Node) ! {
 			Text(s) => {
 				try st.emit(s)
 			}
-			Action(p) => {
+			Action(p, mode) => {
 				let v = try st.evalPipe(p)
 				if p.hasAssign {
 					let c = st.cell()
 					c.vars[p.assign] = v
 				} else {
-					try st.emit(printValue(v))
+					try st.emit(escapeFor(mode, printValue(v)))
 				}
 			}
 			If(b) => {

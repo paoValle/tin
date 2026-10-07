@@ -1,0 +1,84 @@
+package main
+
+import "say"
+import "stencil"
+import "fault"
+
+// html renders text in HTML mode with one string value, printing the result or the fault.
+fn html(name str, text str, x str) {
+	let t = stencil.ParseHTML(name, text) catch err {
+		say.Line("parse", name, err)
+		return
+	}
+	let out = t.Execute(stencil.Str(x)) catch err {
+		say.Line("exec", name, err)
+		return
+	}
+	say.Line("out", name, out)
+}
+
+// htmlErr returns an HTML parse error's text, or "accepted".
+fn htmlErr(name str, text str) str {
+	let t = stencil.ParseHTML(name, text) catch err {
+		return say.Fmt("%s", err)
+	}
+	return "accepted"
+}
+
+fn main() {
+	// Element text: the classic payload is escaped.
+	html("text", `<p>{{.}}</p>`, `<script>alert(1)</script>`)
+	html("text amp", `<p>{{.}}</p>`, `a & b < c > d "e" 'f'`)
+	// Attribute values, quoted and unquoted.
+	html("attr", `<a title="{{.}}">x</a>`, `" onmouseover=alert(1)`)
+	html("attr single", `<a title='{{.}}'>x</a>`, `' onmouseover=alert(1)`)
+	html("attr unquoted", `<a title={{.}}>x</a>`, `x`)
+	// URL attributes: javascript: becomes the sentinel, safe URLs are escaped.
+	html("href js", `<a href="{{.}}">x</a>`, `javascript:alert(1)`)
+	html("href js mixed", `<a href="{{.}}">x</a>`, `JaVaScRiPt:alert(1)`)
+	html("href data", `<a href="{{.}}">x</a>`, `data:text/html,<script>alert(1)</script>`)
+	html("href safe", `<a href="{{.}}">x</a>`, `https://example.com/?a=b&c=d`)
+	html("href relative", `<a href="{{.}}">x</a>`, `/path?q=1&r=2`)
+	html("href mailto", `<a href="{{.}}">x</a>`, `mailto:a@b.c`)
+	html("src", `<img src="{{.}}">`, `x" onerror="alert(1)`)
+	html("unquoted href", `<a href={{.}}>x</a>`, `javascript:alert(1)`)
+	// JavaScript inside <script>.
+	html("js", `<script>var x = "{{.}}";</script>`, `</script><script>alert(1)</script>`)
+	html("js quote", `<script>var x = '{{.}}';</script>`, `a'b\c`)
+	// A trailing backslash cannot escape the closing quote.
+	html("js backslash", `<script>var x = "{{.}}";</script>`, `\`)
+	// An unquoted value cannot grow a new attribute.
+	html("unquoted space", `<a title={{.}}>x</a>`, `x onmouseover=alert(1)`)
+	html("unquoted eq", `<a title={{.}}>x</a>`, "a=b`c")
+	html("unquoted href space", `<a href={{.}}>x</a>`, `https://a.example/ onmouseover=alert(1)`)
+	html("unquoted then attr", `<a title={{.}} id=z>x</a>`, `p q`)
+	html("quoted then onclick ok", `<a href="/x" title="{{.}}">x</a>`, `v`)
+	// After the script closes, text escaping is back.
+	html("after script", `<script>var x = 1;</script>{{.}}`, `<b>`)
+	// The html, urlquery and js builtins still work in either mode.
+	html("builtin html", `<p>{{html .}}</p>`, `<i>`)
+	html("builtin urlquery", `<p>{{urlquery .}}</p>`, `a b&c`)
+	html("builtin js", `<p>{{js .}}</p>`, `</script>`)
+
+	// Refused contexts are parse errors.
+	for _, bad in []str{`<style>{{.}}</style>`, `<a onclick="{{.}}">x</a>`, `<!-- {{.}} -->`,
+		`<title>{{.}}</title>`, `<{{.}}>`, `{{if .}}<p{{end}}>`, `{{if .}}{{else}}<p{{end}}`, `{{range .}}<p{{end}}`,
+		`<p class="`, `<script>var x = {{.}};</script>`, `<script>var x = "a" / 2; var y = "{{.}}";</script>`,
+		`<script>var x = ` + str(u8(96)) + `${ {{.}} }` + str(u8(96)) + `;</script>`, `<a href="/x" onclick="{{.}}">x</a>`,
+		`<a {{.}}>x</a>`, `<a b {{.}}>x</a>`} {
+		say.Line("refused", bad, htmlErr("bad", bad))
+	}
+	// A whole tag inside a block is fine; the context is the same on both paths.
+	say.Line("accepted", htmlErr("ok", `{{if .}}<p>{{end}}`), htmlErr("ok2", `<p>{{if .}}{{end}}`))
+
+	// define/template render in element text.
+	let t3 = stencil.ParseHTML("defs", `<p>{{template "T" .}}</p>{{define "T"}}[{{.}}]{{end}}`) catch err {
+		say.Line("defs parse", err)
+		return
+	}
+	let out3 = t3.Execute(stencil.Str("<x>")) catch err {
+		say.Line("defs exec", err)
+		return
+	}
+	say.Line("defs out", out3)
+}
