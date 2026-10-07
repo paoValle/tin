@@ -862,6 +862,10 @@ fn x_gen_to(e i64, dst i64, d i64) {
 		x_gen_binary(cast(Binary, e), dst, d)
 	} else if k == EX_INDEX {
 		x_gen_index_load(cast(IndexExpr, e), dst, d)
+	} else if k == EX_CONV && (cast(Conv, e).kind == CV_DYN_OBJECT || cast(Conv, e).kind == CV_DYN_TABLE_WORD) && x_pair_slot_word(cast(Conv, e).x) != 0 {
+		// One word of a two-word local in its frame slot: one load (#632).
+		let s = cast(Sym, cast(IdentExpr, cast(Conv, e).x).ref)
+		x_slot_load(dst, s.off + 8 * i64(cast(Conv, e).kind == CV_DYN_TABLE_WORD))
 	} else if k == EX_CONV && (cast(Conv, e).kind == CV_DYN || cast(Conv, e).kind == CV_DYN_KEEP || cast(Conv, e).kind == CV_DYN_OBJECT || cast(Conv, e).kind == CV_DYN_DESC || cast(Conv, e).kind == CV_OPT_SOME || (cast(Conv, e).kind == CV_SAME && is_dyn_value(cast(Ty, cast(Node, e).type_)) != 0)) {
 		x_gen_dyn_pair(e, dst, XSCR2, d)
 	} else if k == EX_CONV && cast(Conv, e).kind == CV_DYN_TABLE_WORD {
@@ -969,6 +973,15 @@ fn x_value_store(v i64, size i64) {
 }
 
 // x_gen_dyn_pair computes a dyn value as adjacent object and table words.
+// x_pair_slot_word reports whether x is a two-word local in its frame slot.
+fn x_pair_slot_word(x i64) i64 {
+	if cast(Node, x).kind != EX_IDENT || cast(IdentExpr, x).ref == 0 {
+		return 0
+	}
+	let s = cast(Sym, cast(IdentExpr, x).ref)
+	return i64(s.kind == SYM_LOCAL && s.reg == REG_SLOT && is_dyn_value(cast(Ty, s.type_)) != 0)
+}
+
 fn x_gen_dyn_pair(e i64, obj i64, tab i64, d i64) {
 	let k = cast(Node, e).kind
 	if k == EX_CONV && cast(Conv, e).kind == CV_DYN_OBJECT {

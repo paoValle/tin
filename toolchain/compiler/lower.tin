@@ -166,10 +166,17 @@ fn chk_coalesce(e i64) i64 {
 		}
 	}
 	mut stmts = []i64{}
-	let tx = temp(pos, x, cast(i64, xt))
-	let xs = cast(Sym, tx.sym)
+	mut xs = cast(Sym, 0)
+	let xn = cast(Node, x)
+	if scalar != 0 && rt != cast(i64, xt) && xn.kind == EX_IDENT && cast(IdentExpr, x).ref != 0 && cast(Sym, cast(IdentExpr, x).ref).kind == SYM_LOCAL && cast(Sym, cast(IdentExpr, x).ref).cell == 0 && cast(Sym, cast(IdentExpr, x).ref).captured == 0 {
+		// An optional number in a local is read in place: no copy of its two words (#632).
+		xs = cast(Sym, cast(IdentExpr, x).ref)
+	} else {
+		let tx = temp(pos, x, cast(i64, xt))
+		xs = cast(Sym, tx.sym)
+		stmts = append(stmts, cast(i64, tx))
+	}
 	xs.reads = xs.reads + 1
-	stmts = append(stmts, cast(i64, tx))
 	let ifs = cast(IfStmt, node_new(ST_IF, pos))
 	ifs.cond = mk_bin(pos, "==", sym_ref_node(pos, xs), mk_int(pos, 0, cast(i64, xt)), ty_bool)
 	ifs.then = empty_block(pos)
@@ -4020,6 +4027,14 @@ fn indirect_call(e i64) i64 {
 // once, and the region pass still sees its object bits through both projections.
 fn lower_append_dyn(pos i64, slice i64, value i64, st Ty) i64 {
 	let et = st.elem
+	let vn = cast(Node, value)
+	if is_shape_value(cast(Ty, et)) == 0 && vn.kind == EX_CONV && cast(Conv, value).kind == CV_OPT_SOME {
+		// A number made optional here: its two words go straight to the call (#632).
+		return rt_call(pos, "rt_append_pair", args3(slice, mk_int(pos, 1, ty_int), cast(Conv, value).x), cast(i64, st))
+	}
+	if is_shape_value(cast(Ty, et)) == 0 && vn.kind == EX_INT && cast(IntLit, value).val == 0 {
+		return rt_call(pos, "rt_append_pair", args3(slice, mk_int(pos, 0, ty_int), mk_int(pos, 0, ty_int)), cast(i64, st))
+	}
 	let saved = temp(pos, value, et)
 	let ref_ = sym_ref_node(pos, cast(Sym, saved.sym))
 	let object = mk_conv(pos, ref_, CV_DYN_OBJECT, ty_int)

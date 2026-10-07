@@ -953,6 +953,16 @@ fn value_copy_words(dst i64, src i64, size i64, zero i64) {
 // gen_dyn_pair computes a dyn value into adjacent machine registers. In storage the two
 // words are contiguous; globals use an explicit second data word because each declaration
 // has its own linker slot.
+// pair_slot_word reports whether x is a two-word local in its frame slot whose words one load
+// each can read (both offsets fit a scaled imm12).
+fn pair_slot_word(x i64) i64 {
+	if cast(Node, x).kind != EX_IDENT || cast(IdentExpr, x).ref == 0 {
+		return 0
+	}
+	let s = cast(Sym, cast(IdentExpr, x).ref)
+	return i64(s.kind == SYM_LOCAL && s.reg == REG_SLOT && is_dyn_value(cast(Ty, s.type_)) != 0 && s.off >= 0 && s.off <= 32752)
+}
+
 fn gen_dyn_pair(e i64, obj i64, tab i64, d i64) {
 	let k = cast(Node, e).kind
 	if k == EX_CONV && cast(Conv, e).kind == CV_DYN_OBJECT {
@@ -985,9 +995,15 @@ fn gen_dyn_pair(e i64, obj i64, tab i64, d i64) {
 		return
 	}
 	if k == EX_CONV && cast(Conv, e).kind == CV_OPT_SOME {
-		// An optional number holding a value (#632): tag 1, the bits as the payload.
-		gen_to(cast(Conv, e).x, obj, d)
-		mov(tab, obj)
+		// An optional number holding a value (#632): tag 1, the bits as the payload. A local or
+		// a constant goes straight into the payload register.
+		let x = cast(Node, cast(Conv, e).x)
+		if x.kind == EX_INT || (x.kind == EX_IDENT && cast(Sym, cast(IdentExpr, x).ref).kind == SYM_LOCAL) {
+			gen_to(cast(i64, x), tab, d)
+		} else {
+			gen_to(cast(i64, x), obj, d)
+			mov(tab, obj)
+		}
 		load_imm(obj, 1)
 		return
 	}
@@ -1100,6 +1116,10 @@ fn gen_to(e i64, dst i64, d i64) {
 		gen_binary(cast(Binary, e), dst, d)
 	} else if k == EX_INDEX {
 		gen_index_load(cast(IndexExpr, e), dst, d)
+	} else if k == EX_CONV && (cast(Conv, e).kind == CV_DYN_OBJECT || cast(Conv, e).kind == CV_DYN_TABLE_WORD) && pair_slot_word(cast(Conv, e).x) != 0 {
+		// One word of a two-word local in its frame slot: one load (#632).
+		let s = cast(Sym, cast(IdentExpr, cast(Conv, e).x).ref)
+		emit3(I_LDR, dst, FP, s.off + 8 * i64(cast(Conv, e).kind == CV_DYN_TABLE_WORD))
 	} else if k == EX_CONV && (cast(Conv, e).kind == CV_DYN || cast(Conv, e).kind == CV_DYN_KEEP || cast(Conv, e).kind == CV_DYN_OBJECT || cast(Conv, e).kind == CV_DYN_DESC || cast(Conv, e).kind == CV_OPT_SOME) {
 		gen_dyn_pair(e, dst, X17, d)
 	} else if k == EX_CONV && cast(Conv, e).kind == CV_DYN_TABLE_WORD {
