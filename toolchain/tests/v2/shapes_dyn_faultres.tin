@@ -1,0 +1,37 @@
+package main
+
+import "io"
+import "say"
+
+// A !dyn result (#568; it was E530 until the zero pair for fail existed): the value passes
+// through, and a fail returns the fault with the zero pair, which no one reads.
+type Buf struct { n i64 }
+
+fn (b Buf) Write(data []u8) !i64 {
+	return len(data)
+}
+
+fn F(w dyn io.Writer) !dyn io.Writer {
+	return w
+}
+
+fn G(ok bool, w dyn io.Writer) !dyn io.Writer {
+	if !ok {
+		fail "no writer"
+	}
+	return w
+}
+
+fn main() {
+	let w = F(Buf{n: 1}) catch err {
+		say.Line("F:", err)
+		return
+	}
+	let n = w.Write([]u8("hello")) catch _ { -1 }
+	say.Line("wrote", n)
+	let g = G(false, w) catch err {
+		say.Line("G:", err)
+		return
+	}
+	_ = g
+}

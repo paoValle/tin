@@ -1,0 +1,15 @@
+package main
+
+// Results travel in 8 registers and a dyn value takes two (#568): four dyn values and a fault
+// need 9.
+
+shape Namer {
+	Name() str
+}
+
+fn four() !(dyn Namer, dyn Namer, dyn Namer, dyn Namer) {
+	fail "none"
+}
+
+fn main() {
+}

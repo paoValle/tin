@@ -2659,13 +2659,24 @@ fn x_gen_stmt(s i64) {
 	} else if k == ST_CALLMULTI {
 		x_gen_call(cast(CallMultiStmt, s).call, 0)
 		let syms = cast(CallMultiStmt, s).syms
+		// A dyn value takes two result lanes, as x_gen_return sends it (#568).
+		mut lane = 0
 		mut i = 0
 		for i < len(syms) {
 			let sym = syms[i]
-			if sym.reg >= 0 {
-				x_mov(sym.reg, x_res_reg(i))
-			} else if sym.reg == REG_SLOT {
-				x_slot_store(x_res_reg(i), sym.off)
+			if is_dyn_value(cast(Ty, sym.type_)) != 0 {
+				if sym.reg == REG_SLOT {
+					x_slot_store(x_res_reg(lane), sym.off)
+					x_slot_store(x_res_reg(lane + 1), sym.off + 8)
+				}
+				lane = lane + 2
+			} else {
+				if sym.reg >= 0 {
+					x_mov(sym.reg, x_res_reg(lane))
+				} else if sym.reg == REG_SLOT {
+					x_slot_store(x_res_reg(lane), sym.off)
+				}
+				lane = lane + 1
 			}
 			i = i + 1
 		}

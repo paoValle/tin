@@ -1186,7 +1186,8 @@ fn parse_type_list() []i64 {
 			p_next()
 		}
 		let t2 = p_peek2()
-		if p_peek().kind == TK_IDENT && tok_is(cast(Token, t2), ",") == 0 && tok_is(cast(Token, t2), ")") == 0 && tok_is(cast(Token, t2), ".") == 0 && p_is("mut") == 0 {
+		// A name before a type is skipped (fn(a i64)), but dyn S is a type, not a name (#568).
+		if p_peek().kind == TK_IDENT && tok_is(cast(Token, t2), ",") == 0 && tok_is(cast(Token, t2), ")") == 0 && tok_is(cast(Token, t2), ".") == 0 && p_is("mut") == 0 && p_word("dyn") == 0 {
 			p_next()
 		}
 		if p_is("mut") != 0 {

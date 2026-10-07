@@ -1,0 +1,1 @@
+toolchain/tests/v2/dyn_results_bad.tin:10:1: error E907 TOO_MANY_PARAMS: too many results: a dyn result takes two of the 8 result registers

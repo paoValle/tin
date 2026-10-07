@@ -957,15 +957,6 @@ fn declare_fn(f Fn) {
 		sb_forbid(f.pos, rtypes[sbi], "a function cannot return ")
 		sbi = sbi + 1
 	}
-	if f.extern_ == 0 && f.bang != 0 {
-		mut ri = 0
-		for ri < len(rtypes) {
-			if kind_of(cast(Ty, rtypes[ri])) == K_DYN {
-				err_code_at(f.pos, "E530 DYN_NOT_YET", "a !dyn result is not built yet: fail would need the zero pair (#568)")
-			}
-			ri = ri + 1
-		}
-	}
 	if f.extern_ == 0 && f.bang == 0 && len(rtypes) > 0 && kind_of(cast(Ty, rtypes[len(rtypes) - 1])) == K_ERROR {
 		err_code_at(f.pos, "E402 FAULT_RESULT", "write a result that can fail as !T (or ! when there is no value), not with a fault result")
 	}
@@ -1024,8 +1015,15 @@ fn declare_fn(f Fn) {
 		buf_str(e, " parameters, the limit is 64 of each kind")
 		err_end(cast([]u8, e))
 	}
+	// Results travel in 8 registers, and a dyn value takes two of them (#568).
+	mut lanes = 0
+	for rtl in rtypes {
+		lanes = lanes + 1 + i64(kind_of(cast(Ty, rtl)) == K_DYN)
+	}
 	if len(rtypes) > 8 {
 		err_code_at(f.pos, "E907 TOO_MANY_PARAMS", "too many results")
+	} else if lanes > 8 && len(rtypes) > 1 {
+		err_code_at(f.pos, "E907 TOO_MANY_PARAMS", "too many results: a dyn result takes two of the 8 result registers")
 	}
 	if f.lifted != 0 {
 		return

@@ -3260,8 +3260,8 @@ Fix: rename one of the methods, or make the signatures the same.
 
 ### E530 DYN_NOT_YET
 
-Some uses of `dyn` are planned but not built yet: a `dyn` value in a map (#567), a `!dyn`
-result (#568), and formatting a `dyn` value (#569).
+Some uses of `dyn` are planned but not built yet: a `dyn` value in a map (#567) and
+formatting a `dyn` value (#569). A `!dyn` result works since #568.
 
 ```tin edition=1
 package main
@@ -4085,7 +4085,9 @@ Fix: use `tin fix -edition 1 FILES...`, or pass `-edition 1` and one file to `ti
 
 A function returns at most 8 results, and takes at most 64 parameters of each register kind
 (integers and references, and floats); parameters past the argument registers travel on the
-stack (#533).
+stack (#533). Results travel in 8 registers and a `dyn` value takes two of them, so several
+results that include `dyn` values must fit in 8 (`too many results: a dyn result takes two of
+the 8 result registers`, #568).
 
 ```tin edition=1
 package main

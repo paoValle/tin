@@ -1,0 +1,98 @@
+package main
+
+import "constraints"
+import "say"
+
+// A fallible function may return a dyn value (#568): fail returns the zero pair next to the
+// fault, which no reader ever sees, and the value travels in two result registers.
+
+shape Namer {
+	Name() str
+}
+
+type Dog struct {
+	n str
+}
+
+fn (d Dog) Name() str {
+	return d.n
+}
+
+type Cat struct {
+	n str
+}
+
+fn (c Cat) Name() str {
+	return "cat " + c.n
+}
+
+fn pick(kind str) !dyn Namer {
+	if kind == "dog" {
+		return Dog{n: "rex"}
+	}
+	if kind == "cat" {
+		return Cat{n: "tom"}
+	}
+	fail "no such kind: {kind}"
+}
+
+fn pair(kind str) !(dyn Namer, i64) {
+	let d = try pick(kind)
+	return d, len(kind)
+}
+
+fn both(a str, b str) !(dyn Namer, dyn Namer, str) {
+	let x = try pick(a)
+	let y = try pick(b)
+	return x, y, a + b
+}
+
+type Shelter struct {
+	kind str
+}
+
+fn (s Shelter) adopt() !dyn Namer {
+	return try pick(s.kind)
+}
+
+fn first[T constraints.Any](xs []T, f fn(T) !dyn Namer) !dyn Namer {
+	for x in xs {
+		let d = f(x) catch _ {
+			continue
+		}
+		return d
+	}
+	fail "none"
+}
+
+fn run() ! {
+	let d = try pick("dog")
+	say.Line("try", d.Name())
+	let (c, n) = try pair("cat")
+	say.Line("pair", c.Name(), n)
+	let (x, y, s) = try both("dog", "cat")
+	say.Line("both", x.Name(), y.Name(), s)
+	let m = try Shelter{kind: "cat"}.adopt()
+	say.Line("method", m.Name())
+	let f fn(str) !dyn Namer = pick
+	let v = try f("dog")
+	say.Line("value", v.Name())
+	let g = try first([]str{"fish", "bird", "cat"}, pick)
+	say.Line("generic", g.Name())
+	try pick("fish")
+}
+
+fn main() {
+	run() catch err {
+		say.Line("run:", err)
+	}
+	for k in []str{"cat", "fish"} {
+		let d = pick(k) catch err {
+			say.Line("fault:", err)
+			continue
+		}
+		say.Line("got", d.Name())
+	}
+	let dflt = pick("owl") catch _ { Dog{n: "default"} }
+	say.Line("catch value", dflt.Name())
+}
