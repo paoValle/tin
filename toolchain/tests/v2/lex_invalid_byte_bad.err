@@ -1,0 +1,1 @@
+toolchain/tests/v2/lex_invalid_byte_bad.tin:6:12: error E010 UNEXPECTED_CHARACTER: invalid UTF-8 byte 0xff

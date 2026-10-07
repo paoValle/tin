@@ -1,0 +1,7 @@
+package main
+
+// A non-ASCII character outside a string is shown whole, with its code point (#559).
+
+fn main() {
+	let café = 1
+}
