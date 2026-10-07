@@ -170,7 +170,8 @@ part of this design.
 
 - **A.** Value structs whose fields are numbers, `bool`, other value structs and inline arrays of
   those (no references). A1 (built): everything below but inline arrays, with the
-  representation described after 1.3. A2: inline arrays, results through a hidden destination,
+  representation described after 1.3. A2: inline arrays (built: a `K_VARRAY` type that counts
+  as a value struct for storage, `Ty.key` holding N), results through a hidden destination,
   values up to 16 bytes in registers. Inline in fields, slices, frames; copy semantics; zero values and
   `make`; `==`; map keys; printing; `argo`; `keep` as a copy; generics; both back ends and the
   ABI of section 1.3. This is what `Point`, `complex`, `RGB`, matrix cells and `UUID` need, and

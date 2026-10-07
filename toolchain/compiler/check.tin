@@ -667,13 +667,20 @@ fn resolve_fields(st Ty, tx TypeExpr) {
 		let f = cast(ParsedField, src[i])
 		let rec = cast(Field, calloc(6, 8))
 		rec.name = f.name
-		rec.ty = resolve_type(f.ty)
+		if st.value != 0 && cast(Node, f.ty).kind == TX_ARRAY {
+			// [N]T in a value struct is an inline array (#631): N elements in the struct's bytes.
+			rec.ty = value_array_type(f.ty)
+		} else {
+			rec.ty = resolve_type(f.ty)
+		}
 		if cast(Ty, f.ty).kind >= TX_NAME {
 			sb_forbid(cast(Node, f.ty).pos, rec.ty, "a struct or enum field cannot hold ")
 		}
 		// The offset is set by layout_struct; [N]T fields start with N zero elements.
-		rec.arr = array_len(f.ty)
-		rec.inner = array_inner
+		if st.value == 0 {
+			rec.arr = array_len(f.ty)
+			rec.inner = array_inner
+		}
 		array_inner = 0
 		// Field metadata is compile-time only; it never enters the object layout.
 		rec.json = f.attr
@@ -687,7 +694,10 @@ fn resolve_fields(st Ty, tx TypeExpr) {
 		// phase B (#631), when the memory model counts what its bytes point at.
 		i = 0
 		for i < len(fs) {
-			let ft = cast(Ty, cast(Field, fs[i]).ty)
+			mut ft = cast(Ty, cast(Field, fs[i]).ty)
+			for kind_of(ft) == K_VARRAY {
+				ft = cast(Ty, ft.elem)
+			}
 			let fk = kind_of(ft)
 			if fk != K_INT && fk != K_FLOAT && fk != K_BOOL && is_value_struct(ft) == 0 {
 				let m = err_code(cast(Node, cast(ParsedField, src[i]).ty).pos, "E295 NOT_YET")
@@ -699,6 +709,23 @@ fn resolve_fields(st Ty, tx TypeExpr) {
 			i = i + 1
 		}
 	}
+}
+
+// value_array_type resolves [N]T (and [N][M]T) in a value struct to an inline array (#631).
+fn value_array_type(tx i64) i64 {
+	let n = const_value(cast(TypeExpr, tx).a, 0)
+	if n <= 0 {
+		err_code_at(cast(Node, tx).pos, "E202 ARRAY_TYPE", "an inline array has at least one element")
+		return varray_of(ty_byte, 1)
+	}
+	let etx = cast(TypeExpr, tx).b
+	mut et = 0
+	if etx != 0 && cast(Node, etx).kind == TX_ARRAY {
+		et = value_array_type(etx)
+	} else {
+		et = resolve_type(etx)
+	}
+	return varray_of(et, n)
 }
 
 // value_not_yet reports a use of value struct t that phase A does not build (#631): E295.
@@ -7778,6 +7805,16 @@ fn lower_range(s i64) {
 				let rune = mk_conv(pos, mk_bin(pos, "&", sym_ref_node(pos, cast(Sym, packed.sym)), mk_int(pos, 0xffffffff, ty_int), ty_int), CV_INT, ty_i32)
 				pre = append(pre, range_bind(pos, val, rune, secret_like(cast(i64, xt), ty_i32), cast(RangeStmt, s).define))
 			}
+		}
+	} else if k == K_VARRAY {
+		// An inline array (#631): the loop reads the copy src holds, as Go ranges over a copy.
+		limit_ = mk_int(pos, xt.key, ty_int)
+		if key != 0 {
+			pre = append(pre, range_bind(pos, key, sym_ref_node(pos, cast(Sym, i)), ty_int, cast(RangeStmt, s).define))
+		}
+		if val != 0 {
+			let velem = mk_mem(pos, sym_ref_node(pos, cast(Sym, ss)), sym_ref_node(pos, cast(Sym, i)), type_width(cast(Ty, xt.elem)), 0, xt.elem)
+			pre = append(pre, range_bind(pos, val, velem, xt.elem, cast(RangeStmt, s).define))
 		}
 	} else if k == K_MAP {
 		let cap_ = temp(pos, rt_call(pos, "rt_map_slots", args1(sym_ref_node(pos, cast(Sym, ss))), ty_int), ty_int)

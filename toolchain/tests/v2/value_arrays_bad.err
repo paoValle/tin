@@ -1,0 +1,5 @@
+toolchain/tests/v2/value_arrays_bad.tin:9:4: error E295 NOT_YET: a value struct field of type str is not built yet (#631 phase B): a value struct holds numbers, bool and other value structs
+toolchain/tests/v2/value_arrays_bad.tin:14:5: error E238 INDEX: index 4 is out of range for [4]u8
+toolchain/tests/v2/value_arrays_bad.tin:15:16: error E238 INDEX: cannot slice [4]u8
+toolchain/tests/v2/value_arrays_bad.tin:16:8: error E217 BUILTIN_ARGS: first argument to append must be a slice, not [4]u8
+toolchain/tests/v2/value_arrays_bad.tin:16:8: error E230 TYPE_MISMATCH: cannot use i64 as [4]u8

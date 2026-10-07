@@ -22,6 +22,7 @@ const K_CHAN = 16
 const K_UBOOL = 17 // untyped boolean (comparison results, true/false)
 const K_OPT = 18 // ?T: a struct reference that may be nil
 const K_DYN = 19 // dyn S: a two-word value (object, method table)
+const K_VARRAY = 20 // [N]T inside a value struct: N elements inline (#631); key holds N
 
 shared mut ty_int i64
 shared mut ty_bool i64
@@ -151,6 +152,13 @@ fn slice_of(elem i64) i64 {
 
 fn map_of(key i64, val i64) i64 {
 	return interned(K_MAP, val, key, cast([]i64, 0), cast([]i64, 0), 0)
+}
+
+// varray_of is [n]T inside a value struct (#631): n elements inline, copied with it.
+fn varray_of(elem i64, n i64) i64 {
+	let t = cast(Ty, interned(K_VARRAY, elem, n, cast([]i64, 0), cast([]i64, 0), 0))
+	t.size = n * type_width(cast(Ty, elem))
+	return cast(i64, t)
 }
 
 fn chan_of(elem i64) i64 {
@@ -342,8 +350,8 @@ fn type_width(t Ty) i64 {
 	if is_dyn_value(t) != 0 {
 		return 16
 	}
-	if k == K_STRUCT && t.value != 0 {
-		// A value struct's bytes, inline (#631).
+	if (k == K_STRUCT && t.value != 0) || k == K_VARRAY {
+		// A value struct's or inline array's bytes (#631).
 		return t.size
 	}
 	return 8
@@ -493,6 +501,11 @@ fn type_name(b []u8, t Ty) {
 	} else if k == K_SLICE {
 		buf_str(b, "[]")
 		type_name(b, cast(Ty, t.elem))
+	} else if k == K_VARRAY {
+		buf_byte(b, '[')
+		buf_int(b, t.key)
+		buf_byte(b, ']')
+		type_name(b, cast(Ty, t.elem))
 	} else if k == K_CHAN {
 		buf_str(b, "chan ")
 		type_name(b, cast(Ty, t.elem))
@@ -603,12 +616,15 @@ fn layout_class(t Ty) i64 {
 // is_value_struct reports a value struct (#631): its bytes are stored inline in fields,
 // elements and frames, and every store copies them.
 fn is_value_struct(t Ty) i64 {
-	return i64(cast(i64, t) != 0 && t.kind == K_STRUCT && t.value != 0)
+	return i64(cast(i64, t) != 0 && ((t.kind == K_STRUCT && t.value != 0) || t.kind == K_VARRAY))
 }
 
 // type_align is the alignment of a value in memory: a number's width, a value struct's
 // widest field's (at most 8), 8 for anything else.
 fn type_align(t Ty) i64 {
+	if cast(i64, t) != 0 && t.kind == K_VARRAY {
+		return type_align(cast(Ty, t.elem))
+	}
 	if is_value_struct(t) != 0 {
 		mut a = 1
 		mut i = 0

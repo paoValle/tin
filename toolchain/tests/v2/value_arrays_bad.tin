@@ -1,0 +1,17 @@
+package main
+
+// #631 phase A2: an inline array's constant index is checked at compile time; it cannot be
+// sliced or appended to (its length is its type's), and its elements follow a value struct's
+// field rules.
+
+type K value struct {
+	b [4]u8
+	s [2]str
+}
+
+fn main() {
+	mut k = K{}
+	k.b[4] = 1
+	let part = k.b[0:2]
+	k.b = append(k.b, 1)
+}

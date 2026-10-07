@@ -1,0 +1,98 @@
+package main
+
+import "argo"
+import "say"
+
+// #631 phase A2: [N]T inside a value struct is an inline array, N elements in the struct's
+// bytes: indexed with a bounds check, ranged over, copied with the struct, compared and hashed
+// element by element (a map key whose value needs no allocation), printed as [a b c] and
+// encoded as a JSON array.
+
+type UUID value struct {
+	b [16]u8
+}
+
+type Mat value struct {
+	m [3][3]f64
+}
+
+type P value struct {
+	x i32
+	y i32
+}
+
+type Poly value struct {
+	pts [3]P
+	w   [2]f64
+	n   u8
+}
+
+type Doc struct {
+	name str
+	poly Poly
+}
+
+fn main() {
+	mut u = UUID{}
+	for i in 0..len(u.b) {
+		u.b[i] = u8(i * 3)
+	}
+	let w = u
+	u.b[0] = 200
+	say.Line(u.b[0], w.b[0], u.b[15], len(w.b), u == w)
+	mut ids = make([]UUID, 2)
+	ids[1] = w
+	ids[1].b[2] = 77
+	say.Line(ids[1].b[2], w.b[2], ids[0].b[2], ids[1] == w)
+	mut seen = map[UUID]i64{}
+	seen[w] = 1
+	seen[ids[1]] = 2
+	say.Line(len(seen), seen[w], seen[u])
+	mut sum = 0
+	for i, x in w.b {
+		sum += i64(x) * i
+	}
+	say.Line(sum)
+
+	mut m = Mat{}
+	for i in 0..3 {
+		m.m[i][i] = 1.0
+	}
+	m.m[0][2] = 5.5
+	mut tr = 0.0
+	for row in m.m {
+		for v in row {
+			tr += v
+		}
+	}
+	say.Line(tr, m.m[0], m)
+
+	mut pl = Poly{n: 3}
+	pl.pts[1] = P{x: 4, y: 5}
+	pl.pts[2].y = -7
+	pl.w[0] = -0.0
+	pl.w[1] = 2.5
+	let copy_ = pl
+	pl.pts[1].x = 40
+	say.Line(pl, copy_, pl == copy_, len(pl.pts))
+	mut keys = map[Poly]i64{}
+	keys[copy_] = 1
+	keys[pl] = 2
+	mut back = Poly{}
+	back.pts[1] = P{x: 4, y: 5}
+	back.pts[2].y = -7
+	back.w[1] = 2.5
+	back.n = 3
+	say.Line(len(keys), keys[back])
+	for k, v in keys {
+		say.Line(k.pts[1].x, v)
+	}
+	mut out = []u8{}
+	argo.Put(mut out, Doc{name: "d", poly: pl})
+	say.Line(str(out))
+	mut d = Doc{name: ""}
+	argo.Get(`{"name":"e","poly":{"pts":[{"x":1,"y":2},{"x":3,"y":4},{"x":5,"y":6},{"x":7,"y":8}],"w":[9.5],"n":2}}`, mut d) catch err {
+		say.Line(err)
+	}
+	say.Line(d)
+}

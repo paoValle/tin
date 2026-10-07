@@ -1014,6 +1014,15 @@ fn chk_binary(e i64, want i64) i64 {
 	}
 	if is_cmp_op(op) != 0 {
 		let ordered = i64(op != "==" && op != "!=")
+		if ordered == 0 && kind_of(t) == K_VARRAY {
+			// Element by element, through a generated loop (#631).
+			mut x = cast(i64, call_fn(pos, cast(Fn, varray_eq_fn(t)), args2(l, r), ty_bool))
+			if op == "!=" {
+				x = mk_unot(pos, x)
+			}
+			replace_node(e, x)
+			return ty_bool
+		}
 		if ordered == 0 && kind_of(t) == K_STRUCT {
 			return lower_enum_eq(cast(Node, e), op, l, r, cast(i64, t))
 		}
@@ -1122,7 +1131,11 @@ fn value_incomparable(t Ty, depth i64) i64 {
 		i = 1
 	}
 	for i < len(fs) {
-		let ft = cast(Ty, field_type(t, i))
+		mut ft = cast(Ty, field_type(t, i))
+		for kind_of(ft) == K_VARRAY {
+			// An inline array compares as its elements do (#631).
+			ft = cast(Ty, ft.elem)
+		}
 		let k = kind_of(ft)
 		if k == K_STRUCT {
 			if cast(i64, ft) != cast(i64, t) {
@@ -1199,6 +1212,104 @@ fn lower_enum_eq(e Node, op str, l i64, r i64, t i64) i64 {
 	}
 	replace_node(cast(i64, e), cast(i64, x))
 	return ty_bool
+}
+
+shared mut varray_eq_types []i64
+shared mut varray_eq_fns []i64
+
+// varray_eq_fn returns (making it once per type) veq$N(a, b [N]T) bool, which compares two inline
+// arrays element by element (#631).
+fn varray_eq_fn(t Ty) i64 {
+	if cast(i64, varray_eq_types) == 0 {
+		varray_eq_types = []i64{}
+		varray_eq_fns = []i64{}
+	}
+	mut i = 0
+	for i < len(varray_eq_types) {
+		if varray_eq_types[i] == cast(i64, t) {
+			return varray_eq_fns[i]
+		}
+		i = i + 1
+	}
+	mut names = []str{}
+	names = append(names, "a")
+	names = append(names, "b")
+	mut types = []i64{}
+	types = append(types, cast(i64, t))
+	types = append(types, cast(i64, t))
+	mut rts = []i64{}
+	rts = append(rts, ty_bool)
+	let f = lifted_fn("veq", names, cast([]i64, types), cast(i64, rts))
+	varray_eq_types = append(varray_eq_types, cast(i64, t))
+	varray_eq_fns = append(varray_eq_fns, cast(i64, f))
+	let saved_fn = ck_fn
+	ck_fn = cast(Fn, f)
+	let pos = 0
+	let ls = cast(Sym, cast([]i64, f.locals)[0])
+	let rs = cast(Sym, cast([]i64, f.locals)[1])
+	let et = t.elem
+	let w8 = type_width(cast(Ty, et))
+	let j = declare_local(pos, "$", ty_int)
+	mut body = cast(Block, f.body).stmts
+	body = append(body, let_stmt(pos, cast(Sym, j), mk_int(pos, 0, ty_int)))
+	let w = cast(WhileStmt, node_new(ST_WHILE, pos))
+	w.cond = mk_bin(pos, "<", sym_ref_node(pos, cast(Sym, j)), mk_int(pos, t.key, ty_int), ty_bool)
+	w.post = assign_stmt(pos, sym_ref_node(pos, cast(Sym, j)), mk_bin(pos, "+", sym_ref_node(pos, cast(Sym, j)), mk_int(pos, 1, ty_int), ty_int))
+	let wb = cast(Block, empty_block(pos))
+	w.body = cast(i64, wb)
+	let ea = mk_mem(pos, sym_ref_node(pos, ls), sym_ref_node(pos, cast(Sym, j)), w8, 0, et)
+	let eb = mk_mem(pos, sym_ref_node(pos, rs), sym_ref_node(pos, cast(Sym, j)), w8, 0, et)
+	let ne = binary_new(pos, "!=", ea, eb)
+	chk(cast(Node, ne), ty_bool)
+	let ifs = cast(IfStmt, node_new(ST_IF, pos))
+	ifs.cond = ne
+	ifs.then = empty_block(pos)
+	let rf = cast(ReturnStmt, node_new(ST_RETURN, pos))
+	rf.value = mk_int(pos, 0, ty_bool)
+	mut vt = cast(Block, ifs.then).stmts
+	vt = append(vt, cast(i64, rf))
+	wb.stmts = append(wb.stmts, cast(i64, ifs))
+	body = append(body, cast(i64, w))
+	let rt = cast(ReturnStmt, node_new(ST_RETURN, pos))
+	rt.value = mk_int(pos, 1, ty_bool)
+	body = append(body, cast(i64, rt))
+	ck_fn = saved_fn
+	return cast(i64, f)
+}
+
+// say_varray prints an inline array as a slice prints: [a b c] (#631).
+fn say_varray(a Node, t Ty, prefix str) i64 {
+	let pos = a.pos
+	let et = t.elem
+	let w8 = type_width(cast(Ty, et))
+	mut stmts = []i64{}
+	stmts = append(stmts, expr_stmt(cast(Node, rt_call(pos, prefix + "argsep", cast(i64, []i64{}), ty_void))))
+	let av = temp(pos, cast(i64, a), cast(i64, t))
+	stmts = append(stmts, cast(i64, av))
+	stmts = append(stmts, expr_stmt(cast(Node, rt_call(pos, prefix + "raw", args1(lit_string(pos, "[")), ty_void))))
+	let j = declare_local(pos, "$", ty_int)
+	stmts = append(stmts, let_stmt(pos, cast(Sym, j), mk_int(pos, 0, ty_int)))
+	let w = cast(WhileStmt, node_new(ST_WHILE, pos))
+	w.cond = mk_bin(pos, "<", sym_ref_node(pos, cast(Sym, j)), mk_int(pos, t.key, ty_int), ty_bool)
+	w.post = assign_stmt(pos, sym_ref_node(pos, cast(Sym, j)), mk_bin(pos, "+", sym_ref_node(pos, cast(Sym, j)), mk_int(pos, 1, ty_int), ty_int))
+	let wb = cast(Block, empty_block(pos))
+	w.body = cast(i64, wb)
+	let sep = cast(IfStmt, node_new(ST_IF, pos))
+	sep.cond = mk_bin(pos, ">", sym_ref_node(pos, cast(Sym, j)), mk_int(pos, 0, ty_int), ty_bool)
+	sep.then = empty_block(pos)
+	mut vs1 = cast(Block, sep.then).stmts
+	vs1 = append(vs1, expr_stmt(cast(Node, rt_call(pos, prefix + "raw", args1(lit_string(pos, " ")), ty_void))))
+	wb.stmts = append(wb.stmts, cast(i64, sep))
+	let el = mk_mem(pos, sym_ref_node(pos, cast(Sym, av.sym)), sym_ref_node(pos, cast(Sym, j)), w8, 0, et)
+	if kind_of(cast(Ty, et)) == K_STRUCT {
+		wb.stmts = append(wb.stmts, expr_stmt(call_fn(pos, say_struct_fn(cast(Ty, et), prefix), args1(el), ty_void)))
+	} else {
+		wb.stmts = append(wb.stmts, expr_stmt(say_arg(cast(Node, el), prefix)))
+	}
+	stmts = append(stmts, cast(i64, w))
+	stmts = append(stmts, expr_stmt(cast(Node, rt_call(pos, prefix + "raw", args1(lit_string(pos, "]")), ty_void))))
+	stmts = append(stmts, expr_stmt(cast(Node, rt_call(pos, prefix + "argend", cast(i64, []i64{}), ty_void))))
+	return mk_seq(pos, cast(i64, stmts), mk_int(pos, 0, ty_int), ty_void)
 }
 
 fn enum_eq_fn(t Ty) i64 {
@@ -1432,6 +1543,10 @@ fn key_valid(t Ty, path []Ty) i64 {
 	if k == K_STRING || k == K_BOOL || is_integer_t(cast(i64, t)) != 0 || is_float_t(cast(i64, t)) != 0 {
 		return 1
 	}
+	if k == K_VARRAY {
+		// An inline array is a key when its elements are (#631).
+		return key_valid(cast(Ty, t.elem), path)
+	}
 	if k != K_STRUCT {
 		return 0
 	}
@@ -1524,7 +1639,35 @@ fn key_enc_fn(t Ty) i64 {
 fn key_enc_field(pos i64, body []i64, b i64, x i64, t i64, fi i64) {
 	let ft = field_type(cast(Ty, t), fi)
 	let fv = mk_mem(pos, sym_ref_node(pos, cast(Sym, x)), 0, 0, field_offset(cast(Ty, t), fi), ft)
+	key_enc_value(pos, body, b, fv, ft)
+}
+
+// varray_loop appends to body a loop over the N elements of the inline array at fv (#631),
+// and returns its body block and the element expression maker's base and index locals.
+fn varray_loop(pos i64, body []i64, fv i64, t Ty) Pair {
+	let base = declare_local(pos, "$", ty_int)
+	body = append(body, let_stmt(pos, cast(Sym, base), mk_conv(pos, fv, CV_SAME, ty_int)))
+	let j = declare_local(pos, "$", ty_int)
+	body = append(body, let_stmt(pos, cast(Sym, j), mk_int(pos, 0, ty_int)))
+	let w = cast(WhileStmt, node_new(ST_WHILE, pos))
+	w.cond = mk_bin(pos, "<", sym_ref_node(pos, cast(Sym, j)), mk_int(pos, t.key, ty_int), ty_bool)
+	w.post = assign_stmt(pos, sym_ref_node(pos, cast(Sym, j)), mk_bin(pos, "+", sym_ref_node(pos, cast(Sym, j)), mk_int(pos, 1, ty_int), ty_int))
+	let wb = cast(Block, empty_block(pos))
+	w.body = cast(i64, wb)
+	body = append(body, cast(i64, w))
+	let el = mk_mem(pos, sym_ref_node(pos, cast(Sym, base)), sym_ref_node(pos, cast(Sym, j)), type_width(cast(Ty, t.elem)), 0, t.elem)
+	return cast(Pair, pair(cast(i64, wb), el))
+}
+
+// key_enc_value appends the encoding of value fv of type ft (a field or an element) to b.
+fn key_enc_value(pos i64, body []i64, b i64, fv i64, ft i64) {
 	let k = kind_of(cast(Ty, ft))
+	if k == K_VARRAY {
+		// Each element in turn (#631).
+		let lp = varray_loop(pos, body, fv, cast(Ty, ft))
+		key_enc_value(pos, cast(Block, lp.a).stmts, b, lp.b, cast(Ty, ft).elem)
+		return
+	}
 	mut nb = 0
 	if k == K_BOOL {
 		nb = rt_call(pos, "rt_kb_word", args2(sym_ref_node(pos, cast(Sym, b)), mk_conv(pos, fv, CV_SAME, ty_int)), ty_int)
@@ -1603,8 +1746,18 @@ fn key_dec_fn(t Ty) i64 {
 }
 
 fn key_dec_field(pos i64, body []i64, s i64, obj i64, t i64, fi i64) {
-	let ft = field_type(cast(Ty, t), fi)
+	key_dec_into(pos, body, s, field_store(pos, sym_ref_node(pos, cast(Sym, obj)), t, fi), field_type(cast(Ty, t), fi))
+}
+
+// key_dec_into reads a value of type ft from the key s into the place dst (a field or element).
+fn key_dec_into(pos i64, body []i64, s i64, dst i64, ft i64) {
 	let k = kind_of(cast(Ty, ft))
+	if k == K_VARRAY {
+		// Each element in turn, into the inline array's bytes (#631).
+		let lp = varray_loop(pos, body, dst, cast(Ty, ft))
+		key_dec_into(pos, cast(Block, lp.a).stmts, s, lp.b, cast(Ty, ft).elem)
+		return
+	}
 	mut v = 0
 	if k == K_BOOL {
 		v = mk_conv(pos, rt_call(pos, "rt_kd_word", args1(sym_ref_node(pos, cast(Sym, s))), ty_int), CV_SAME, ft)
@@ -1617,7 +1770,7 @@ fn key_dec_field(pos i64, body []i64, s i64, obj i64, t i64, fi i64) {
 	} else {
 		v = mk_conv(pos, rt_call(pos, "rt_kd_word", args1(sym_ref_node(pos, cast(Sym, s))), ty_int), CV_INT, ft)
 	}
-	body = append(body, assign_stmt(pos, field_store(pos, sym_ref_node(pos, cast(Sym, obj)), t, fi), v))
+	body = append(body, assign_stmt(pos, dst, v))
 }
 
 // map_read is m[k]: a missing key reads as the value type's zero, and a str, slice, map
@@ -1719,6 +1872,29 @@ fn chk_index(e i64) i64 {
 		if is_secret(xt) != 0 || is_secret(cast(Ty, it)) != 0 {
 			return secret_of(cast(Ty, xt.elem))
 		}
+		return xt.elem
+	}
+	if k == K_VARRAY {
+		// An inline array's element (#631): its address plus i times the element's width,
+		// checked against N (at compile time for a constant index).
+		let ix = cast(IndexExpr, e).i
+		mut lenx = mk_int(pos, xt.key, ty_int)
+		if is_const(ix) != 0 {
+			let c = const_val(ix)
+			if c < 0 || c >= xt.key {
+				let m = err_code(pos, "E238 INDEX")
+				buf_str(m, "index ")
+				buf_int(m, c)
+				buf_str(m, " is out of range for ")
+				type_name(cast([]u8, m), xt)
+				err_end(cast([]u8, m))
+			}
+			lenx = 0
+		}
+		let m = cast(MemExpr, mk_mem(pos, x, ix, type_width(cast(Ty, xt.elem)), 0, xt.elem))
+		m.len = lenx
+		replace_node(e, cast(i64, m))
+		cast(Node, e).type_ = xt.elem
 		return xt.elem
 	}
 	err_code_type(pos, "E238 INDEX", "cannot index ", cast(i64, xt), "")
@@ -4168,6 +4344,11 @@ fn chk_builtin(e i64, name str, want i64) i64 {
 		}
 		let t = cast(Ty, chk(cast(Node, arg0(cast(Call, e))), 0))
 		let k = kind_of(t)
+		if k == K_VARRAY {
+			// An inline array's length is its type's (#631).
+			replace_node(e, mk_int(pos, t.key, ty_int))
+			return ty_int
+		}
 		if k != K_STRING && k != K_SLICE && k != K_MAP {
 			err_code_type(pos, "E217 BUILTIN_ARGS", "invalid argument for len: ", cast(i64, t), "")
 		}
@@ -4705,7 +4886,7 @@ fn argo_fn(pos i64, t Ty) i64 {
 		i = i + 1
 	}
 	let k = kind_of(t)
-	if !(k == K_STRUCT || k == K_SLICE || k == K_MAP || k == K_OPT || k == K_ERROR || k == K_STRING || k == K_INT || k == K_BOOL || is_float_t(cast(i64, t)) != 0) {
+	if !(k == K_STRUCT || k == K_SLICE || k == K_VARRAY || k == K_MAP || k == K_OPT || k == K_ERROR || k == K_STRING || k == K_INT || k == K_BOOL || is_float_t(cast(i64, t)) != 0) {
 		err_code_type(pos, "E281 ARGO", "argo cannot encode values of type ", cast(i64, t), "")
 		return 0
 	}
@@ -4837,6 +5018,19 @@ fn argo_fn(pos i64, t Ty) i64 {
 			argo_emit(pos, els.stmts, cast(i64, b), mk_conv(pos, sym_ref_node(pos, x), CV_SAME, t.elem), cast(Ty, t.elem))
 		}
 		body = append(body, cast(i64, ifs))
+	} else if k == K_VARRAY {
+		// An inline array is a JSON array of its N elements (#631).
+		argo_raw(pos, body, cast(i64, b), "[")
+		let lp = varray_loop(pos, body, sym_ref_node(pos, x), t)
+		let comma = cast(IfStmt, node_new(ST_IF, pos))
+		let jx = cast(MemExpr, lp.b).index
+		comma.cond = mk_bin(pos, ">", sym_ref_node(pos, cast(Sym, cast(IdentExpr, jx).ref)), mk_int(pos, 0, ty_int), ty_bool)
+		comma.then = empty_block(pos)
+		argo_raw(pos, cast(Block, comma.then).stmts, cast(i64, b), ",")
+		mut lb = cast(Block, lp.a).stmts
+		lb = append(lb, cast(i64, comma))
+		argo_emit(pos, cast(Block, lp.a).stmts, cast(i64, b), lp.b, cast(Ty, t.elem))
+		argo_raw(pos, body, cast(i64, b), "]")
 	} else if k == K_SLICE {
 		let et = t.elem
 		argo_raw(pos, body, cast(i64, b), "[")
@@ -5432,8 +5626,9 @@ fn argo_dfn(pos i64, t Ty) i64 {
 			br.then = empty_block(pos)
 			mut bb = cast(Block, br.then).stmts
 			let fk = kind_of(cast(Ty, ft))
-			if fk == K_STRUCT || fk == K_SLICE || fk == K_MAP {
-				// Fill the object the field already holds.
+			if fk == K_STRUCT || fk == K_SLICE || fk == K_MAP || fk == K_VARRAY {
+				// Fill the object the field already holds (a value struct's or inline array's
+				// bytes in place, #631).
 				let df = argo_dfn(pos, cast(Ty, ft))
 				if df != 0 {
 					bb = append(bb, expr_stmt(call_fn(pos, cast(Fn, df), args2(sym_ref_node(pos, p), mk_mem(pos, sym_ref_node(pos, x), 0, 0, field_offset(t, fi), ft)), ty_void)))
@@ -5464,6 +5659,44 @@ fn argo_dfn(pos i64, t Ty) i64 {
 			wb = append(wb, skip)
 		}
 		argo_more(pos, wb, cast(i64, p), '}')
+	} else if k == K_VARRAY {
+		// Up to N elements in place; JSON elements past N are skipped, as Go does (#631).
+		let et = t.elem
+		let ifs4 = cast(IfStmt, node_new(ST_IF, pos))
+		ifs4.cond = mk_unot(pos, argo_rd(pos, cast(i64, p), "argo.rarr", ty_bool))
+		ifs4.then = empty_block(pos)
+		mut vs15 = cast(Block, ifs4.then).stmts
+		vs15 = append(vs15, node_new(ST_RETURN, pos))
+		body = append(body, cast(i64, ifs4))
+		let jv = declare_local(pos, "$", ty_int)
+		body = append(body, let_stmt(pos, cast(Sym, jv), mk_int(pos, 0, ty_int)))
+		let w4 = forever(pos)
+		body = append(body, cast(i64, w4))
+		mut wb4 = cast(Block, w4.body).stmts
+		let inr = cast(IfStmt, node_new(ST_IF, pos))
+		inr.cond = mk_bin(pos, "<", sym_ref_node(pos, cast(Sym, jv)), mk_int(pos, t.key, ty_int), ty_bool)
+		inr.then = empty_block(pos)
+		let el = mk_mem(pos, sym_ref_node(pos, cast(Sym, x)), sym_ref_node(pos, cast(Sym, jv)), type_width(cast(Ty, et)), 0, et)
+		mut ib = cast(Block, inr.then).stmts
+		let ek = kind_of(cast(Ty, et))
+		if ek == K_STRUCT || ek == K_VARRAY {
+			let edf = argo_dfn(pos, cast(Ty, et))
+			if edf != 0 {
+				ib = append(ib, expr_stmt(call_fn(pos, cast(Fn, edf), args2(sym_ref_node(pos, cast(Sym, p)), el), ty_void)))
+			}
+		} else {
+			let eval = argo_value(pos, ib, cast(i64, p), cast(Ty, et))
+			if eval != 0 {
+				ib = append(ib, assign_stmt(pos, el, eval))
+			}
+		}
+		let skipb = cast(Block, empty_block(pos))
+		skipb.stmts = append(skipb.stmts, expr_stmt(call_fn(pos, argo_lib(pos, "argo.rskip"), args1(sym_ref_node(pos, cast(Sym, p))), ty_void)))
+		inr.else_ = cast(i64, skipb)
+		wb4 = append(wb4, cast(i64, inr))
+		wb4 = append(wb4, assign_stmt(pos, sym_ref_node(pos, cast(Sym, jv)), mk_bin(pos, "+", sym_ref_node(pos, cast(Sym, jv)), mk_int(pos, 1, ty_int), ty_int)))
+		argo_err_return(pos, wb4, cast(i64, p))
+		argo_more(pos, wb4, cast(i64, p), ']')
 	} else if k == K_SLICE {
 		let et = t.elem
 		let ifs2 = cast(IfStmt, node_new(ST_IF, pos))
@@ -5526,7 +5759,7 @@ shared mut argo_vfns []i64
 // argo_vval validates one value of type t at p (a Sym).
 fn argo_vval(pos i64, body []i64, p i64, t Ty) {
 	let k = kind_of(t)
-	if k == K_STRUCT || k == K_SLICE || k == K_MAP {
+	if k == K_STRUCT || k == K_SLICE || k == K_MAP || k == K_VARRAY {
 		let vf = argo_vfn(pos, t)
 		if vf != 0 {
 			body = append(body, expr_stmt(call_fn(pos, cast(Fn, vf), args1(sym_ref_node(pos, cast(Sym, p))), ty_void)))
@@ -5680,7 +5913,8 @@ fn argo_vfn(pos i64, t Ty) i64 {
 			wb = append(wb, skip)
 		}
 		argo_more(pos, wb, p, '}')
-	} else if k == K_SLICE || k == K_MAP {
+	} else if k == K_SLICE || k == K_MAP || k == K_VARRAY {
+		// An inline array is checked as a JSON array (#631).
 		let ifs = cast(IfStmt, node_new(ST_IF, pos))
 		mut opener = "argo.rarr"
 		mut close = ']'
@@ -5773,6 +6007,8 @@ fn say_arg(a Node, prefix str) Node {
 		suffix = "e"
 	} else if is_unsigned_t(t) != 0 {
 		suffix = "u"
+	} else if k == K_VARRAY {
+		return cast(Node, say_varray(a, t, prefix))
 	} else if k == K_SLICE {
 		let et = t.elem
 		let ek = kind_of(cast(Ty, et))
