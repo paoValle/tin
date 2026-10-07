@@ -827,6 +827,7 @@ fn check() {
 		}
 		i = i + 1
 	}
+	dyn_format_fns()
 	mut m = cast(Sym, 0)
 	if len(entry_name) != 0 {
 		m = lookup_global(entry_name)
@@ -9150,6 +9151,74 @@ shared mut keep_fns []Fn
 
 // keep_fn returns (generating on first use) keep$N(x T) T, which copies x and everything
 // it references into the core's ingot heap.
+shared mut fmt_types []i64 // the concrete types dyn tables hold, and their formatters (#569)
+shared mut fmt_fns []i64
+
+// dyn_format_fns gives every dyn table its last entry: a function that prints the object as
+// its concrete type prints, so say formats a dyn value (#569). It runs once the functions are
+// checked, so building a formatter never interrupts another function's check.
+fn dyn_format_fns() {
+	mut i = 0
+	for i < len(dyn_tables) {
+		let rec = cast(DynTable, dyn_tables[i])
+		mut fns = rec.fns
+		fns = append(fns, cast(i64, format_fn(cast(Ty, rec.ty))))
+		rec.fns = fns
+		i = i + 1
+	}
+}
+
+// format_fn is fmt$N(x i64): it prints the object x as a value of type t into the open
+// format frame. One per type, shared by every table that holds the type.
+fn format_fn(t Ty) Fn {
+	if cast(i64, fmt_types) == 0 {
+		fmt_types = []i64{}
+		fmt_fns = []i64{}
+	}
+	mut i = 0
+	for i < len(fmt_types) {
+		if fmt_types[i] == cast(i64, t) {
+			return cast(Fn, fmt_fns[i])
+		}
+		i = i + 1
+	}
+	lifted_count = lifted_count + 1
+	let pos = 0
+	let f = fn_new(pos, "fmt")
+	let nb = buf_new()
+	buf_str(nb, "fmt$")
+	buf_int(nb, lifted_count)
+	f.qname = str(nb)
+	f.name = str(nb)
+	f.lifted = 2
+	f.done = 1
+	f.params = append(f.params, "x")
+	f.ptypes = append(f.ptypes, ty_int)
+	f.rtypes = []i64{}
+	f.type_ = func_of(f.ptypes, f.rtypes, 0)
+	f.locals = cast([]Sym, []i64{})
+	f.body = empty_block(pos)
+	fmt_types = append(fmt_types, cast(i64, t))
+	fmt_fns = append(fmt_fns, cast(i64, f))
+	prog_fns = append(prog_fns, cast(Fn, f))
+	let saved_fn = ck_fn
+	ck_fn = cast(Fn, f)
+	push_scope()
+	let x = sym_new(SYM_LOCAL, "x", pos)
+	x.type_ = ty_int
+	x.slot = 0
+	x.reads = 1
+	f.slots = 1
+	mut ls = cast([]i64, f.locals)
+	ls = append(ls, cast(i64, x))
+	mut body = cast(Block, f.body).stmts
+	body = append(body, expr_stmt(say_arg(cast(Node, mk_conv(pos, sym_ref_node(pos, x), CV_SAME, cast(i64, t))), "rt_fmt_")))
+	cast(Block, f.body).stmts = body
+	pop_scope()
+	ck_fn = saved_fn
+	return f
+}
+
 fn keep_fn(t Ty) Fn {
 	if cast(i64, keep_types) == 0 {
 		keep_types = []i64{}

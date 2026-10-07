@@ -2,7 +2,7 @@ package main
 
 import "say"
 
-// A slice of dyn values has no formatter either.
+// A slice of dyn values prints element by element, each as its concrete value (#569).
 shape W { M() i64 }
 
 type B struct { n i64 }
@@ -13,5 +13,5 @@ fn (b B) M() i64 {
 
 fn main() {
 	let s []dyn W = []dyn W{B{n: 1}}
-	say.Text(s)
+	say.Line(s)
 }

@@ -3261,8 +3261,8 @@ Fix: rename one of the methods, or make the signatures the same.
 
 ### E530 DYN_NOT_YET
 
-Some uses of `dyn` are planned but not built yet: a `dyn` value in a map (#567) and
-formatting a `dyn` value (#569). A `!dyn` result works since #568.
+One use of `dyn` is planned but not built yet: a `dyn` value in a map (#567). A `!dyn` result
+works since #568, and formatting a `dyn` value since #569: it prints as its concrete value.
 
 ```tin edition=1
 package main

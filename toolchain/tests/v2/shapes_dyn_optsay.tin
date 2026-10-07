@@ -1,6 +1,6 @@
 package main
 
-// Formatting a ?dyn goes through a method on the shape too.
+// A ?dyn value prints <nil> or its concrete value (#569).
 shape W { M() i64 }
 
 type B struct { n i64 }

@@ -2,7 +2,7 @@ package main
 
 import "io"
 
-// Formatting an open set goes through a method on the shape.
+// A dyn value prints as its concrete value (#569; it was E530 before the tables had a formatter).
 type Buf struct { n i64 }
 
 fn (b Buf) Write(data []u8) !i64 {

@@ -1,0 +1,61 @@
+package main
+
+import "constraints"
+import "say"
+
+// A dyn value prints as its concrete value prints (#569): its table's last entry is the
+// concrete type's formatter, so say, interpolation and say.Fmt see through dyn.
+
+shape Named {
+	Name() str
+}
+
+type Dog struct {
+	n   str
+	age i64
+}
+
+fn (d Dog) Name() str {
+	return d.n
+}
+
+type Tag enum {
+	Short(s str)
+	Long(s str, n i64)
+}
+
+fn (t Tag) Name() str {
+	return "tag"
+}
+
+type Box[T constraints.Any] struct {
+	v T
+}
+
+fn (b Box[T]) Name() str {
+	return "box"
+}
+
+type Pen struct {
+	owner str
+	pet   dyn Named
+}
+
+fn main() {
+	let d dyn Named = Dog{n: "rex", age: 3}
+	let t dyn Named = Tag.Long("x", 2)
+	let b dyn Named = Box[i64]{v: 7}
+	say.Line("line", d, t, b)
+	say.Line("interp {d} and {b}")
+	say.Line(say.Fmt("verbs %v | %+v", d, d))
+	let all = []dyn Named{d, t, b}
+	say.Line("slice", all)
+	let p = Pen{owner: "ann", pet: d}
+	say.Line("struct", p)
+	say.Line(say.Fmt("struct %+v", p))
+	mut o ?dyn Named = nil
+	say.Line("optional", o)
+	o = b
+	say.Line("optional", o)
+	say.Line("same as concrete", say.Fmt("%v", d) == say.Fmt("%v", Dog{n: "rex", age: 3}))
+}

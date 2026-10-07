@@ -3,7 +3,7 @@ package main
 import "say"
 import "io"
 
-// A struct holding a dyn value has no formatter either.
+// A struct holding a dyn value prints it as its concrete value (#569).
 type Buf struct { n i64 }
 
 fn (b Buf) Write(data []u8) !i64 {

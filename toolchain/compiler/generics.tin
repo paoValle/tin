@@ -1311,6 +1311,24 @@ fn dyn_table_add(t Ty, dt Ty, pos i64) i64 {
 	return len(dyn_tables) - 1
 }
 
+// dyn_method_count is the number of distinct methods of dyn shape dt: its table holds keep,
+// then the methods, then the concrete type's formatter (#569).
+fn dyn_method_count(dt Ty) i64 {
+	let flat = []i64{}
+	shape_collecting = []i64{}
+	shape_collect(cast(Decl, dt.gdecl), dt.targs, cast([]i64, flat), cast(Decl, dt.gdecl), []str{})
+	mut names = []str{}
+	mut i = 0
+	for i < len(cast([]i64, flat)) {
+		let item = cast(ShapeMethod, flat[i])
+		if slice_has_str(names, item.name) == 0 {
+			names = append(names, item.name)
+		}
+		i = i + 1
+	}
+	return len(names)
+}
+
 // dyn_shape_method returns [table method index, flattened signature] for a method on a
 // dyn shape. Slot zero is reserved for keep, so method indices start at one.
 fn dyn_shape_method(dt Ty, name str) i64 {
