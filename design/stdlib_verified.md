@@ -42,15 +42,25 @@ Exp(-745) where the true value rounds to the smallest subnormal.
     go build -o /tmp/ref ./bench/ref/gauge && tin build bench/ref/gauge/corpus.tin -o /tmp/corpus
     /tmp/ref corpus > go.txt; /tmp/corpus corpus > tin.txt; diff go.txt tin.txt
 
-Result (macOS arm64): bit-identical to Go for 15 of 21 hashes, over 586,156 results in all: sin, cos,
+Result (macOS arm64): bit-identical to Go for 25 of 35 hashes, over 1,184,332 results in all: sin, cos,
 tan (with Payne-Hanek reduction up to 1.8e308), asin, acos, atan, atan2, sinh, cosh, tanh, exp, exp2,
-cbrt, hypot, mod. The six that differ are log, log2, log10, log1p, pow and the pow subset: for about one
-input in a thousand the result differs by exactly one ulp. The cause is the fused multiply-add. Both
+cbrt, hypot, mod, and the functions of #575 that touch no fused expression (logb, ilogb, sincos,
+f32bits, f32frombits, dim, remainder, nextafter, nextafter32, fma). The ten that differ are log, log2,
+log10, log1p, pow and the pow subset, plus expm1, asinh, acosh and atanh (#575), whose algorithms call
+the log family or have fused expressions of their own: for about one input in a thousand the result
+differs by exactly one ulp. The cause is the fused multiply-add. Both
 compilers fuse on arm64, but not the same products. In the disassembly of Go's `math.log` the last
 line `k*Ln2Hi - (...)` is one fused instruction and `hfsq = 0.5*f*f` is folded into the fused operations
 that use it rather than rounded once; Tin's compiler has no `x*y - a` form, fuses the right-hand product
 of an add, and rounds a product that has two uses once.
 Neither is wrong, and Go's own results differ between its arm64 and amd64 builds for the same reason.
+
+`tools/ci/number_check.py` runs the same functions from `bench/ref/gauge` over 120,000 inputs each
+(GAUGE_N, one function at a time) and compares every result bit for bit: logb, ilogb, sincos,
+f32bits, f32frombits, dim, remainder, nextafter, nextafter32 and fma are bit-identical, and expm1,
+asinh, acosh and atanh stay within one ulp (on macOS arm64: 224, 150, 76 and 17 results of 120,077).
+The special values are pinned in `toolchain/tests/v2/gauge_more.tin`, which agrees with Go's line
+for line.
 
 Error against exact arithmetic (Python `decimal`, 800 digits for log1p), in ulps, on the inputs where the
 result is a normal number:

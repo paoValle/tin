@@ -1,0 +1,30 @@
+package main
+
+import "say"
+import "cairn"
+
+// lcg advances the 64-bit linear congruential generator (modulo 2^64).
+@wrap fn lcg(k i64) i64 {
+	return k*6364136223846793005 + 1442695040888963407
+}
+
+fn main() {
+	let n = i64(2000000)
+	let h = cairn.NewIntHeap(n)
+	mut k = i64(12345)
+	for i in i64(0)..n {
+		k = lcg(k)
+		h.Push(k)
+	}
+	mut sum = i64(0)
+	mut count = i64(0)
+	for h.Len() > 0 {
+		let (v, ok) = h.Pop()
+		if !ok {
+			break
+		}
+		sum = sum*%1000003 +% v
+		count += 1
+	}
+	say.Line("popped", count, sum)
+}

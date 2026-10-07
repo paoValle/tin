@@ -1,0 +1,129 @@
+package main
+
+import "say"
+import "gauge"
+
+// ub is the bit pattern of f as hex, with every NaN printed alike (a NaN payload is not part of a
+// function's contract and differs between platforms).
+fn ub(f f64) str {
+	if gauge.IsNaN(f) {
+		return "nan"
+	}
+	return say.Fmt("%016x", gauge.F64bits(f))
+}
+
+// u32b is the bit pattern of a u32 as hex.
+fn u32b(v u32) str {
+	return say.Fmt("%08x", u64(v))
+}
+
+// r prints a transcendental result to 12 significant digits, so the last bit (which differs
+// between a fused multiply-add and a separate multiply and add, and between arm64 and x86-64)
+// does not matter; the bit-exact check is tools/ci/number_check.py against Go on this machine.
+fn r(x f64) str {
+	return say.Fmt("%.12g", x)
+}
+
+// unary prints one result per input for the unary functions.
+fn unary(name str, f fn(f64) f64, xs []f64) {
+	for _, x in xs {
+		say.Line(name, ub(x), ub(f(x)))
+	}
+}
+
+// unaryr prints one rounded result per input for the fusion-sensitive functions.
+fn unaryr(name str, f fn(f64) f64, xs []f64) {
+	for _, x in xs {
+		say.Line(name, ub(x), r(f(x)))
+	}
+}
+
+fn main() {
+	// Expm1: tiny arguments, the k = -1/0/1 branches, the reduction edges and the specials.
+	let xs = []f64{0, gauge.Copysign(0, -1), gauge.SmallestNonzeroF64, -gauge.SmallestNonzeroF64, 1e-10,
+		1e-20, 0.25, 0.5, gauge.Ln2/2, -gauge.Ln2/2, 1, -1, 2, -2, 20, -20, 56*gauge.Ln2, -56*gauge.Ln2,
+		709.78, 709.782712893384, 710, -745.13, -745.1332191019411, gauge.Inf(1), gauge.Inf(-1), gauge.NaN(),
+		1e300, -1e300, gauge.MaxF64}
+	unaryr("expm1", gauge.Expm1, xs)
+
+	// Asinh, Acosh, Atanh: the branch edges and the domain boundaries.
+	let hs = []f64{0, gauge.Copysign(0, -1), 1e-10, 1e-9, 0.5, 1, -1, 2, -2, 268435456, -268435456,
+		268435457, -268435457, 1e10, 1e300, -1e300, gauge.SmallestNonzeroF64, gauge.Inf(1), gauge.Inf(-1),
+		gauge.NaN()}
+	unaryr("asinh", gauge.Asinh, hs)
+	let as = []f64{0.5, 1, 1.0000000000000002, 1.5, 2, 2.0000000000000004, 3, 268435456, 1e10, 1e300,
+		gauge.MaxF64, gauge.Inf(1), gauge.Inf(-1), gauge.NaN(), -1, 0}
+	unaryr("acosh", gauge.Acosh, as)
+	let ts = []f64{0, gauge.Copysign(0, -1), gauge.SmallestNonzeroF64, 0.5, -0.5, 0.9999999999999999,
+		0.9999999999999998, 1, -1, 1.0000000000000002, -1.0000000000000002, 1e-10, gauge.Inf(1),
+		gauge.Inf(-1), gauge.NaN()}
+	unaryr("atanh", gauge.Atanh, ts)
+
+	// Sincos: the exact multiples of Pi/4, the reduction threshold and the specials.
+	let cs = []f64{0, gauge.Copysign(0, -1), 1e-30, 0.5, -0.5, gauge.Pi/4, gauge.Pi/2, gauge.Pi, 3*gauge.Pi/2,
+		2*gauge.Pi, -gauge.Pi, 1e10, 536870912, 536870913, 1e15, 1e100, 1e300, gauge.Inf(1), gauge.Inf(-1),
+		gauge.NaN()}
+	for _, x in cs {
+		let (s, c) = gauge.Sincos(x)
+		say.Line("sincos", ub(x), r(s), r(c))
+	}
+	// Sincos agrees with Sin and Cos, including the sign of a zero result.
+	for _, x in []f64{0.25, 3.5, -7.25, 1e6} {
+		let (s, c) = gauge.Sincos(x)
+		say.Line("sincos agree", ub(x), s == gauge.Sin(x) && c == gauge.Cos(x))
+	}
+
+	// Logb and Ilogb over the exponents and the specials; both are exact.
+	let ls = []f64{0, gauge.Copysign(0, -1), 1, -1, 2, 0.5, 3, 1e-300, gauge.SmallestNonzeroF64,
+		gauge.MaxF64, -gauge.MaxF64, 1e300, gauge.Inf(1), gauge.Inf(-1), gauge.NaN()}
+	for _, x in ls {
+		say.Line("logb", ub(x), ub(gauge.Logb(x)), gauge.Ilogb(x))
+	}
+
+	// F32bits and F32frombits round trip the boundary patterns; both are exact.
+	let pats = []u32{0, 1, 2, 0x80000001, 0x007fffff, 0x00800000, 0x00800001, 0x3f800000, 0x3fc00000,
+		0x7f7fffff, 0x7f800000, 0xff800000, 0xbf800000}
+	for _, b in pats {
+		let f = gauge.F32frombits(b)
+		say.Line("f32bits", u32b(b), ub(f64(f)), u32b(gauge.F32bits(f)))
+	}
+	for _, x in []f64{0, 1.5, -2.0, 3.4028234663852886e38, 1e-45, gauge.Inf(1), gauge.Inf(-1)} {
+		say.Line("f32 of", ub(x), u32b(gauge.F32bits(f32(x))))
+	}
+
+	// Nextafter and Nextafter32 at the boundaries; both are exact.
+	for _, p in [][2]f64{{1, 2}, {1, 0}, {0, 1}, {0, -1}, {gauge.MaxF64, gauge.Inf(1)},
+		{gauge.Inf(1), gauge.MaxF64}, {-gauge.MaxF64, gauge.Inf(-1)}, {gauge.Inf(1), gauge.Inf(1)},
+		{0, gauge.NaN()}} {
+		say.Line("nextafter", ub(p[0]), ub(p[1]), ub(gauge.Nextafter(p[0], p[1])))
+	}
+	for _, p in [][2]f32{{1, 2}, {0, 1}, {0, -1}, {f32(3.4028235e38), f32(gauge.Inf(1))}, {f32(0), f32(0)}} {
+		say.Line("nextafter32", u32b(gauge.F32bits(p[0])), u32b(gauge.F32bits(p[1])),
+			u32b(gauge.F32bits(gauge.Nextafter32(p[0], p[1]))))
+	}
+
+	// Dim.
+	for _, p in [][2]f64{{5, 3}, {3, 5}, {5, 5}, {gauge.Inf(1), gauge.Inf(1)}, {gauge.Inf(-1), gauge.Inf(-1)},
+		{gauge.Inf(1), gauge.Inf(-1)}, {gauge.NaN(), 1}, {1, gauge.NaN()}} {
+		say.Line("dim", ub(p[0]), ub(p[1]), ub(gauge.Dim(p[0], p[1])))
+	}
+
+	// Remainder: the sign of a zero result, exact halves and the special cases; exact.
+	for _, p in [][2]f64{{7.5, 2}, {-7.5, 2}, {7.5, -2}, {5, 2}, {3, 2}, {1, 2}, {2, 2}, {gauge.Inf(1), 1},
+		{1, gauge.Inf(1)}, {1, 0}, {0, 1}, {gauge.MaxF64, 1}, {1, gauge.SmallestNonzeroF64},
+		{1e308, 1e-308}, {gauge.NaN(), 1}} {
+		say.Line("remainder", ub(p[0]), ub(p[1]), ub(gauge.Remainder(p[0], p[1])))
+	}
+
+	// FMA fuses on every platform (Go's software implementation): the classic cancellation, an
+	// overflow, a zero times infinity.
+	for _, p in [][3]f64{{1 + gauge.Ldexp(1, -27), 1 - gauge.Ldexp(1, -27), -1},
+		{1e308, 1e-308, -1}, {1e308, 10, 1e308}, {0, gauge.Inf(1), 1}, {gauge.Inf(1), 1, gauge.Inf(-1)},
+		{gauge.NaN(), 1, 1}, {3, 4, 5}} {
+		say.Line("fma", ub(p[0]), ub(p[1]), ub(p[2]), ub(gauge.FMA(p[0], p[1], p[2])))
+	}
+
+	// The constants added with these functions.
+	say.Line("consts", ub(gauge.Ln10), ub(gauge.Log2E), ub(gauge.Log10E), ub(gauge.Phi), ub(gauge.SqrtE),
+		ub(gauge.SqrtPi), ub(gauge.SqrtPhi), ub(gauge.MaxF32))
+}

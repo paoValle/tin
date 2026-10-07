@@ -540,6 +540,7 @@ Package gauge is floating-point math and a few integer helpers (like Go's math);
 - `const Exp2Overflow = 1.0239999999999999e+03`
 - `const Exp2Underflow = -1.0740e+03`
 - `Exp2(x f64) f64`: Exp2 returns 2**x. Exp2(+Inf) = +Inf, Exp2(-Inf) = 0, Exp2(NaN) = NaN.
+- `Expm1(x f64) f64`: Expm1 returns e**x - 1, more accurate than Exp(x) - 1 near zero (FreeBSD's s_expm1.c through Go's expm1.go). Expm1(-Inf) = -1, Expm1(+Inf) = +Inf, Expm1(NaN) = NaN.
 - `F64bits(f f64) u64`: F64bits returns the IEEE 754 bit pattern of f.
 - `F64frombits(b u64) f64`: F64frombits returns the f64 with bit pattern b.
 - `Abs(x f64) f64`: Abs returns |x| (NaN stays NaN, -0 becomes +0).
@@ -553,6 +554,12 @@ Package gauge is floating-point math and a few integer helpers (like Go's math);
 - `Max(x f64, y f64) f64`: Max returns the larger of x and y; any NaN gives NaN and +0 is larger than -0 (like Go).
 - `Clamp(x f64, lo f64, hi f64) f64`: Clamp returns x limited to [lo, hi] (NaN passes through).
 - `Pow10(n i64) f64`: Pow10 returns 10**n: +Inf above 308, 0 below -323, exactly as Go's math.Pow10.
+- `F32bits(f f32) u32`: F32bits returns the IEEE 754 bit pattern of f. Tin holds an f32 as an f64 rounded to f32, so the 32-bit pattern is re-encoded; a NaN payload is canonical, as conversions do.
+- `F32frombits(b u32) f32`: F32frombits returns the f32 with bit pattern b. Subnormals and infinities are exact; a NaN is a quiet NaN with the payload's high bits, since the f32 lives as an f64.
+- `Nextafter(x f64, y f64) f64`: Nextafter returns the next representable f64 after x towards y, like Go's math.Nextafter; NaN when either is NaN.
+- `Nextafter32(x f32, y f32) f32`: Nextafter32 is Nextafter for f32 values.
+- `Dim(x f64, y f64) f64`: Dim returns the maximum of x-y or 0, like Go's math.Dim: Dim(+Inf, +Inf) = Dim(-Inf, -Inf) = NaN, and any NaN gives NaN.
+- `FMA(x f64, y f64, z f64) f64`: FMA returns x*y + z with a single rounding (a fused multiply-add), like Go's math.FMA.
 - `Frexp(f f64) (f64, i64)`: Frexp breaks f into a fraction in [0.5, 1) and a power of two: f = frac * 2**exp. Frexp(0), Frexp(±Inf) and Frexp(NaN) return f and 0.
 - `Ldexp(frac f64, exp i64) f64`: Ldexp returns frac * 2**exp, the inverse of Frexp.
 - `Modf(f f64) (f64, f64)`: Modf returns the integer and fractional parts of f, both with the sign of f.
@@ -565,6 +572,14 @@ Package gauge is floating-point math and a few integer helpers (like Go's math);
 - `const MaxU64 u64 = 18446744073709551615`: MaxU64 is the largest u64 (typed, because an untyped constant this large folds to -1 in the frozen compiler).
 - `const MaxF64 = 1.7976931348623157e308`: MaxF64 is the largest finite f64.
 - `const SmallestNonzeroF64 = 4.9406564584124654e-324`: SmallestNonzeroF64 is the smallest positive denormal f64.
+- `const MaxF32 = 3.4028234663852886e+38`: MaxF32 is the largest finite f32.
+- `const Ln10 = 2.302585092994046`: Ln10 is the natural logarithm of 10.
+- `const Log2E = 1.4426950408889634`: Log2E is the base-2 logarithm of e.
+- `const Log10E = 0.4342944819032518`: Log10E is the base-10 logarithm of e.
+- `const Phi = 1.618033988749895`: Phi is the golden ratio.
+- `const SqrtE = 1.6487212707001282`: SqrtE is the square root of e.
+- `const SqrtPi = 1.772453850905516`: SqrtPi is the square root of Pi.
+- `const SqrtPhi = 1.272019649514069`: SqrtPhi is the square root of Phi.
 - `Sqrt(x f64) f64`: Sqrt returns the square root of x.
 - `Floor(x f64) f64`: Floor returns the largest integer value <= x.
 - `Ceil(x f64) f64`: Ceil returns the smallest integer value >= x.
@@ -574,6 +589,9 @@ Package gauge is floating-point math and a few integer helpers (like Go's math);
 - `Sinh(x f64) f64`: Sinh returns the hyperbolic sine of x. It uses Exp above 0.5 and a rational approximation below.
 - `Cosh(x f64) f64`: Cosh returns the hyperbolic cosine of x.
 - `Tanh(x f64) f64`: Tanh returns the hyperbolic tangent of x, in [-1, 1].
+- `Asinh(x f64) f64`: Asinh returns the inverse hyperbolic sine of x (FreeBSD's s_asinh.c through Go's asinh.go).
+- `Acosh(x f64) f64`: Acosh returns the inverse hyperbolic cosine of x (FreeBSD's e_acosh.c through Go's acosh.go); it is NaN below 1.
+- `Atanh(x f64) f64`: Atanh returns the inverse hyperbolic tangent of x (FreeBSD's e_atanh.c through Go's atanh.go); it is +Inf at 1, -Inf at -1 and NaN outside [-1, 1].
 - `Hypot(p f64, q f64) f64`: Hypot returns sqrt(p*p + q*q), overflowing only if the result does.
 - `MinI(a i64, b i64) i64`: MinI returns the smaller of a and b.
 - `MaxI(a i64, b i64) i64`: MaxI returns the larger of a and b.
@@ -585,11 +603,15 @@ Package gauge is floating-point math and a few integer helpers (like Go's math);
 - `Log2(x f64) f64`: Log2 returns the binary logarithm of x, exact for powers of two.
 - `Log10(x f64) f64`: Log10 returns the decimal logarithm of x.
 - `Log1p(x f64) f64`: Log1p returns log(1 + x), accurate even when x is close to zero.
+- `Logb(x f64) f64`: Logb returns the binary exponent of x as an f64 (Go's math.Logb): +Inf for infinities, -Inf for zero, NaN for NaN.
+- `Ilogb(x f64) i64`: Ilogb returns the binary exponent of x as an i64, like Go's math.Ilogb: MaxI32 for infinities and NaN, MinI32 for zero.
 - `Mod(x f64, y f64) f64`: Mod returns the remainder of x/y with the sign of x, exactly. NaN for y == 0, infinite x or either NaN.
+- `Remainder(x f64, y f64) f64`: Remainder returns the IEEE 754 remainder of x/y: x - n*y where n is x/y rounded to the nearest integer, ties to even (FreeBSD's e_remainder.c through Go's remainder.go). Unlike Mod its sign follows x and it is NaN for y = 0 or an infinite x.
 - `Pow(x f64, y f64) f64`: Pow returns x**y, with the special cases of C99 and Go: Pow(x, ±0) = 1, Pow(1, y) = 1, Pow(NaN, y) = NaN, Pow(x < 0, non-integer y) = NaN, and the usual infinities and signed zeros. It is exact for small integer powers of exactly representable bases and within an ulp or two otherwise (it is not correctly rounded).
 - `Sin(x f64) f64`: Sin returns the sine of x (radians). Sin(±0) = ±0, Sin(±Inf) = Sin(NaN) = NaN.
 - `Cos(x f64) f64`: Cos returns the cosine of x (radians). Cos(±Inf) = Cos(NaN) = NaN.
 - `Tan(x f64) f64`: Tan returns the tangent of x (radians). Tan(±0) = ±0, Tan(±Inf) = Tan(NaN) = NaN.
+- `Sincos(x f64) (f64, f64)`: Sincos returns Sin(x), Cos(x) with one argument reduction, like Go's math.Sincos.
 
 ## bits
 
@@ -1009,7 +1031,7 @@ Package atlas is the functions on maps (like Go's maps): keys, values, copies an
 
 ## cairn
 
-Package cairn is a set of containers for i64 and str values: heaps, a deque, a queue, hash sets, a bitset and an LRU cache.
+Package cairn is a set of containers: heaps, deques, a queue, sets, a bitset and an LRU cache for i64 and str values, and the generic Heap, Deque, Set and Cache over any element types.
 
 - `type IntHeap struct`: IntHeap is a binary min-heap of i64 values; IntHeap{} is ready to use.
 - `NewIntHeap(n i64) IntHeap`: NewIntHeap returns an empty min-heap with room for n values.
@@ -1072,6 +1094,41 @@ Package cairn is a set of containers for i64 and str values: heaps, a deque, a q
 - `(c LRU) Len() i64`: Len returns the number of cached entries.
 - `(c LRU) Cap() i64`: Cap returns the capacity.
 - `(c LRU) Keys() []str`: Keys returns the cached keys from most to least recently used.
+- `type Heap[T constraints.Any] struct`: Heap is a binary heap ordered by its less function; use NewHeap. less(a, b) = a < b makes a min-heap, a > b a max-heap, and any other order gives the corresponding priority queue.
+- `NewHeap[T constraints.Any](less fn(T, T) bool) Heap[T]`: NewHeap returns an empty heap ordered by less, with room for eight values.
+- `(h mut Heap[T]) Push(v T)`: Push adds v to the heap.
+- `(h mut Heap[T]) Pop() ?T`: Pop removes and returns the first value in less's order, or nil when the heap is empty.
+- `(h Heap[T]) Peek() ?T`: Peek returns the first value without removing it, or nil when the heap is empty.
+- `(h Heap[T]) Len() i64`: Len returns the number of values in the heap.
+- `(h mut Heap[T]) Clear()`: Clear removes every value.
+- `type Deque[T constraints.Any] struct`: Deque is a double-ended queue in a slice with a moving head; use NewDeque.
+- `NewDeque[T constraints.Any]() Deque[T]`: NewDeque returns an empty deque.
+- `(d Deque[T]) Len() i64`: Len returns the number of values in the deque.
+- `(d mut Deque[T]) PushBack(v T)`: PushBack appends v at the back.
+- `(d mut Deque[T]) PushFront(v T)`: PushFront prepends v at the front.
+- `(d mut Deque[T]) PopFront() ?T`: PopFront removes and returns the front value, or nil when the deque is empty.
+- `(d mut Deque[T]) PopBack() ?T`: PopBack removes and returns the back value, or nil when the deque is empty.
+- `(d Deque[T]) Front() ?T`: Front returns the front value, or nil when the deque is empty.
+- `(d Deque[T]) Back() ?T`: Back returns the back value, or nil when the deque is empty.
+- `(d Deque[T]) At(i i64) T`: At returns the i-th value from the front, panicking when i is out of range.
+- `type Set[K constraints.Comparable] struct`: Set is a set of comparable keys in insertion order; use NewSet.
+- `NewSet[K constraints.Comparable]() Set[K]`: NewSet returns an empty set.
+- `(s mut Set[K]) Add(k K) bool`: Add puts k in the set and reports whether it was absent.
+- `(s Set[K]) Has(k K) bool`: Has reports whether k is in the set.
+- `(s mut Set[K]) Remove(k K) bool`: Remove takes k out and reports whether it was present.
+- `(s Set[K]) Len() i64`: Len returns the number of keys.
+- `(s Set[K]) Items() []K`: Items returns the keys in insertion order.
+- `(s Set[K]) Union(o Set[K]) Set[K]`: Union returns a new set of the keys of s and o: s's keys in their order, then o's new ones.
+- `(s Set[K]) Intersect(o Set[K]) Set[K]`: Intersect returns a new set of the keys in both, in s's insertion order.
+- `type Cache[K constraints.Comparable, V constraints.Any] struct`: Cache is a least-recently-used cache from comparable keys to any values with a fixed capacity; use NewCache. It is the generic form of LRU (the str to str one); an empty slot holds no key and no value, so ?K and ?V storage.
+- `NewCache[K constraints.Comparable, V constraints.Any](capacity i64) Cache[K, V]`: NewCache returns an empty cache holding at most capacity entries (at least 1).
+- `(c mut Cache[K, V]) Get(k K) ?V`: Get returns the value for k and marks it most recently used, or nil.
+- `(c Cache[K, V]) Peek(k K) ?V`: Peek returns the value for k without touching its recency, or nil.
+- `(c Cache[K, V]) Has(k K) bool`: Has reports whether k is cached, without touching its recency.
+- `(c mut Cache[K, V]) Put(k K, v V)`: Put stores v under k as most recently used, evicting the least recently used entry when full.
+- `(c mut Cache[K, V]) Remove(k K) bool`: Remove takes k out and reports whether it was cached.
+- `(c Cache[K, V]) Len() i64`: Len returns the number of cached entries.
+- `(c Cache[K, V]) Keys() []K`: Keys returns the keys from the most to the least recently used.
 
 ## stamp
 

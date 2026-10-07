@@ -4,6 +4,7 @@ import gzip
 import json
 import os
 from pathlib import Path
+import struct
 import subprocess
 import tempfile
 
@@ -31,6 +32,82 @@ def compare(exe, inputs, expected, directory, label):
     print(f'PASS {label}: {len(inputs)} exact results')
 
 
+# gauge: the functions of #575, how many results each one prints, and the allowed difference
+# from Go in ulps of the result bits (0 = bit-identical). dump mode prints
+# "<name> <i> <input bits...> <result bits>" lines; both sides generate the inputs from the same
+# seed, GAUGE_N random values plus the edge cases.
+GAUGE_FUNCS = [
+    # expm1's, the inverse hyperbolics' and sincos' arithmetic is Go's, but the compilers fuse
+    # multiply-adds differently (arm64 fuses, x86-64 does not, and Go and Tin do not fuse the
+    # same products: design/stdlib_verified.md, "gauge: the corpus check"), so these five are
+    # allowed exactly one ulp, and never more. FMA is exact everywhere (the software port).
+    ('expm1', 1, 1), ('asinh', 1, 1), ('acosh', 1, 1), ('atanh', 1, 1), ('sincos', 2, 1),
+    ('logb', 1, 0), ('f32bits', 1, 0), ('f32frombits', 1, 0),
+    ('dim', 1, 0), ('remainder', 1, 0), ('nextafter', 1, 0), ('nextafter32', 1, 0), ('fma', 1, 0),
+]
+
+GAUGE_INPUTS = 120000
+
+
+def ulps(a, b):
+    """ulps is the distance in ulps between two f64 bit patterns, or None if incomparable.
+
+    NaNs compare equal (their payloads are not part of a function's contract), equal values are
+    zero apart, and values of different signs only match when both are zero.
+    """
+    xa = struct.unpack('<d', struct.pack('<Q', a))[0]
+    xb = struct.unpack('<d', struct.pack('<Q', b))[0]
+    if xa != xa and xb != xb:
+        return 0
+    if xa != xa or xb != xb:
+        return None
+    if xa == xb:
+        return 0
+    if (xa < 0) != (xb < 0):
+        return None
+    return abs(a - b)
+
+
+def gauge(root, work):
+    """gauge checks every #575 function against Go over 120,000 inputs."""
+    env = dict(os.environ, TIN_ROOT=str(root), GAUGE_N=str(GAUGE_INPUTS))
+    tin = work / 'gauge-tin'
+    subprocess.run([str(root / 'bin/tinc'), '-o', str(tin), 'bench/ref/gauge/corpus.tin'],
+                   check=True, cwd=root, env=env, timeout=120)
+    go = work / 'gauge-go'
+    subprocess.run(['go', 'build', '-o', str(go), './bench/ref/gauge'], check=True, cwd=root,
+                   timeout=120)
+    total = 0
+    for name, results, allowed in GAUGE_FUNCS:
+        outs = []
+        for exe in (go, tin):
+            run = dict(env, GAUGE_FUNC=name)
+            result = subprocess.run([str(exe), 'dump'], capture_output=True, check=True,
+                                    cwd=root, env=run, timeout=300)
+            outs.append([line.split() for line in result.stdout.splitlines()])
+        want, got = outs
+        assert len(got) == len(want) > GAUGE_INPUTS,             f'gauge {name}: {len(got)} tin and {len(want)} go lines, want more than {GAUGE_INPUTS}'
+        bad = within = 0
+        for i, (a, b) in enumerate(zip(want, got)):
+            assert a[:-results] == b[:-results], f'gauge {name} case {i}: inputs differ: {a} vs {b}'
+            for bits_a, bits_b in zip(a[-results:], b[-results:]):
+                d = ulps(int(bits_a, 16), int(bits_b, 16))
+                if d is None or d > allowed:
+                    bad += 1
+                    if bad < 4:
+                        print(f'  gauge {name} case {i}: Go {bits_a}, Tin {bits_b}')
+                elif d > 0:
+                    within += 1
+        assert bad == 0, f'gauge {name}: {bad} of {len(got)} results beyond {allowed} ulp of Go'
+        total += len(got) * results
+        exact = (len(got) * results) - within
+        print(f'PASS gauge {name}: {len(got)} inputs, {exact} bit-identical, {within} within '
+              f'{allowed} ulp')
+    print(f'PASS gauge: {total} results, {len(GAUGE_FUNCS)} functions, at least '
+          f'{GAUGE_INPUTS} inputs each')
+    return total
+
+
 def main():
     directory = ROOT / 'bin/ci/number'
     directory.mkdir(parents=True, exist_ok=True)
@@ -45,6 +122,7 @@ def main():
                        timeout=60)
         subprocess.run(['go', 'run', './bench/ref/number', str(work)], check=True,
                        cwd=ROOT, timeout=60)
+        gauge(ROOT, work)
         # mint's faults read like strconv's under mint's own name (#521).
         expected_go = [line.replace(b'ERR strconv.', b'ERR mint.', 1)
                        for line in (work / 'expected.txt').read_bytes().splitlines(keepends=True)]

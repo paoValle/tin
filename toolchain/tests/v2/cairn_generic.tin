@@ -1,0 +1,332 @@
+package main
+
+import "say"
+import "cairn"
+import "dice"
+import "sift"
+
+// Job is a struct element type.
+type Job struct {
+	due  i64
+	name str
+}
+
+// jobLess orders jobs by due date, then name.
+fn jobLess(a Job, b Job) bool {
+	if a.due != b.due {
+		return a.due < b.due
+	}
+	return a.name < b.name
+}
+
+// lessI64 is the min-heap order for i64.
+fn lessI64(a i64, b i64) bool {
+	return a < b
+}
+
+// sortedInsert puts v in the sorted slice xs.
+fn sortedInsert(xs mut []i64, v i64) []i64 {
+	mut i = len(xs)
+	for i > 0 && xs[i-1] > v {
+		i -= 1
+	}
+	let out = append(xs, 0)
+	{
+		mut j = len(out) - 1
+		for j > i {
+			out[j] = out[j-1]
+			j -= 1
+		}
+	}
+	out[i] = v
+	return out
+}
+
+// gheap is a heap kept in a global (see the keep check below).
+mut gheap = cairn.NewHeap[i64](lessI64)
+
+fn main() {
+	// i64, str and struct elements.
+	mut h = cairn.NewHeap[i64](lessI64)
+	for _, v in []i64{5, 3, 8, 1, 9, 2, -4, 9223372036854775807, -9223372036854775807 - 1, 0} {
+		h.Push(v)
+	}
+	mut out = make([]i64, 0, 12)
+	for {
+		if let v = h.Pop() {
+			out = append(out, v)
+		} else {
+			break
+		}
+	}
+	say.Line("heap i64", out, sift.IsSortedInts(out), h.Len(), h.Peek() == nil)
+	mut hs = cairn.NewHeap[str](fn(a str, b str) bool { return a > b })
+	hs.Push("b")
+	hs.Push("c")
+	hs.Push("a")
+	mut words = make([]str, 0, 3)
+	for {
+		if let v = hs.Pop() {
+			words = append(words, v)
+		} else {
+			break
+		}
+	}
+	say.Line("heap str", words)
+	mut hj = cairn.NewHeap[Job](jobLess)
+	hj.Push(Job{due: 2, name: "b"})
+	hj.Push(Job{due: 1, name: "z"})
+	hj.Push(Job{due: 1, name: "a"})
+	let first = hj.Pop()
+	let second = hj.Pop()
+	if let f = first {
+		if let s = second {
+			say.Line("heap struct", f.name, f.due, s.name, s.due, hj.Len())
+		}
+	}
+
+	// Fuzz the heap against a sorted slice: 10,000 random push/pop operations.
+	mut r = dice.New(7)
+	mut model = make([]i64, 0, 64)
+	let ops = 10000
+	mut mismatches = 0
+	mut digest = i64(0)
+	for i in 0..ops {
+		let roll = i64(r.Intn(3))
+		if roll == 0 || len(model) == 0 {
+			let v = i64(r.Intn(1000)) - 500
+			h.Push(v)
+			model = sortedInsert(mut model, v)
+		} else {
+			let top = h.Pop()
+			let want = model[0]
+			model = model[1:len(model)]
+			if let v = top {
+				if v == want {
+					digest = digest*%1000003 +% v
+				} else {
+					mismatches += 1
+				}
+			} else {
+				mismatches += 1
+			}
+		}
+	}
+	for {
+		if let v = h.Pop() {
+			digest = digest*%1000003 +% v
+		} else {
+			break
+		}
+	}
+	say.Line("heap fuzz", ops, mismatches, len(model), digest, h.Len())
+
+	// Deque against a slice model.
+	mut d = cairn.NewDeque[i64]()
+	mut dmodel = make([]i64, 0, 64)
+	let dops = 10000
+	mut dmismatch = 0
+	mut ddigest = i64(0)
+	for i in 0..dops {
+		let roll = i64(r.Intn(5))
+		if roll == 0 {
+			let v = i64(r.Intn(1000)) - 500
+			d.PushBack(v)
+			dmodel = append(dmodel, v)
+		} else if roll == 1 {
+			let v = i64(r.Intn(1000)) - 500
+			d.PushFront(v)
+			dmodel = append([]i64{v}, dmodel...)
+		} else if roll == 2 {
+			let got = d.PopFront()
+			mut want = i64(0)
+			if len(dmodel) > 0 {
+				want = dmodel[0]
+				dmodel = dmodel[1:len(dmodel)]
+			}
+			if let v = got {
+				if v != want {
+					dmismatch += 1
+				}
+			} else if len(dmodel) > 0 {
+				// The model had a value but the deque did not.
+				dmismatch += 1
+			}
+		} else if roll == 3 {
+			let got = d.PopBack()
+			mut want = i64(0)
+			if len(dmodel) > 0 {
+				want = dmodel[len(dmodel)-1]
+				dmodel = dmodel[0 : len(dmodel)-1]
+			}
+			if let v = got {
+				if v != want {
+					dmismatch += 1
+				}
+			} else if len(dmodel) > 0 {
+				dmismatch += 1
+			}
+		} else {
+			if d.Len() != len(dmodel) {
+				dmismatch += 1
+			} else if d.Len() > 0 {
+				let idx = i64(r.Intn(d.Len()))
+				if d.At(idx) != dmodel[idx] {
+					dmismatch += 1
+				}
+				if d.Front() == nil || d.Back() == nil {
+					dmismatch += 1
+				}
+			}
+		}
+		ddigest = ddigest*%1000003 +% i64(len(dmodel))
+	}
+	for {
+		if let v = d.PopFront() {
+			ddigest = ddigest*%1000003 +% v
+		} else {
+			break
+		}
+	}
+	say.Line("deque fuzz", dops, dmismatch, d.Len(), ddigest)
+
+	// Set against a map model, with i64, str and struct keys.
+	mut s = cairn.NewSet[i64]()
+	mut smodel = make(map[i64]bool)
+	let sops = 5000
+	mut smismatch = 0
+	for i in 0..sops {
+		let k = i64(r.Intn(300))
+		let roll = i64(r.Intn(3))
+		if roll == 0 {
+			if s.Add(k) != !smodel[k] {
+				smismatch += 1
+			}
+			smodel[k] = true
+		} else if roll == 1 {
+			let had = smodel[k]
+			if s.Remove(k) != had {
+				smismatch += 1
+			}
+			delete(smodel, k)
+		} else if s.Has(k) != smodel[k] {
+			smismatch += 1
+		}
+		if s.Len() != len(smodel) {
+			smismatch += 1
+		}
+	}
+	let items = s.Items()
+	mut same = len(items) == len(smodel)
+	mut j = 0
+	for k, _ in smodel {
+		if k != items[j] {
+			same = false
+		}
+		j += 1
+	}
+	say.Line("set fuzz", sops, smismatch, s.Len(), same)
+	mut sa = cairn.NewSet[str]()
+	sa.Add("x")
+	sa.Add("y")
+	sa.Add("x")
+	mut sb = cairn.NewSet[str]()
+	sb.Add("y")
+	sb.Add("z")
+	say.Line("set str", sa.Items(), sb.Items(), sa.Union(sb).Items(), sa.Intersect(sb).Items())
+
+	// Cache against a recency-list model.
+	mut c = cairn.NewCache[str, i64](4)
+	mut cmodel = make([]str, 0, 4)
+	let cops = 5000
+	mut cmismatch = 0
+	for i in 0..cops {
+		let k = "k" + say.Str(i64(r.Intn(10)))
+		let roll = i64(r.Intn(5))
+		if roll == 0 || roll == 1 {
+			let v = i64(r.Intn(1000))
+			c.Put(k, v)
+			mut at = -1
+			for x, m in cmodel {
+				if m == k {
+					at = x
+				}
+			}
+			if at >= 0 {
+				cmodel = append(cmodel[0:at], cmodel[at+1:len(cmodel)]...)
+			}
+			cmodel = append([]str{k}, cmodel...)
+			if len(cmodel) > 4 {
+				cmodel = cmodel[0:4]
+			}
+		} else if roll == 2 {
+			if c.Get(k) == nil && contains(cmodel, k) {
+				cmismatch += 1
+			}
+			mut at = -1
+			for x, m in cmodel {
+				if m == k {
+					at = x
+				}
+			}
+			if at >= 0 {
+				cmodel = append(cmodel[0:at], cmodel[at+1:len(cmodel)]...)
+				cmodel = append([]str{k}, cmodel...)
+			}
+		} else if roll == 3 {
+			mut at = -1
+			for x, m in cmodel {
+				if m == k {
+					at = x
+				}
+			}
+			if c.Remove(k) != (at >= 0) {
+				cmismatch += 1
+			}
+			if at >= 0 {
+				cmodel = append(cmodel[0:at], cmodel[at+1:len(cmodel)]...)
+			}
+		} else {
+			let has = c.Peek(k) != nil
+			if has != contains(cmodel, k) {
+				cmismatch += 1
+			}
+		}
+		let keys = c.Keys()
+		if len(keys) != len(cmodel) {
+			cmismatch += 1
+		} else {
+			for x in 0..len(keys) {
+				if keys[x] != cmodel[x] {
+					cmismatch += 1
+				}
+			}
+		}
+	}
+	say.Line("cache fuzz", cops, cmismatch, c.Len(), c.Keys())
+
+	// A heap kept in a global is deep-copied by keep, and still works.
+	mut local = cairn.NewHeap[i64](lessI64)
+	local.Push(4)
+	local.Push(2)
+	gheap = keep(local)
+	local.Push(0)
+	gheap.Push(9)
+	let g1 = gheap.Pop()
+	let g2 = gheap.Pop()
+	if let a = g1 {
+		if let b = g2 {
+			say.Line("keep", a, b, gheap.Len(), local.Len())
+		}
+	}
+}
+
+// contains reports whether xs holds v.
+fn contains(xs []str, v str) bool {
+	for _, x in xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}

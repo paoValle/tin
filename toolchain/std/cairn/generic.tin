@@ -1,0 +1,416 @@
+package cairn
+
+import "constraints"
+
+// The generic containers: a Heap, a Deque, a Set and a Cache over any element types, next to the
+// i64 and str ones (which stay as they are). A type parameter has no zero value, so the
+// operations that can miss return ?T; a Set and a Cache key follows the map key rules.
+
+// Heap is a binary heap ordered by its less function; use NewHeap. less(a, b) = a < b makes a
+// min-heap, a > b a max-heap, and any other order gives the corresponding priority queue.
+type Heap[T constraints.Any] struct {
+	xs   []T
+	n    i64
+	less fn(T, T) bool
+}
+
+// NewHeap returns an empty heap ordered by less, with room for eight values.
+fn NewHeap[T constraints.Any](less fn(T, T) bool) Heap[T] {
+	return Heap[T]{xs: make([]T, 0, 8), n: 0, less: less}
+}
+
+// Push adds v to the heap.
+fn (h mut Heap[T]) Push(v T) {
+	if h.n < len(h.xs) {
+		h.xs[h.n] = v
+	} else {
+		h.xs = append(h.xs, v)
+	}
+	let xs = h.xs
+	mut i = h.n
+	h.n += 1
+	for i > 0 {
+		let p = (i - 1) / 2
+		if !h.less(v, xs[p]) {
+			break
+		}
+		xs[i] = xs[p]
+		i = p
+	}
+	xs[i] = v
+}
+
+// Pop removes and returns the first value in less's order, or nil when the heap is empty.
+fn (h mut Heap[T]) Pop() ?T {
+	mut n = h.n
+	if n == 0 {
+		return nil
+	}
+	let xs = h.xs
+	let top = xs[0]
+	n -= 1
+	h.n = n
+	if n > 0 {
+		let last = xs[n]
+		mut i = 0
+		for {
+			mut c = 2*i + 1
+			if c >= n {
+				break
+			}
+			if c+1 < n && h.less(xs[c+1], xs[c]) {
+				c += 1
+			}
+			if !h.less(xs[c], last) {
+				break
+			}
+			xs[i] = xs[c]
+			i = c
+		}
+		xs[i] = last
+	}
+	return top
+}
+
+// Peek returns the first value without removing it, or nil when the heap is empty.
+fn (h Heap[T]) Peek() ?T {
+	if h.n == 0 {
+		return nil
+	}
+	return h.xs[0]
+}
+
+// Len returns the number of values in the heap.
+fn (h Heap[T]) Len() i64 {
+	return h.n
+}
+
+// Clear removes every value.
+fn (h mut Heap[T]) Clear() {
+	h.xs = h.xs[0:0]
+	h.n = 0
+}
+
+// Deque is a double-ended queue in a slice with a moving head; use NewDeque.
+type Deque[T constraints.Any] struct {
+	buf  []T
+	head i64
+}
+
+// NewDeque returns an empty deque.
+fn NewDeque[T constraints.Any]() Deque[T] {
+	return Deque[T]{buf: make([]T, 0, 8), head: 0}
+}
+
+// Len returns the number of values in the deque.
+fn (d Deque[T]) Len() i64 {
+	return len(d.buf) - d.head
+}
+
+// compact moves the live values to the front when half the slice is consumed.
+fn (d mut Deque[T]) compact() {
+	if d.head > 0 && d.head*2 >= len(d.buf) {
+		mut nb = make([]T, 0, len(d.buf))
+		nb = append(nb, d.buf[d.head:len(d.buf)]...)
+		d.buf = nb
+		d.head = 0
+	}
+}
+
+// PushBack appends v at the back.
+fn (d mut Deque[T]) PushBack(v T) {
+	d.compact()
+	d.buf = append(d.buf, v)
+}
+
+// PushFront prepends v at the front.
+fn (d mut Deque[T]) PushFront(v T) {
+	if d.head > 0 {
+		d.head -= 1
+		d.buf[d.head] = v
+		return
+	}
+	mut nb = make([]T, 0, len(d.buf)*2+8)
+	nb = append(nb, v)
+	nb = append(nb, d.buf...)
+	d.buf = nb
+	d.head = 0
+}
+
+// PopFront removes and returns the front value, or nil when the deque is empty.
+fn (d mut Deque[T]) PopFront() ?T {
+	if d.Len() == 0 {
+		return nil
+	}
+	let v = d.buf[d.head]
+	d.head += 1
+	if d.head == len(d.buf) {
+		d.buf = d.buf[0:0]
+		d.head = 0
+	}
+	return v
+}
+
+// PopBack removes and returns the back value, or nil when the deque is empty.
+fn (d mut Deque[T]) PopBack() ?T {
+	if d.Len() == 0 {
+		return nil
+	}
+	let v = d.buf[len(d.buf)-1]
+	d.buf = d.buf[0 : len(d.buf)-1]
+	if d.head > len(d.buf) {
+		d.head = len(d.buf)
+	}
+	if d.head == len(d.buf) {
+		d.buf = d.buf[0:0]
+		d.head = 0
+	}
+	return v
+}
+
+// Front returns the front value, or nil when the deque is empty.
+fn (d Deque[T]) Front() ?T {
+	if d.Len() == 0 {
+		return nil
+	}
+	return d.buf[d.head]
+}
+
+// Back returns the back value, or nil when the deque is empty.
+fn (d Deque[T]) Back() ?T {
+	if d.Len() == 0 {
+		return nil
+	}
+	return d.buf[len(d.buf)-1]
+}
+
+// At returns the i-th value from the front, panicking when i is out of range.
+fn (d Deque[T]) At(i i64) T {
+	if i < 0 || i >= d.Len() {
+		panic("cairn: Deque index out of range")
+	}
+	return d.buf[d.head+i]
+}
+
+// Set is a set of comparable keys in insertion order; use NewSet.
+type Set[K constraints.Comparable] struct {
+	m map[K]bool
+}
+
+// NewSet returns an empty set.
+fn NewSet[K constraints.Comparable]() Set[K] {
+	return Set[K]{m: make(map[K]bool)}
+}
+
+// Add puts k in the set and reports whether it was absent.
+fn (s mut Set[K]) Add(k K) bool {
+	if s.m[k] {
+		return false
+	}
+	s.m[k] = true
+	return true
+}
+
+// Has reports whether k is in the set.
+fn (s Set[K]) Has(k K) bool {
+	return s.m[k]
+}
+
+// Remove takes k out and reports whether it was present.
+fn (s mut Set[K]) Remove(k K) bool {
+	if !s.m[k] {
+		return false
+	}
+	delete(s.m, k)
+	return true
+}
+
+// Len returns the number of keys.
+fn (s Set[K]) Len() i64 {
+	return len(s.m)
+}
+
+// Items returns the keys in insertion order.
+fn (s Set[K]) Items() []K {
+	mut out = make([]K, 0, len(s.m))
+	for k, _ in s.m {
+		out = append(out, k)
+	}
+	return out
+}
+
+// Union returns a new set of the keys of s and o: s's keys in their order, then o's new ones.
+fn (s Set[K]) Union(o Set[K]) Set[K] {
+	mut out = NewSet[K]()
+	for k, _ in s.m {
+		out.Add(k)
+	}
+	for k, _ in o.m {
+		out.Add(k)
+	}
+	return out
+}
+
+// Intersect returns a new set of the keys in both, in s's insertion order.
+fn (s Set[K]) Intersect(o Set[K]) Set[K] {
+	mut out = NewSet[K]()
+	for k, _ in s.m {
+		if o.m[k] {
+			out.Add(k)
+		}
+	}
+	return out
+}
+
+// Cache is a least-recently-used cache from comparable keys to any values with a fixed capacity;
+// use NewCache. It is the generic form of LRU (the str to str one); an empty slot holds no key
+// and no value, so ?K and ?V storage.
+type Cache[K constraints.Comparable, V constraints.Any] struct {
+	cap  i64
+	n    i64
+	idx  map[K]i64
+	keys []?K
+	vals []?V
+	prev []i64
+	next []i64
+	head i64
+	tail i64
+	free i64
+}
+
+// NewCache returns an empty cache holding at most capacity entries (at least 1).
+fn NewCache[K constraints.Comparable, V constraints.Any](capacity i64) Cache[K, V] {
+	if capacity < 1 {
+		capacity = 1
+	}
+	mut keys = make([]?K, 0, capacity)
+	mut vals = make([]?V, 0, capacity)
+	mut prev = make([]i64, capacity)
+	mut next = make([]i64, capacity)
+	for i in 0..capacity {
+		keys = append(keys, nil)
+		vals = append(vals, nil)
+		prev[i] = -1
+		next[i] = i + 1
+	}
+	next[capacity-1] = -1
+	return Cache[K, V]{cap: capacity, n: 0, idx: make(map[K]i64), keys: keys, vals: vals, prev: prev, next: next, head: -1, tail: -1, free: 0}
+}
+
+// unlink removes slot i from the recency list.
+fn (c mut Cache[K, V]) unlink(i i64) {
+	let p = c.prev[i]
+	let nx = c.next[i]
+	if p >= 0 {
+		c.next[p] = nx
+	} else {
+		c.head = nx
+	}
+	if nx >= 0 {
+		c.prev[nx] = p
+	} else {
+		c.tail = p
+	}
+}
+
+// linkFront makes slot i the most recently used.
+fn (c mut Cache[K, V]) linkFront(i i64) {
+	c.prev[i] = -1
+	c.next[i] = c.head
+	if c.head >= 0 {
+		c.prev[c.head] = i
+	} else {
+		c.tail = i
+	}
+	c.head = i
+}
+
+// Get returns the value for k and marks it most recently used, or nil.
+fn (c mut Cache[K, V]) Get(k K) ?V {
+	let (i, ok) = c.idx[k]
+	if !ok {
+		return nil
+	}
+	if c.head != i {
+		c.unlink(i)
+		c.linkFront(i)
+	}
+	return c.vals[i]
+}
+
+// Peek returns the value for k without touching its recency, or nil.
+fn (c Cache[K, V]) Peek(k K) ?V {
+	let (i, ok) = c.idx[k]
+	if !ok {
+		return nil
+	}
+	return c.vals[i]
+}
+
+// Has reports whether k is cached, without touching its recency.
+fn (c Cache[K, V]) Has(k K) bool {
+	let (_, ok) = c.idx[k]
+	return ok
+}
+
+// Put stores v under k as most recently used, evicting the least recently used entry when full.
+fn (c mut Cache[K, V]) Put(k K, v V) {
+	mut (i, ok) = c.idx[k]
+	if ok {
+		c.vals[i] = v
+		if c.head != i {
+			c.unlink(i)
+			c.linkFront(i)
+		}
+		return
+	}
+	if c.n == c.cap {
+		i = c.tail
+		c.unlink(i)
+		if let k0 = c.keys[i] {
+			delete(c.idx, k0)
+		}
+	} else {
+		i = c.free
+		c.free = c.next[i]
+		c.n += 1
+	}
+	c.keys[i] = k
+	c.vals[i] = v
+	c.idx[k] = i
+	c.linkFront(i)
+}
+
+// Remove takes k out and reports whether it was cached.
+fn (c mut Cache[K, V]) Remove(k K) bool {
+	let (i, ok) = c.idx[k]
+	if !ok {
+		return false
+	}
+	c.unlink(i)
+	delete(c.idx, k)
+	c.keys[i] = nil
+	c.vals[i] = nil
+	c.next[i] = c.free
+	c.free = i
+	c.n -= 1
+	return true
+}
+
+// Len returns the number of cached entries.
+fn (c Cache[K, V]) Len() i64 {
+	return c.n
+}
+
+// Keys returns the keys from the most to the least recently used.
+fn (c Cache[K, V]) Keys() []K {
+	mut out = make([]K, 0, c.n)
+	mut i = c.head
+	for i >= 0 {
+		if let k = c.keys[i] {
+			out = append(out, k)
+		}
+		i = c.next[i]
+	}
+	return out
+}

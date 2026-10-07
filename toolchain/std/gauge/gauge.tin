@@ -30,6 +30,30 @@ const MaxF64 = 1.7976931348623157e308
 // SmallestNonzeroF64 is the smallest positive denormal f64.
 const SmallestNonzeroF64 = 4.9406564584124654e-324
 
+// MaxF32 is the largest finite f32.
+const MaxF32 = 3.4028234663852886e+38
+
+// Ln10 is the natural logarithm of 10.
+const Ln10 = 2.302585092994046
+
+// Log2E is the base-2 logarithm of e.
+const Log2E = 1.4426950408889634
+
+// Log10E is the base-10 logarithm of e.
+const Log10E = 0.4342944819032518
+
+// Phi is the golden ratio.
+const Phi = 1.618033988749895
+
+// SqrtE is the square root of e.
+const SqrtE = 1.6487212707001282
+
+// SqrtPi is the square root of Pi.
+const SqrtPi = 1.772453850905516
+
+// SqrtPhi is the square root of Phi.
+const SqrtPhi = 1.272019649514069
+
 extern fn sqrt(x f64) f64
 extern fn floor(x f64) f64
 extern fn ceil(x f64) f64

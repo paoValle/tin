@@ -252,3 +252,57 @@ fn Tan(x f64) f64 {
 	}
 	return y
 }
+
+// Sincos returns Sin(x), Cos(x) with one argument reduction, like Go's math.Sincos.
+fn Sincos(x f64) (f64, f64) {
+	if x == 0 {
+		return x, 1
+	}
+	if IsNaN(x) || IsInf(x, 0) {
+		return NaN(), NaN()
+	}
+	mut v = x
+	mut sinSign = false
+	mut cosSign = false
+	if v < 0 {
+		v = -v
+		sinSign = true
+	}
+	mut j u64
+	mut z f64
+	if v >= reduceThreshold {
+		j, z = trigReduce(v)
+	} else {
+		j = u64(i64(v * invPi4))
+		mut y = f64(i64(j))
+		if j&1 == 1 {
+			j += 1
+			y += 1.0
+		}
+		j &= 7
+		z = ((v - y*pi4a) - y*pi4b) - y*pi4c
+	}
+	if j > 3 {
+		j -= 4
+		sinSign = !sinSign
+		cosSign = !cosSign
+	}
+	if j > 1 {
+		cosSign = !cosSign
+	}
+	let zz = z * z
+	mut cos = 1.0 - 0.5*zz + zz*zz*((((((cosC0*zz)+cosC1)*zz+cosC2)*zz+cosC3)*zz+cosC4)*zz+cosC5)
+	mut sin = z + z*zz*((((((sinC0*zz)+sinC1)*zz+sinC2)*zz+sinC3)*zz+sinC4)*zz+sinC5)
+	if j == 1 || j == 2 {
+		let t = sin
+		sin = cos
+		cos = t
+	}
+	if cosSign {
+		cos = -cos
+	}
+	if sinSign {
+		sin = -sin
+	}
+	return sin, cos
+}

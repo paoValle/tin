@@ -6,6 +6,7 @@ package main
 import "say"
 import "gauge"
 import "quarry"
+import "mint"
 
 mut seed u64 = 88172645463325252
 
@@ -13,7 +14,7 @@ fn next() u64 {
 	seed ^= seed >> 12
 	seed ^= seed << 25
 	seed ^= seed >> 27
-	return seed * 2685821657736338717
+	return seed *% 2685821657736338717
 }
 
 fn edge() []f64 {
@@ -30,9 +31,22 @@ fn edge() []f64 {
 	}
 }
 
+// count is the number of random inputs (GAUGE_N, default 20000; the CI twin uses 120000).
+fn count() i64 {
+	let s = quarry.Getenv("GAUGE_N")
+	if len(s) == 0 {
+		return 20000
+	}
+	let (v, err) = mint.Atoi(s)
+	if err != nil || v <= 0 {
+		return 20000
+	}
+	return v
+}
+
 fn inputs() []f64 {
 	mut xs = edge()
-	for i in 0..20000 {
+	for i in 0..count() {
 		let v = next()
 		let m = next()
 		match v % 4 {
@@ -70,7 +84,7 @@ fn canon(f f64) u64 {
 fn mix(h u64, b u64) u64 {
 	for i in 0..8 {
 		h ^= (b >> u64(8*i)) & 0xff
-		h *= 1099511628211
+		h = h*%1099511628211
 	}
 	return h
 }
@@ -79,7 +93,16 @@ fn hex(b u64) str {
 	return say.Fmt("%016x", b)
 }
 
+// wanted reports whether name is selected: GAUGE_FUNC empty means every function.
+fn wanted(name str) bool {
+	let sel = quarry.Getenv("GAUGE_FUNC")
+	return len(sel) == 0 || sel == name
+}
+
 fn unary(name str, f fn(f64) f64, xs []f64, dump bool) {
+	if !wanted(name) {
+		return
+	}
 	mut h = u64(14695981039346656037)
 	for i, x in xs {
 		let b = canon(f(x))
@@ -93,7 +116,108 @@ fn unary(name str, f fn(f64) f64, xs []f64, dump bool) {
 	}
 }
 
+// unary2 hashes two results per input, as Sincos returns.
+fn unary2(name str, f fn(f64) (f64, f64), xs []f64, dump bool) {
+	if !wanted(name) {
+		return
+	}
+	mut h = u64(14695981039346656037)
+	for i, x in xs {
+		let (a, b) = f(x)
+		h = mix(h, canon(a))
+		h = mix(h, canon(b))
+		if dump {
+			say.Line(name, i, hex(gauge.F64bits(x)), hex(canon(a)), hex(canon(b)))
+		}
+	}
+	if !dump {
+		say.Line(name, len(xs), hex(h))
+	}
+}
+
+// unaryi hashes an integer result per input, as Ilogb returns.
+fn unaryi(name str, f fn(f64) i64, xs []f64, dump bool) {
+	if !wanted(name) {
+		return
+	}
+	mut h = u64(14695981039346656037)
+	for i, x in xs {
+		let v = u64(f(x))
+		h = mix(h, v)
+		if dump {
+			say.Line(name, i, hex(gauge.F64bits(x)), hex(v))
+		}
+	}
+	if !dump {
+		say.Line(name, len(xs), hex(h))
+	}
+}
+
+// ternary hashes one result per input triple, as FMA takes.
+fn ternary(name str, f fn(f64, f64, f64) f64, xs []f64, dump bool) {
+	if !wanted(name) {
+		return
+	}
+	mut h = u64(14695981039346656037)
+	for i, x in xs {
+		let j = (i*7 + 3) % len(xs)
+		let k = (i*13 + 1) % len(xs)
+		let b = canon(f(x, xs[j], xs[k]))
+		h = mix(h, b)
+		if dump {
+			say.Line(name, i, hex(gauge.F64bits(x)), hex(gauge.F64bits(xs[j])), hex(gauge.F64bits(xs[k])), hex(b))
+		}
+	}
+	if !dump {
+		say.Line(name, len(xs), hex(h))
+	}
+}
+
+// binary32 is binary over f32 conversions, as Nextafter32 takes.
+fn binary32(name str, f fn(f64, f64) f64, xs []f64, dump bool) {
+	if !wanted(name) {
+		return
+	}
+	mut h = u64(14695981039346656037)
+	mut n = 0
+	for i, x in xs {
+		let js = []i64{(i*7 + 3) % len(xs), (i*13 + 1) % len(xs), i}
+		for _, j in js {
+			let b = canon(f(x, xs[j]))
+			h = mix(h, b)
+			if dump {
+				say.Line(name, say.Fmt("{i},{j}"), hex(gauge.F64bits(x)), hex(gauge.F64bits(xs[j])), hex(b))
+			}
+			n += 1
+		}
+	}
+	if !dump {
+		say.Line(name, n, hex(h))
+	}
+}
+
+// unaryu32 hashes a u32 conversion per input, as F32bits returns.
+fn unaryu32(name str, f fn(f64) u64, xs []f64, dump bool) {
+	if !wanted(name) {
+		return
+	}
+	mut h = u64(14695981039346656037)
+	for i, x in xs {
+		let v = f(x)
+		h = mix(h, v)
+		if dump {
+			say.Line(name, i, hex(gauge.F64bits(x)), hex(v))
+		}
+	}
+	if !dump {
+		say.Line(name, len(xs), hex(h))
+	}
+}
+
 fn binary(name str, f fn(f64, f64) f64, xs []f64, dump bool) {
+	if !wanted(name) {
+		return
+	}
 	mut h = u64(14695981039346656037)
 	mut n = 0
 	for i, x in xs {
@@ -116,6 +240,21 @@ fn absPow(x f64, y f64) f64 {
 	return gauge.Pow(gauge.Abs(x), y)
 }
 
+// nextafter32f applies Nextafter32 to the f32 forms and widens the result.
+fn nextafter32f(x f64, y f64) f64 {
+	return f64(gauge.Nextafter32(f32(x), f32(y)))
+}
+
+// f32bitsf widens and takes the bits, out of range inputs become f32 Inf/0 as conversions do.
+fn f32bitsf(x f64) u64 {
+	return u64(gauge.F32bits(f32(x)))
+}
+
+// f32frombitsf builds an f32 from the low 32 bits of x's pattern and widens it.
+fn f32frombitsf(x f64) f64 {
+	return f64(gauge.F32frombits(u32(gauge.F64bits(x)&0xffffffff)))
+}
+
 fn main() {
 	let dump = len(quarry.Args()) > 1 && quarry.Args()[1] == "dump"
 	let xs = inputs()
@@ -135,11 +274,28 @@ fn main() {
 	unary("log10", gauge.Log10, xs, dump)
 	unary("log1p", gauge.Log1p, xs, dump)
 	unary("cbrt", gauge.Cbrt, xs, dump)
+	unary("expm1", gauge.Expm1, xs, dump)
+	unary("asinh", gauge.Asinh, xs, dump)
+	unary("acosh", gauge.Acosh, xs, dump)
+	unary("atanh", gauge.Atanh, xs, dump)
+	unary("logb", gauge.Logb, xs, dump)
+	unaryi("ilogb", gauge.Ilogb, xs, dump)
+	unary2("sincos", gauge.Sincos, xs, dump)
+	unaryu32("f32bits", f32bitsf, xs, dump)
+	unary("f32frombits", f32frombitsf, xs, dump)
+	binary("dim", gauge.Dim, xs, dump)
+	binary("remainder", gauge.Remainder, xs, dump)
+	binary("nextafter", gauge.Nextafter, xs, dump)
+	binary32("nextafter32", nextafter32f, xs, dump)
+	ternary("fma", gauge.FMA, xs, dump)
 	binary("atan2", gauge.Atan2, xs, dump)
 	binary("pow", gauge.Pow, xs, dump)
 	binary("hypot", gauge.Hypot, xs, dump)
 	binary("mod", gauge.Mod, xs, dump)
 
+	if !wanted("powi") {
+		return
+	}
 	mut h = u64(14695981039346656037)
 	mut n = 0
 	let ys = []f64{2, 3, -2, 10, -7, 0.25, 1.5, -0.75, 100, 0.3333333333333333, 2.5, -1.5}

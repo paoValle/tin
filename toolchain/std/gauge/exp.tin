@@ -87,3 +87,115 @@ fn Exp2(x f64) f64 {
 	let lo = -t * expLn2Lo
 	return expmulti(hi, lo, k)
 }
+
+const expm1Othreshold = 7.09782712893383973096e+02 // 0x40862E42FEFA39EF
+const expm1Ln2X56 = 3.88162421113569373274e+01 // 0x4043687a9f1af2b1
+const expm1Ln2HalfX3 = 1.03972077083991796413e+00 // 0x3ff0a2b23f3bab73
+const expm1Ln2Half = 3.46573590279972654709e-01 // 0x3fd62e42fefa39ef
+const expm1Tiny = 1.0 / (1 << 54) // 2**-54
+const expm1Q1 = -3.33333333333331316428e-02 // 0xBFA11111111110F4
+const expm1Q2 = 1.58730158725481460165e-03 // 0x3F5A01A019FE5585
+const expm1Q3 = -7.93650757867487942473e-05 // 0xBF14CE199EAADBB7
+const expm1Q4 = 4.00821782732936239552e-06 // 0x3ED0CFCA86E65239
+const expm1Q5 = -2.01099218183624371326e-07 // 0xBE8AFDB76E09C32D
+
+// Expm1 returns e**x - 1, more accurate than Exp(x) - 1 near zero (FreeBSD's s_expm1.c through
+// Go's expm1.go). Expm1(-Inf) = -1, Expm1(+Inf) = +Inf, Expm1(NaN) = NaN.
+fn Expm1(x f64) f64 {
+	if IsInf(x, 1) || IsNaN(x) {
+		return x
+	}
+	if IsInf(x, -1) {
+		return -1
+	}
+	mut absx = x
+	mut sign = false
+	if x < 0 {
+		absx = -absx
+		sign = true
+	}
+	// Filter out huge arguments.
+	if absx >= expm1Ln2X56 {
+		if sign {
+			return -1
+		}
+		if absx >= expm1Othreshold {
+			return Inf(1)
+		}
+	}
+	mut c = 0.0
+	mut v = x
+	mut k i64 = 0
+	if absx > expm1Ln2Half {
+		mut hi = 0.0
+		mut lo = 0.0
+		if absx < expm1Ln2HalfX3 {
+			if !sign {
+				hi = v - expLn2Hi
+				lo = expLn2Lo
+				k = 1
+			} else {
+				hi = v + expLn2Hi
+				lo = -expLn2Lo
+				k = -1
+			}
+		} else {
+			if !sign {
+				k = i64(invLn2*v + 0.5)
+			} else {
+				k = i64(invLn2*v - 0.5)
+			}
+			let t = f64(k)
+			hi = v - t*expLn2Hi // t * Ln2Hi is exact here
+			lo = t * expLn2Lo
+		}
+		v = hi - lo
+		c = (hi - v) - lo
+	} else if absx < expm1Tiny {
+		return v
+	}
+	// v is now in the primary range.
+	let hfx = 0.5 * v
+	let hxs = v * hfx
+	let r1 = 1 + hxs*(expm1Q1+hxs*(expm1Q2+hxs*(expm1Q3+hxs*(expm1Q4+hxs*expm1Q5))))
+	let t = 3 - r1*hfx
+	mut e = hxs * ((r1 - t) / (6.0 - v*t))
+	if k == 0 {
+		return v - (v*e - hxs) // c is 0
+	}
+	e = (v*(e-c) - c)
+	e -= hxs
+	if k == -1 {
+		return 0.5*(v-e) - 0.5
+	}
+	if k == 1 {
+		if v < -0.25 {
+			return -2 * (e - (v + 0.5))
+		}
+		return 1 + 2*(v-e)
+	}
+	if k <= -2 || k > 56 { // suffice to return exp(x)-1
+		mut y = 1 - (e - v)
+		y = addExp(y, k) // add k to y's exponent
+		return y - 1
+	}
+	if k < 20 {
+		let t2 = F64frombits(0x3ff0000000000000 - (0x20000000000000 >> u64(k))) // t=1-2**-k
+		mut y = t2 - (e - v)
+		y = F64frombits(F64bits(y) + u64(k)<<52) // add k to y's exponent
+		return y
+	}
+	let t3 = F64frombits(u64(0x3ff-k) << 52) // 2**-k
+	mut y = v - (e + t3)
+	y += 1
+	y = F64frombits(F64bits(y) + u64(k)<<52) // add k to y's exponent
+	return y
+}
+
+// addExp adds k (which may be negative) to y's exponent, as Go's expm1 adds uint64(k).
+fn addExp(y f64, k i64) f64 {
+	if k < 0 {
+		return F64frombits(F64bits(y) - u64(-k)<<52)
+	}
+	return F64frombits(F64bits(y) + u64(k)<<52)
+}

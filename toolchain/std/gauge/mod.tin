@@ -26,3 +26,57 @@ fn Mod(x f64, y f64) f64 {
 	}
 	return r
 }
+
+const remHalfMax = MaxF64 / 2
+const remTiny = 4.45014771701440276618e-308 // 0x0020000000000000
+
+// Remainder returns the IEEE 754 remainder of x/y: x - n*y where n is x/y rounded to the nearest
+// integer, ties to even (FreeBSD's e_remainder.c through Go's remainder.go). Unlike Mod its sign
+// follows x and it is NaN for y = 0 or an infinite x.
+fn Remainder(x f64, y f64) f64 {
+	if IsNaN(x) || IsNaN(y) || IsInf(x, 0) || y == 0 {
+		return NaN()
+	}
+	if IsInf(y, 0) {
+		return x
+	}
+	mut a = x
+	mut b = y
+	let sign = a < 0
+	if sign {
+		a = -a
+	}
+	if b < 0 {
+		b = -b
+	}
+	if a == b {
+		let zero = 0.0
+		if sign {
+			return -zero
+		}
+		return 0
+	}
+	if b <= remHalfMax {
+		a = Mod(a, b+b) // now a < 2b
+	}
+	if b < remTiny {
+		if a+a > b {
+			a -= b
+			if a+a >= b {
+				a -= b
+			}
+		}
+	} else {
+		let bHalf = 0.5 * b
+		if a > bHalf {
+			a -= b
+			if a >= bHalf {
+				a -= b
+			}
+		}
+	}
+	if sign {
+		a = -a
+	}
+	return a
+}

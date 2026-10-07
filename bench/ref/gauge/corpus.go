@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 )
 
 type rng struct{ s uint64 }
@@ -32,10 +33,20 @@ var edge = []float64{
 	9.223372036854776e18, 1.8446744073709552e19, 27, -27, 8, 1000, 0.001, 0.1, 0.2, 0.3, 123.456,
 }
 
+// count is the number of random inputs (GAUGE_N, default 20000; the CI twin uses 120000).
+func count() int {
+	if s := os.Getenv("GAUGE_N"); s != "" {
+		if v, err := strconv.Atoi(s); err == nil && v > 0 {
+			return v
+		}
+	}
+	return 20000
+}
+
 func inputs() []float64 {
 	xs := append([]float64{}, edge...)
 	r := &rng{s: 88172645463325252}
-	for i := 0; i < 20000; i++ {
+	for i := 0; i < count(); i++ {
 		v := r.next()
 		m := r.next()
 		switch v % 4 {
@@ -323,10 +334,13 @@ var unaries = []unary{
 	{"atan", math.Atan}, {"sinh", pureSinh}, {"cosh", pureCosh}, {"tanh", pureTanh}, {"exp", pureExp},
 	{"exp2", pureExp2}, {"log", math.Log}, {"log2", math.Log2}, {"log10", math.Log10}, {"log1p", math.Log1p},
 	{"cbrt", math.Cbrt},
+	{"expm1", math.Expm1}, {"asinh", math.Asinh}, {"acosh", math.Acosh}, {"atanh", math.Atanh},
+	{"logb", math.Logb}, {"f32frombits", f32frombitsf},
 }
 
 var binaries = []binary{
 	{"atan2", math.Atan2}, {"pow", purePow}, {"hypot", math.Hypot}, {"mod", math.Mod},
+	{"remainder", math.Remainder}, {"dim", math.Dim}, {"nextafter", math.Nextafter},
 }
 
 func canon(f float64) uint64 {
@@ -345,9 +359,124 @@ func (h *hasher) add(b uint64) {
 	}
 }
 
+// unary2 hashes two results per input, as Sincos returns.
+func unary2(name string, f func(float64) (float64, float64), xs []float64, dump bool) {
+	if wantedSkip(name, dump) {
+		return
+	}
+	h := hasher{14695981039346656037}
+	for i, x := range xs {
+		a, b := f(x)
+		h.add(canon(a))
+		h.add(canon(b))
+		if dump {
+			fmt.Printf("%s %d %016x %016x %016x\n", name, i, math.Float64bits(x), canon(a), canon(b))
+		}
+	}
+	if !dump {
+		fmt.Printf("%s %d %016x\n", name, len(xs), h.h)
+	}
+}
+
+// unaryi hashes an integer result per input, as Ilogb returns.
+func unaryi(name string, f func(float64) int, xs []float64, dump bool) {
+	if wantedSkip(name, dump) {
+		return
+	}
+	h := hasher{14695981039346656037}
+	for i, x := range xs {
+		v := uint64(f(x))
+		h.add(v)
+		if dump {
+			fmt.Printf("%s %d %016x %016x\n", name, i, math.Float64bits(x), v)
+		}
+	}
+	if !dump {
+		fmt.Printf("%s %d %016x\n", name, len(xs), h.h)
+	}
+}
+
+// ternary hashes one result per input triple, as FMA takes.
+func ternary(name string, f func(float64, float64, float64) float64, xs []float64, dump bool) {
+	if wantedSkip(name, dump) {
+		return
+	}
+	h := hasher{14695981039346656037}
+	for i, x := range xs {
+		j := (i*7 + 3) % len(xs)
+		k := (i*13 + 1) % len(xs)
+		b := canon(f(x, xs[j], xs[k]))
+		h.add(b)
+		if dump {
+			fmt.Printf("%s %d %016x %016x %016x %016x\n", name, i, math.Float64bits(x), math.Float64bits(xs[j]), math.Float64bits(xs[k]), b)
+		}
+	}
+	if !dump {
+		fmt.Printf("%s %d %016x\n", name, len(xs), h.h)
+	}
+}
+
+// binary32 is binary over f32 conversions, as Nextafter32 takes.
+func binary32(name string, f func(float64, float64) float64, xs []float64, dump bool) {
+	if wantedSkip(name, dump) {
+		return
+	}
+	h := hasher{14695981039346656037}
+	n := 0
+	for i, x := range xs {
+		js := []int{(i*7 + 3) % len(xs), (i*13 + 1) % len(xs), i}
+		for _, j := range js {
+			b := canon(f(x, xs[j]))
+			h.add(b)
+			if dump {
+				fmt.Printf("%s %d,%d %016x %016x %016x\n", name, i, j, math.Float64bits(x), math.Float64bits(xs[j]), b)
+			}
+			n++
+		}
+	}
+	if !dump {
+		fmt.Printf("%s %d %016x\n", name, n, h.h)
+	}
+}
+
+// unaryu32 hashes a u32 conversion per input, as F32bits returns.
+func unaryu32(name string, f func(float64) uint64, xs []float64, dump bool) {
+	if wantedSkip(name, dump) {
+		return
+	}
+	h := hasher{14695981039346656037}
+	for i, x := range xs {
+		v := f(x)
+		h.add(v)
+		if dump {
+			fmt.Printf("%s %d %016x %016x\n", name, i, math.Float64bits(x), v)
+		}
+	}
+	if !dump {
+		fmt.Printf("%s %d %016x\n", name, len(xs), h.h)
+	}
+}
+
+func nextafter32f(x, y float64) float64 { return float64(math.Nextafter32(float32(x), float32(y))) }
+func f32bitsf(x float64) uint64         { return uint64(math.Float32bits(float32(x))) }
+func f32frombitsf(x float64) float64 {
+	return float64(math.Float32frombits(uint32(math.Float64bits(x) & 0xffffffff)))
+}
+
+// wanted reports whether name is selected: GAUGE_FUNC empty means every function.
+func wanted(name string) bool {
+	sel := os.Getenv("GAUGE_FUNC")
+	return sel == "" || sel == name
+}
+
+func wantedSkip(name string, dump bool) bool { return !wanted(name) }
+
 func corpus(dump bool) {
 	xs := inputs()
 	for _, u := range unaries {
+		if !wanted(u.name) {
+			continue
+		}
 		h := hasher{14695981039346656037}
 		for i, x := range xs {
 			b := canon(u.f(x))
@@ -361,6 +490,9 @@ func corpus(dump bool) {
 		}
 	}
 	for _, bf := range binaries {
+		if !wanted(bf.name) {
+			continue
+		}
 		h := hasher{14695981039346656037}
 		n := 0
 		for i, x := range xs {
@@ -377,7 +509,15 @@ func corpus(dump bool) {
 			fmt.Printf("%s %d %016x\n", bf.name, n, h.h)
 		}
 	}
+	unaryi("ilogb", math.Ilogb, xs, dump)
+	unary2("sincos", math.Sincos, xs, dump)
+	unaryu32("f32bits", f32bitsf, xs, dump)
+	binary32("nextafter32", nextafter32f, xs, dump)
+	ternary("fma", math.FMA, xs, dump)
 	// pow with small integer and fractional exponents on positive bases.
+	if !wanted("powi") {
+		return
+	}
 	h := hasher{14695981039346656037}
 	n := 0
 	for _, x := range xs[:2000] {

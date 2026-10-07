@@ -173,3 +173,36 @@ fn Log1p(x f64) f64 {
 	}
 	return f64(k)*expLn2Hi - ((hfsq - (s*(hfsq+r) + (f64(k)*expLn2Lo + c))) - f)
 }
+
+// Logb returns the binary exponent of x as an f64 (Go's math.Logb): +Inf for infinities,
+// -Inf for zero, NaN for NaN.
+fn Logb(x f64) f64 {
+	if x == 0 {
+		return Inf(-1)
+	}
+	if IsInf(x, 0) {
+		return Inf(1)
+	}
+	if IsNaN(x) {
+		return x
+	}
+	return f64(Ilogb(x))
+}
+
+// Ilogb returns the binary exponent of x as an i64, like Go's math.Ilogb: MaxI32 for infinities
+// and NaN, MinI32 for zero.
+fn Ilogb(x f64) i64 {
+	if x == 0 {
+		return -2147483648
+	}
+	if IsNaN(x) || IsInf(x, 0) {
+		return 2147483647
+	}
+	return ilogb(x)
+}
+
+// ilogb returns the binary exponent of a finite non-zero x.
+fn ilogb(x f64) i64 {
+	let (g, exp) = normalize(x)
+	return i64((F64bits(g)>>f64Shift)&f64Mask) - f64Bias + exp
+}

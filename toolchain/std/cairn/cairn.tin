@@ -1,4 +1,5 @@
-// Package cairn is a set of containers for i64 and str values: heaps, a deque, a queue, hash sets, a bitset and an LRU cache.
+// Package cairn is a set of containers: heaps, deques, a queue, sets, a bitset and an LRU cache
+// for i64 and str values, and the generic Heap, Deque, Set and Cache over any element types.
 package cairn
 
 // IntHeap is a binary min-heap of i64 values; IntHeap{} is ready to use.

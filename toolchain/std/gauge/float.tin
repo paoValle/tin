@@ -1,5 +1,7 @@
 package gauge
 
+import "bits"
+
 // pow10tab holds 1e0 .. 1e31; the two coarse tables hold every 32nd power, as in Go's math.Pow10.
 let pow10tab = []f64{1e00, 1e01, 1e02, 1e03, 1e04, 1e05, 1e06, 1e07, 1e08, 1e09, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22, 1e23, 1e24, 1e25, 1e26, 1e27, 1e28, 1e29, 1e30, 1e31}
 
@@ -119,4 +121,322 @@ fn Pow10(n i64) f64 {
 		return Inf(1)
 	}
 	return 0
+}
+
+// F32bits returns the IEEE 754 bit pattern of f. Tin holds an f32 as an f64 rounded to f32, so
+// the 32-bit pattern is re-encoded; a NaN payload is canonical, as conversions do.
+fn F32bits(f f32) u32 {
+	let b = F64bits(f64(f))
+	let s = (b >> 63) << 31
+	let e = i64((b >> 52) & 0x7ff)
+	let m = b & 0xfffffffffffff
+	if e == 0 {
+		return u32(s) // +-0
+	}
+	if e == 0x7ff {
+		if m == 0 {
+			return u32(s | 0x7f800000) // +-Inf
+		}
+		return u32(s | 0x7fc00000 | (m >> 29)) // NaN, quiet
+	}
+	let e32 = e - 896 // 1023 - 127
+	let m32 = m >> 29
+	if e32 <= 0 {
+		// An f32 subnormal: bring back the hidden bit and shift down (the value is m32 * 2**-149).
+		let sub = (m | 0x10000000000000) >> u64(926-e)
+		return u32(s | (sub & 0x7fffff))
+	}
+	return u32(s | u64(e32) << 23 | (m32 & 0x7fffff))
+}
+
+// F32frombits returns the f32 with bit pattern b. Subnormals and infinities are exact; a NaN is
+// a quiet NaN with the payload's high bits, since the f32 lives as an f64.
+fn F32frombits(b u32) f32 {
+	let s = u64(b >> 31) << 63
+	let e = i64((b >> 23) & 0xff)
+	let m = u64(b) & 0x7fffff
+	if e == 0xff {
+		return f32(F64frombits(s | 0x7ff0000000000000 | m << 29))
+	}
+	if e == 0 {
+		if m == 0 {
+			return f32(F64frombits(s)) // +-0
+		}
+		// An f32 subnormal: value = m * 2**-149; normalize it into an f64.
+		mut mm = m
+		mut k = i64(0)
+		for (mm & 0x800000) == 0 {
+			mm <<= 1
+			k += 1
+		}
+		return f32(F64frombits(s | u64(897-k) << 52 | (mm & 0x7fffff) << 29))
+	}
+	return f32(F64frombits(s | u64(e+896) << 52 | m << 29))
+}
+
+// Nextafter returns the next representable f64 after x towards y, like Go's math.Nextafter;
+// NaN when either is NaN.
+fn Nextafter(x f64, y f64) f64 {
+	if IsNaN(x) || IsNaN(y) {
+		return NaN()
+	}
+	if x == y {
+		return x
+	}
+	if x == 0 {
+		return Copysign(F64frombits(1), y)
+	}
+	if (y > x) == (x > 0) {
+		return F64frombits(F64bits(x) + 1)
+	}
+	return F64frombits(F64bits(x) - 1)
+}
+
+// Nextafter32 is Nextafter for f32 values.
+fn Nextafter32(x f32, y f32) f32 {
+	if IsNaN(f64(x)) || IsNaN(f64(y)) {
+		return f32(NaN())
+	}
+	if x == y {
+		return x
+	}
+	if x == 0 {
+		return f32(Copysign(f64(F32frombits(1)), f64(y)))
+	}
+	if (y > x) == (x > 0) {
+		return F32frombits(F32bits(x) + 1)
+	}
+	return F32frombits(F32bits(x) - 1)
+}
+
+// Dim returns the maximum of x-y or 0, like Go's math.Dim: Dim(+Inf, +Inf) = Dim(-Inf, -Inf) =
+// NaN, and any NaN gives NaN.
+fn Dim(x f64, y f64) f64 {
+	let v = x - y
+	if v <= 0 {
+		return 0
+	}
+	return v
+}
+
+// FMA returns x*y + z with a single rounding (a fused multiply-add), like Go's math.FMA. It is
+// Go's software implementation (fma.go), exact on every platform: the compiler fuses on arm64 but
+// not on x86-64, so x*y + z would not do.
+
+const fmaFracMask = 0xfffffffffffff
+
+const fmaUvinf = 0x7ff0000000000000
+
+// add64c returns the wrapping sum of a, b and the carry in cin, with the carry out.
+fn add64c(a u64, b u64, cin u64) (u64, u64) {
+	let s = a +% b
+	mut c = u64(0)
+	if s < a {
+		c = 1
+	}
+	let t = s +% cin
+	if t < s {
+		c = 1
+	}
+	return t, c
+}
+
+// sub64c returns the wrapping difference a - b - bin, with the borrow out.
+fn sub64c(a u64, b u64, bin u64) (u64, u64) {
+	let d = a -% b
+	mut borrow = u64(0)
+	if a < b {
+		borrow = 1
+	}
+	let t = d -% bin
+	if d < bin {
+		borrow = 1
+	}
+	return t, borrow
+}
+
+// fmaNonzero returns 1 when x is nonzero, 0 otherwise.
+fn fmaNonzero(x u64) u64 {
+	if x != 0 {
+		return 1
+	}
+	return 0
+}
+
+// fmaZero returns 1 when x is zero, 0 otherwise.
+fn fmaZero(x u64) u64 {
+	if x == 0 {
+		return 1
+	}
+	return 0
+}
+
+// fmaShl shifts the two-word value (u1, u2) left by n, 0 <= n < 128.
+fn fmaShl(u1 u64, u2 u64, n i64) (u64, u64) {
+	if n == 0 {
+		return u1, u2
+	}
+	if n < 64 {
+		return u1<<u64(n) | u2>>u64(64-n), u2 << u64(n)
+	}
+	return u2 << u64(n-64), 0
+}
+
+// fmaShr shifts the two-word value (u1, u2) right by n, 0 <= n < 128.
+fn fmaShr(u1 u64, u2 u64, n i64) (u64, u64) {
+	if n == 0 {
+		return u1, u2
+	}
+	if n < 64 {
+		return u1 >> u64(n), u2>>u64(n) | u1<<u64(64-n)
+	}
+	return 0, u1 >> u64(n-64)
+}
+
+// fmaShrcompress shifts the two-word value right by n, setting the low bit to the OR of the n+1
+// bits shifted out.
+fn fmaShrcompress(u1 u64, u2 u64, n i64) (u64, u64) {
+	if n == 0 {
+		return u1, u2
+	}
+	if n == 64 {
+		return 0, u1 | fmaNonzero(u2)
+	}
+	if n >= 128 {
+		return 0, fmaNonzero(u1 | u2)
+	}
+	if n < 64 {
+		let (r1, r2) = fmaShr(u1, u2, n)
+		return r1, r2 | fmaNonzero(u2&(u64(1)<<u64(n)-1))
+	}
+	let (r1, r2) = fmaShr(u1, u2, n)
+	return r1, r2 | fmaNonzero(u1&(u64(1)<<u64(n-64)-1) | u2)
+}
+
+// fmaLz returns the number of leading zero bits of the two-word value.
+fn fmaLz(u1 u64, u2 u64) i64 {
+	let l = bits.LeadingZeros64(u1)
+	if l == 64 {
+		return l + bits.LeadingZeros64(u2)
+	}
+	return l
+}
+
+// fmaSplit splits b into sign, biased exponent and mantissa, adding the implicit 1 bit for a
+// normal value and normalizing a subnormal one.
+fn fmaSplit(b u64) (u64, i64, u64) {
+	let sign = b >> 63
+	mut exp = i64((b>>52) & f64Mask)
+	mut mantissa = b & fmaFracMask
+	if exp == 0 {
+		// Normalize the subnormal value.
+		let shift = bits.LeadingZeros64(mantissa) - 11
+		mantissa <<= u64(shift)
+		exp = 1 - shift
+	} else {
+		mantissa |= u64(1) << 52
+	}
+	return sign, exp, mantissa
+}
+
+fn FMA(x f64, y f64, z f64) f64 {
+	let bx = F64bits(x)
+	let by = F64bits(y)
+	let bz = F64bits(z)
+	// Inf or NaN or zero involved: at most one rounding will occur.
+	if x == 0.0 || y == 0.0 || z == 0.0 || bx&fmaUvinf == fmaUvinf || by&fmaUvinf == fmaUvinf {
+		return x*y + z
+	}
+	// A finite x and y with an infinite z always gives z.
+	if bz&fmaUvinf == fmaUvinf {
+		return z
+	}
+	// The inputs are (sub)normal; split them into sign, exponent and mantissa.
+	let (xs, xe, xm) = fmaSplit(bx)
+	let (ys, ye, ym) = fmaSplit(by)
+	mut (zs, ze, zm) = fmaSplit(bz)
+	// The product p = x*y as sign, exponent and a two-word mantissa.
+	mut pe = xe + ye - f64Bias + 1
+	let (m1, m2) = bits.Mul64(xm<<10, ym<<11)
+	mut pm1 = m1
+	mut pm2 = m2
+	mut zm1 = zm << 10
+	mut zm2 = u64(0)
+	mut ps = xs ^ ys // product sign
+	// Normalize to the 62nd bit.
+	let is62zero = (^pm1 >> 62) & 1
+	let (n1, n2) = fmaShl(pm1, pm2, i64(is62zero))
+	pm1 = n1
+	pm2 = n2
+	pe -= i64(is62zero)
+	// Swap the operands so |p| >= |z|.
+	if pe < ze || pe == ze && pm1 < zm1 {
+		let ts = ps
+		ps = zs
+		zs = ts
+		let te = pe
+		pe = ze
+		ze = te
+		let t1 = pm1
+		pm1 = zm1
+		zm1 = t1
+		let t2 = pm2
+		pm2 = zm2
+		zm2 = t2
+	}
+	// If p == -z the result is +0, since neither operand is zero.
+	if ps != zs && pe == ze && pm1 == zm1 && pm2 == zm2 {
+		return 0
+	}
+	// Align the significands.
+	let (a1, a2) = fmaShrcompress(zm1, zm2, pe-ze)
+	zm1 = a1
+	zm2 = a2
+	// The resulting significands, normalized if needed.
+	mut m = u64(0)
+	if ps == zs {
+		// Adding (pm1:pm2) + (zm1:zm2).
+		let (s2, c) = add64c(pm2, zm2, 0)
+		pm2 = s2
+		let (s1, _) = add64c(pm1, zm1, c)
+		pm1 = s1
+		pe -= i64(^pm1 >> 63)
+		let (r1, r2) = fmaShrcompress(pm1, pm2, 64+i64(pm1>>63))
+		pm1 = r1
+		m = r2
+	} else {
+		// Subtracting (pm1:pm2) - (zm1:zm2).
+		let (d2, c) = sub64c(pm2, zm2, 0)
+		pm2 = d2
+		let (d1, _) = sub64c(pm1, zm1, c)
+		pm1 = d1
+		let nz = fmaLz(pm1, pm2)
+		pe -= nz
+		let (r1, r2) = fmaShl(pm1, pm2, nz-1)
+		m = r1
+		pm2 = r2
+		m |= fmaNonzero(pm2)
+	}
+	// Round and break ties to even.
+	if pe > 1022+f64Bias || pe == 1022+f64Bias && ((m + (u64(1)<<9))>>63) == 1 {
+		// The rounded value overflows the exponent range.
+		return F64frombits(ps<<63 | fmaUvinf)
+	}
+	if pe < 0 {
+		let n = -pe
+		if n >= 64 {
+			m = fmaNonzero(m)
+		} else {
+			m = m>>u64(n) | fmaNonzero(m&(u64(1)<<u64(n)-1))
+		}
+		pe = 0
+	}
+	m = ((m + (u64(1)<<9)) >> 10) & ^fmaZero((m & ((u64(1)<<10)-1)) ^ (u64(1)<<9))
+	pe &= -fmaNonzero2(m)
+	return F64frombits((ps<<63) + (u64(pe)<<52) + m)
+}
+
+// fmaNonzero2 is fmaNonzero with an i64 result, for the exponent mask.
+fn fmaNonzero2(x u64) i64 {
+	return i64(fmaNonzero(x))
 }

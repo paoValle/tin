@@ -87,3 +87,90 @@ fn Tanh(x f64) f64 {
 	let s = x * x
 	return x + x*s*((tanhP0*s+tanhP1)*s+tanhP2)/(((s+tanhQ0)*s+tanhQ1)*s+tanhQ2)
 }
+
+const hyperNearZero = 1.0 / (1 << 28)
+
+const hyperLarge = 1 << 28
+
+// Asinh returns the inverse hyperbolic sine of x (FreeBSD's s_asinh.c through Go's asinh.go).
+fn Asinh(x f64) f64 {
+	let nearZero = hyperNearZero
+	let large = hyperLarge
+	if IsNaN(x) || IsInf(x, 0) {
+		return x
+	}
+	mut v = x
+	mut sign = false
+	if v < 0 {
+		v = -v
+		sign = true
+	}
+	mut temp f64
+	if v > f64(large) {
+		temp = Log(v) + Ln2
+	} else if v > 2 {
+		temp = Log(2*v + 1/(Sqrt(v*v+1)+v))
+	} else if v < nearZero {
+		temp = v
+	} else {
+		temp = Log1p(v + v*v/(1+Sqrt(1+v*v)))
+	}
+	if sign {
+		temp = -temp
+	}
+	return temp
+}
+
+// Acosh returns the inverse hyperbolic cosine of x (FreeBSD's e_acosh.c through Go's acosh.go);
+// it is NaN below 1.
+fn Acosh(x f64) f64 {
+	let large = hyperLarge
+	if x < 1 || IsNaN(x) {
+		return NaN()
+	}
+	if x == 1 {
+		return 0
+	}
+	if x >= f64(large) {
+		return Log(x) + Ln2
+	}
+	if x > 2 {
+		return Log(2*x - 1/(x+Sqrt(x*x-1)))
+	}
+	let t = x - 1
+	return Log1p(t + Sqrt(2*t+t*t))
+}
+
+// Atanh returns the inverse hyperbolic tangent of x (FreeBSD's e_atanh.c through Go's atanh.go);
+// it is +Inf at 1, -Inf at -1 and NaN outside [-1, 1].
+fn Atanh(x f64) f64 {
+	let nearZero = hyperNearZero
+	if x < -1 || x > 1 || IsNaN(x) {
+		return NaN()
+	}
+	if x == 1 {
+		return Inf(1)
+	}
+	if x == -1 {
+		return Inf(-1)
+	}
+	mut v = x
+	mut sign = false
+	if v < 0 {
+		v = -v
+		sign = true
+	}
+	mut temp f64
+	if v < nearZero {
+		temp = v
+	} else if v < 0.5 {
+		let d = v + v
+		temp = 0.5 * Log1p(d + d*v/(1-v))
+	} else {
+		temp = 0.5 * Log1p((v+v)/(1-v))
+	}
+	if sign {
+		temp = -temp
+	}
+	return temp
+}
