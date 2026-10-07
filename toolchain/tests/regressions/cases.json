@@ -285,6 +285,16 @@
     }
   },
   {
+    "source": "seal-arith.tin",
+    "issue": 488,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "df7a3c8d92e7ded72c52a643cb9cf4bbb33b11ac36a185c2bdcca7f5a7e46c9e\n",
+      "stderr": ""
+    }
+  },
+  {
     "source": "nested-index.tin",
     "issue": 12,
     "expected": {

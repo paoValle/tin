@@ -18,11 +18,14 @@ type monty struct {
 	t    []u64 // n+2 words of scratch
 	u    []u64 // n words of scratch
 	w    []u64 // 2n words of scratch (sqr)
+	cx   []u64 // -m^-1, n and the address of t: what the assembly leaf mont_mul reads
 }
 
 fn new_monty(m []u64, rr []u64, one []u64, minv u64) monty {
 	let n = len(m)
-	return monty{m: m, rr: rr, one: one, minv: minv, n: n, t: make([]u64, n+2), u: make([]u64, n), w: make([]u64, 2*n)}
+	let t = make([]u64, n+2)
+	let cx = []u64{minv, u64(n), u64(cast(i64, t)[2])}
+	return monty{m: m, rr: rr, one: one, minv: minv, n: n, t: t, u: make([]u64, n), w: make([]u64, 2*n), cx: cx}
 }
 
 // elem returns a new zero element of f.
@@ -57,6 +60,10 @@ fn (f monty) size() i64 {
 @wrap fn (f mut monty) mul(z mut []u64, x []u64, y []u64) {
 	let n = f.n
 	if n == 4 {
+		if mont_hw && len(x) == 4 && len(y) == 4 && len(z) == 4 && len(f.m) == 4 {
+			m4_mont(cast(i64, z)[2], cast(i64, x)[2], cast(i64, y)[2], cast(i64, f.m)[2], i64(f.minv))
+			return
+		}
 		m4_mul(mut z, x, y, f.m, f.minv)
 		return
 	}
@@ -68,6 +75,10 @@ fn (f monty) size() i64 {
 	let yp = cast(i64, y)[2]
 	let mp = cast(i64, f.m)[2]
 	let tp = cast(i64, t)[2]
+	if mont_hw && n >= 2 && len(f.cx) == 3 {
+		mont_mul(cast(i64, z)[2], xp, yp, mp, cast(i64, f.cx)[2])
+		return
+	}
 	for i in 0..n+1 {
 		__st(tp+8*i, 0, 3)
 	}
@@ -128,6 +139,11 @@ fn (f monty) size() i64 {
 @wrap fn (f mut monty) sqr(z mut []u64, x []u64) {
 	let n = f.n
 	if n == 4 {
+		if mont_hw && len(x) == 4 && len(z) == 4 && len(f.m) == 4 {
+			let xp = cast(i64, x)[2]
+			m4_mont(cast(i64, z)[2], xp, xp, cast(i64, f.m)[2], i64(f.minv))
+			return
+		}
 		m4_mul(mut z, x, x, f.m, f.minv)
 		return
 	}
@@ -140,6 +156,10 @@ fn (f monty) size() i64 {
 	let mp = cast(i64, f.m)[2]
 	let wp = cast(i64, w)[2]
 	let tp = cast(i64, t)[2]
+	if mont_hw && n >= 2 && len(f.cx) == 3 {
+		mont_mul(cast(i64, z)[2], xp, xp, mp, cast(i64, f.cx)[2])
+		return
+	}
 	for i in 0..2*n {
 		__st(wp+8*i, 0, 3)
 	}
@@ -350,6 +370,10 @@ fn (f monty) size() i64 {
 // add sets z = x + y mod m; z may alias x or y.
 @wrap fn (f mut monty) add(z mut []u64, x []u64, y []u64) {
 	let n = f.n
+	if mont_hw && n == 4 && len(x) == 4 && len(y) == 4 && len(z) == 4 && len(f.m) == 4 {
+		m4_add(cast(i64, z)[2], cast(i64, x)[2], cast(i64, y)[2], cast(i64, f.m)[2])
+		return
+	}
 	let t = f.t
 	mut c = u64(0)
 	for j in 0..n {
@@ -365,6 +389,10 @@ fn (f monty) size() i64 {
 // sub sets z = x - y mod m; z may alias x or y.
 @wrap fn (f mut monty) sub(z mut []u64, x []u64, y []u64) {
 	let n = f.n
+	if mont_hw && n == 4 && len(x) == 4 && len(y) == 4 && len(z) == 4 && len(f.m) == 4 {
+		m4_sub(cast(i64, z)[2], cast(i64, x)[2], cast(i64, y)[2], cast(i64, f.m)[2])
+		return
+	}
 	let t = f.t
 	mut b = u64(0)
 	for j in 0..n {

@@ -11,3 +11,8 @@ fn hw_sha256() bool {
 fn aes_hw() bool {
 	return true
 }
+
+// hw_mont is true when the assembly Montgomery multiplication may run (every arm64 CPU).
+fn hw_mont() bool {
+	return true
+}

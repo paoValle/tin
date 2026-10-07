@@ -631,9 +631,52 @@ All the other benchmarks stayed within 5%. Plain HTTP was 1.078 and 0.981 (amd64
 
 The remaining gap on amd64 comes from code generation: the x86-64 backend keeps the multiplication's
 limbs and carries on the stack (it has fewer temporaries than arm64's), and it computes the low half
-of a product with `imul` beside the `mul` that already gives both halves. #488 tracks that, and
-squaring for RSA. In the same run, plain HTTP/1.1 against main was 1.023 (`/json`) and 1.018
+of a product with `imul` beside the `mul` that already gives both halves. #488 closed that gap
+(next section). In the same run, plain HTTP/1.1 against main was 1.023 (`/json`) and 1.018
 (`/plaintext`) on amd64 and 0.983 and 1.012 on arm64, and every CPU benchmark stayed within 5%.
+
+### Handshakes on assembly leaves (#488)
+
+#474 and #501 reached 0.49 (arm64) and 0.41 and 0.28 (amd64) of Go's handshake rate; shaving
+instructions from the compiled code did not help (the multiplication chains are latency bound).
+#488 replaced the arithmetic that dominates a handshake by hand-written assembly, one leaf per
+function, selected at run time (`TIN_SEAL_SOFT=1` keeps the portable code, and the digest test
+`toolchain/tests/regressions/seal-arith.tin` pins that both give the same results):
+- `mont_mul`: the Montgomery multiplication for any limb count (RSA and P-384), on `mulx` with
+  `add`/`adc` on x86-64 (BMI2 from CPUID) and `mul`/`umulh` on arm64; `monty.sqr` uses it too;
+- `m4_mont`, `m4_add`, `m4_sub`: four-limb field arithmetic for P-256 and the Ed25519 order;
+- `p256_pick`: one call reads a digit's row of the k·G table (every entry touched) instead of
+  three `monty.sel` calls per entry;
+- `fe_mul_hw`, `fe_sq_hw`: X25519's multiplication and squaring in radix 2^51
+  (`tools/gen/gen_fe25519_asm.py` writes both architectures from one product table, and checks it on
+  a model against Python integers).
+
+[bench-linux run 37646094544](https://github.com/yasserreslan/tin/actions/runs/37646094544) on
+Linux 6.17.0-1022-azure (Intel Xeon Platinum 8573C on amd64, Neoverse-N2 on arm64, Go 1.26.8),
+head 6a42e61 against main d88d62e. Only the ratios mean anything on shared runners.
+
+| full handshakes per second | before (#488 issue, run 37447445444) | after: anvil, Go (anvil/Go) |
+|---|---:|---:|
+| arm64 ECDSA P-256 | 0.49 | 2098, 3219 (0.65) |
+| arm64 RSA-2048 | 0.49 | 525, 573 (0.92) |
+| amd64 ECDSA P-256 | 0.41 | 1710, 2840 (0.60) |
+| amd64 RSA-2048 | 0.28 | 629, 898 (0.70) |
+
+Resumed ECDSA handshakes were 0.71 (arm64) and 0.63 (amd64). The CPU benchmarks against main (time,
+lower is faster; run on the same runners):
+
+| benchmark | amd64 | arm64 |
+|---|---:|---:|
+| p256ecdh | 0.414 | 0.475 |
+| rsa2048 | 0.373 | 0.483 |
+| tls13keys | 0.697 | 0.751 |
+| x25519 | 0.665 | 0.720 |
+
+Against Go (Go time / Tin time, higher is faster): rsa2048 0.77 (amd64) and 0.98 (arm64), x25519
+1.26 and 1.34, tls13keys 0.66 and 0.70, p256ecdh 0.39 and 0.33: Go's P-256 is specialised assembly
+for that prime, Tin's is the generic four-limb multiplication. Every other benchmark and the HTTP
+comparison stayed within 5%. The `rsa2048` pair (`bench/v2/rsa2048.tin` and `.go`, 100 deterministic
+PKCS #1 v1.5 signatures) makes RSA work measurable without the HTTPS run.
 
 ### Resumed handshakes (session tickets, #472)
 

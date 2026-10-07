@@ -4,6 +4,10 @@ package seal
 
 // fe_mul sets h = f*g; h may alias f or g. Limbs of f and g below 2^52.
 @wrap fn fe_mul(h mut []u64, f []u64, g []u64) {
+	if mont_hw && len(h) == 5 && len(f) == 5 && len(g) == 5 {
+		fe_mul_hw(cast(i64, h)[2], cast(i64, f)[2], cast(i64, g)[2])
+		return
+	}
 	let f0 = f[0]
 	let f1 = f[1]
 	let f2 = f[2]
@@ -127,6 +131,10 @@ package seal
 
 // fe_sq sets h = f*f (each cross product once, doubled); h may alias f.
 @wrap fn fe_sq(h mut []u64, f []u64) {
+	if mont_hw && len(h) == 5 && len(f) == 5 {
+		fe_sq_hw(cast(i64, h)[2], cast(i64, f)[2])
+		return
+	}
 	let f0 = f[0]
 	let f1 = f[1]
 	let f2 = f[2]

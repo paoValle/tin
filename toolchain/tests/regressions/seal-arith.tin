@@ -1,0 +1,10 @@
+package main
+
+import "say"
+import "seal"
+
+// The assembly leaves of seal's multi-word arithmetic agree with the portable code (#488): the
+// digest below was produced with TIN_SEAL_SOFT=1 (portable code only).
+fn main() {
+	say.Line(seal.ArithDigest())
+}

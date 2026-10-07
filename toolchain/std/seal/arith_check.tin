@@ -1,0 +1,152 @@
+package seal
+
+// ArithDigest is the SHA-256 of the results of seal's multi-word arithmetic on a fixed set of
+// operands (#488): the Montgomery multiplication and squaring for n = 2 to 48 limbs over random
+// moduli and moduli of all-one limbs, with operands 0, 1, m-1, all-ones limbs and random values,
+// z aliasing x and y; and the X25519 field multiplication and squaring on limbs of every size
+// up to 2^52 - 1. Where the CPU's assembly (mont_mul, m4_mont, fe_mul_hw, fe_sq_hw) is in use
+// the digest must equal the portable code's (run with TIN_SEAL_SOFT=1): the test pins the value.
+fn ArithDigest() str {
+	mut seed = u64(0x9e3779b97f4a7c15)
+	mut out = []u8{}
+	for n in []i64{2, 3, 4, 5, 8, 16, 17, 32, 48} {
+		for kind in 0..3 {
+			let mb = make([]u8, 8*n)
+			for i in 0..len(mb) {
+				seed = arith_next(seed)
+				mb[i] = u8(seed >> 33)
+			}
+			if kind == 1 {
+				for i in 0..len(mb) {
+					mb[i] = 0xff
+				}
+			}
+			if kind == 2 {
+				for i in 0..len(mb) {
+					mb[i] = 0
+				}
+				mb[0] = 0xff
+				mb[len(mb)-1] = 1
+			}
+			mb[0] |= 0x80
+			if kind == 2 {
+				mb[0] = 0xff
+			}
+			mb[len(mb)-1] |= 1
+			mut f = monty_new(mb) catch _ {
+				return "monty_new failed"
+			}
+			let m = f.m
+			// Operands below m: 0, 1, m-1, a limb of ones under m's top limb, random values.
+			let zero = f.elem()
+			let one = f.elem()
+			one[0] = 1
+			let mm1 = f.elem()
+			for j in 0..n {
+				mm1[j] = m[j]
+			}
+			mm1[0] = m[0] - 1
+			mut ops2 = [][]u64{zero, one, mm1}
+			for r in 0..5 {
+				let x = f.elem()
+				for j in 0..n {
+					seed = arith_next(seed)
+					x[j] = seed
+					if r == 0 {
+						x[j] = 0xffffffffffffffff
+					}
+				}
+				x[n-1] = m[n-1] >> 1
+				ops2 = append(ops2, x)
+			}
+			for a in 0..len(ops2) {
+				for b in 0..len(ops2) {
+					let z = f.elem()
+					f.mul(mut z, ops2[a], ops2[b])
+					out = append(out, limbs_to_be(z)...)
+					let x = f.elem()
+					f.set(mut x, ops2[a])
+					f.mul(mut x, x, ops2[b])
+					out = append(out, limbs_to_be(x)...)
+					let y = f.elem()
+					f.set(mut y, ops2[b])
+					f.mul(mut y, ops2[a], y)
+					out = append(out, limbs_to_be(y)...)
+				}
+				for b in 0..len(ops2) {
+					let u = f.elem()
+					f.add(mut u, ops2[a], ops2[b])
+					out = append(out, limbs_to_be(u)...)
+					let d = f.elem()
+					f.sub(mut d, ops2[a], ops2[b])
+					out = append(out, limbs_to_be(d)...)
+					let w = f.elem()
+					f.set(mut w, ops2[a])
+					f.add(mut w, w, ops2[b])
+					f.sub(mut w, w, ops2[b])
+					out = append(out, limbs_to_be(w)...)
+				}
+				let s = f.elem()
+				f.sqr(mut s, ops2[a])
+				out = append(out, limbs_to_be(s)...)
+				let s2 = f.elem()
+				f.set(mut s2, ops2[a])
+				f.sqr(mut s2, s2)
+				out = append(out, limbs_to_be(s2)...)
+			}
+			out = append(out, Sha256Soft(str(out))...)
+		}
+	}
+	// X25519's field: limbs below 2^52, including every limb all ones.
+	let lim = []u64{0, 1, 19, 0x7ffffffffffff, 0x8000000000000, 0xfffffffffffff}
+	for round in 0..400 {
+		let f = fe_new()
+		let g = fe_new()
+		for j in 0..5 {
+			seed = arith_next(seed)
+			f[j] = (seed >> 12)
+			seed = arith_next(seed)
+			g[j] = (seed >> 12)
+			if round%3 == 0 {
+				f[j] = lim[int_mod(seed >> 40, 6)]
+			}
+			if round%5 == 0 {
+				g[j] = lim[int_mod(seed >> 20, 6)]
+			}
+		}
+		let h = fe_new()
+		fe_mul(mut h, f, g)
+		out = append(out, limbs_to_be(h)...)
+		let k = fe_new()
+		fe_sq(mut k, f)
+		out = append(out, limbs_to_be(k)...)
+		fe_mul(mut f, f, g)
+		out = append(out, limbs_to_be(f)...)
+		fe_sq(mut g, g)
+		out = append(out, limbs_to_be(g)...)
+	}
+	// P-256: k*G (the table read) and k*Q (the window read), then the field and order inversions under both.
+	for i in 0..24 {
+		let k = Sha256(str([]u8{u8(i), 0x61}))
+		let pub = P256PublicKey(k) catch _ {
+			[]u8{}
+		}
+		out = append(out, pub...)
+		let secret_ = P256ECDH(Sha256(str([]u8{u8(i), 0x62})), pub) catch _ {
+			[]u8{}
+		}
+		out = append(out, secret_...)
+	}
+	return Sha256Hex(str(out))
+}
+
+@wrap fn arith_next(s u64) u64 {
+	mut z = s + 0x9e3779b97f4a7c15
+	z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
+	z = (z ^ (z >> 27)) * 0x94d049bb133111eb
+	return z ^ (z >> 31)
+}
+
+@wrap fn int_mod(v u64, n u64) i64 {
+	return i64(v % n)
+}

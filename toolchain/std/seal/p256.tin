@@ -206,30 +206,56 @@ mut p256gTable []p256pt
 
 fn p256_base_table() []p256pt {
 	if len(p256gTable) == 0 {
-		mut t = make([]p256pt, 0, 64*15)
-		let base = p256_generator()
-		for i in 0..64 {
-			let first = p256_identity()
-			p256_copy(mut first, base)
-			t = append(t, first)
-			for j in 2..16 {
-				let e = p256_identity()
-				p256_add(mut e, t[len(t)-1], base)
-				t = append(t, e)
-			}
-			for d in 0..4 {
-				p256_double(mut base, base)
-			}
-		}
-		p256gTable = keep(t)
+		p256gTable = keep(p256_base_build())
 	}
 	return p256gTable
+}
+
+fn p256_base_build() []p256pt {
+	mut t = make([]p256pt, 0, 64*15)
+	let base = p256_generator()
+	for i in 0..64 {
+		let first = p256_identity()
+		p256_copy(mut first, base)
+		t = append(t, first)
+		for j in 2..16 {
+			let e = p256_identity()
+			p256_add(mut e, t[len(t)-1], base)
+			t = append(t, e)
+		}
+		for d in 0..4 {
+			p256_double(mut base, base)
+		}
+	}
+	return t
+}
+
+// p256gFlat is the same table as 12 words per entry (x, y and z, four limbs each), which
+// p256_pick reads with the CPU's assembly: built once per core when the assembly is in use.
+mut p256gFlat []u64
+
+fn p256_base_flat() []u64 {
+	if len(p256gFlat) == 0 {
+		let t = p256_base_build()
+		mut flat = make([]u64, 0, 12*len(t))
+		for e in t {
+			flat = append(flat, e.x...)
+			flat = append(flat, e.y...)
+			flat = append(flat, e.z...)
+		}
+		p256gFlat = keep(flat)
+	}
+	return p256gFlat
 }
 
 // p256_mul_base sets r = k*G for a 32-byte big-endian scalar k (any value), in time that does
 // not depend on k: each 4-bit digit of k reads its row of the table by touching every entry
 // and adds the point it selected (the identity for a zero digit).
 @wrap fn p256_mul_base(r mut p256pt, k []u8) {
+	if mont_hw {
+		p256_mul_base_hw(mut r, k)
+		return
+	}
 	let table = p256_base_table()
 	let acc = p256_identity()
 	let sel = p256_identity()
@@ -248,6 +274,28 @@ fn p256_base_table() []p256pt {
 			p256f.sel(mut sel.y, e.y, sel.y, bit)
 			p256f.sel(mut sel.z, e.z, sel.z, bit)
 		}
+		p256_add(mut acc, acc, sel)
+	}
+	p256_copy(mut r, acc)
+}
+
+// p256_mul_base_hw is p256_mul_base with each digit's table row read by p256_pick (one call,
+// every entry touched) instead of three monty.sel calls per entry.
+@wrap fn p256_mul_base_hw(r mut p256pt, k []u8) {
+	let flat = p256_base_flat()
+	let tp = cast(i64, flat)[2]
+	let buf = make([]u64, 12)
+	let bp = cast(i64, buf)[2]
+	let sel = p256pt{x: buf[0:4], y: buf[4:8], z: buf[8:12]}
+	let acc = p256_identity()
+	for i in 0..64 {
+		let w = (u64(k[31-i/2]) >> u64(4*(i%2))) & 15
+		for j in 0..4 {
+			buf[j] = 0
+			buf[4+j] = p256f.one[j]
+			buf[8+j] = 0
+		}
+		p256_pick(bp, tp+8*180*i, i64(w))
 		p256_add(mut acc, acc, sel)
 	}
 	p256_copy(mut r, acc)

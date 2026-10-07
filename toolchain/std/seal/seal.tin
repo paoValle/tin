@@ -122,6 +122,54 @@ fn sha_hw_cpu() i64 {
 	return 0
 }
 
+// mont_mul sets z = x*y/2^(64n) mod m for n >= 2 limbs (field.tin's monty.mul in assembly: z, x, y
+// and m are the addresses of the limbs, ctx the address of the words minv, n and the scratch t);
+// the compiler replaces this body (tools/gen/arch/monty-*.S).
+fn mont_mul(z i64, x i64, y i64, m i64, ctx i64) {
+	rt_panic("seal: the assembly Montgomery multiplication is not available for this target")
+}
+
+// m4_mont is mont_mul for four limbs (P-256's field and order, Ed25519's order) with minv passed
+// by value: z = x*y/2^256 mod m; the compiler replaces this body.
+fn m4_mont(z i64, x i64, y i64, m i64, minv i64) {
+	rt_panic("seal: the assembly Montgomery multiplication is not available for this target")
+}
+
+// fe_mul_hw and fe_sq_hw are fe_mul and fe_sq (fe25519.tin) in assembly, on the addresses of the five
+// limbs (generated, tools/gen/gen_fe25519_asm.py); the compiler replaces these bodies.
+fn fe_mul_hw(h i64, f i64, g i64) {
+	rt_panic("seal: the assembly field multiplication is not available for this target")
+}
+
+fn fe_sq_hw(h i64, f i64) {
+	rt_panic("seal: the assembly field multiplication is not available for this target")
+}
+
+// m4_add and m4_sub are monty.add and monty.sub for four limbs (z = x+y or x-y mod m, x and y below m),
+// on the addresses of the limbs; p256_pick copies the 12-word entry w (1 to 15) of a table of 15
+// entries into dst, reading every entry, and leaves dst alone for any other w. The compiler
+// replaces these bodies.
+fn m4_add(z i64, x i64, y i64, m i64) {
+	rt_panic("seal: the assembly field addition is not available for this target")
+}
+
+fn m4_sub(z i64, x i64, y i64, m i64) {
+	rt_panic("seal: the assembly field subtraction is not available for this target")
+}
+
+fn p256_pick(dst i64, tbl i64, w i64) {
+	rt_panic("seal: the assembly table selection is not available for this target")
+}
+
+// bmi2_cpu is 1 when an x86-64 CPU has BMI2 (mulx), else 0 (CPUID).
+fn bmi2_cpu() i64 {
+	rt_panic("seal: CPUID is only available on x86-64")
+	return 0
+}
+
+// mont_hw is true when monty.mul and monty.sqr use mont_mul (decided once, like sha_hw).
+let mont_hw = hw_mont() && quarry.Getenv("TIN_SEAL_SOFT") != "1"
+
 // sha_hw is true when Sha256 uses the CPU's SHA-256 instructions (decided once; CPUID traps in a
 // virtual machine, so it is not asked per hash). TIN_SEAL_SOFT=1 forces the portable code.
 let sha_hw = hw_sha256() && quarry.Getenv("TIN_SEAL_SOFT") != "1"

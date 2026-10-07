@@ -37,7 +37,11 @@ def reduce(lines):
 
 def mul():
     lines = ['// fe_mul sets h = f*g; h may alias f or g. Limbs of f and g below 2^52.',
-             '@wrap fn fe_mul(h mut []u64, f []u64, g []u64) {']
+             '@wrap fn fe_mul(h mut []u64, f []u64, g []u64) {',
+             '\tif mont_hw && len(h) == 5 && len(f) == 5 && len(g) == 5 {',
+             '\t\tfe_mul_hw(cast(i64, h)[2], cast(i64, f)[2], cast(i64, g)[2])',
+             '\t\treturn',
+             '\t}']
     lines += [f'\tlet f{i} = f[{i}]' for i in range(5)] + [f'\tlet g{i} = g[{i}]' for i in range(5)]
     lines += [f'\tlet f{i}x19 = f{i} * 19' for i in range(1, 5)]
     for k in range(5):
@@ -53,7 +57,11 @@ def mul():
 
 def sq():
     lines = ['// fe_sq sets h = f*f (each cross product once, doubled); h may alias f.',
-             '@wrap fn fe_sq(h mut []u64, f []u64) {']
+             '@wrap fn fe_sq(h mut []u64, f []u64) {',
+             '\tif mont_hw && len(h) == 5 && len(f) == 5 {',
+             '\t\tfe_sq_hw(cast(i64, h)[2], cast(i64, f)[2])',
+             '\t\treturn',
+             '\t}']
     lines += [f'\tlet f{i} = f[{i}]' for i in range(5)]
     lines += ['\tlet f0x2 = f0 * 2', '\tlet f1x2 = f1 * 2', '\tlet f1x38 = f1 * 38', '\tlet f2x38 = f2 * 38',
               '\tlet f3x38 = f3 * 38', '\tlet f3x19 = f3 * 19', '\tlet f4x19 = f4 * 19']

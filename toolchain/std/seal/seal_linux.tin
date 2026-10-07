@@ -18,3 +18,11 @@ fn aes_hw() bool {
 	}
 	return rt_getauxval(16)&24 == 24
 }
+
+// hw_mont is true when the assembly Montgomery multiplication may run: x86-64 with BMI2, any arm64.
+fn hw_mont() bool {
+	if TARGET_X64 {
+		return bmi2_cpu() == 1
+	}
+	return true
+}

@@ -18,6 +18,10 @@ class GeneratedCrypto(unittest.TestCase):
         got = subprocess.run([sys.executable, str(ROOT/'tools/gen/gen_fe25519.py')], capture_output=True, check=True).stdout
         self.assertEqual(got, (ROOT/'toolchain/std/seal/fe25519.tin').read_bytes(), 'run tools/gen/gen_fe25519.py > toolchain/std/seal/fe25519.tin')
 
+    def test_fe25519_asm(self):
+        # The product tables are checked on a model against Python integers, then the text is compared.
+        subprocess.run([sys.executable, 'gen_fe25519_asm.py', '--check'], cwd=ROOT/'tools/gen', check=True)
+
     def test_sha256_amd64(self):
         # Runs the instruction list on a model of the SHA extensions against hashlib, then compares the text.
         subprocess.run([sys.executable, 'gen_sha256_amd64.py', '--check'], cwd=ROOT/'tools/gen', check=True)
