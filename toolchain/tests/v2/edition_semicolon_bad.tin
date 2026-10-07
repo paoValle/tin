@@ -1,0 +1,9 @@
+package main
+
+import "say"
+
+// #646: one semicolon in an edition-1 file is reported where it is, not as "edition 0".
+fn main() {
+	let n = 1
+	say.Line(n); say.Line(n)
+}

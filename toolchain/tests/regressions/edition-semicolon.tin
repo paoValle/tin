@@ -1,0 +1,9 @@
+package main
+
+import "say"
+
+// #646: one semicolon made the file "edition 0, run tin fix", with no position.
+fn main() {
+	let n = 1
+	say.Line(n); say.Line(n)
+}

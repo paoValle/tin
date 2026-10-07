@@ -1,0 +1,13 @@
+package main
+
+import "say"
+
+// #646: var as a field name no longer makes the file edition 0; var is reserved in edition 1
+// (LANGUAGE.md section 2), so the parser reports it at the field.
+type T struct {
+	var i64
+}
+
+fn main() {
+	say.Line(T{})
+}

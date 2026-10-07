@@ -577,7 +577,14 @@ and defer a call to it.
 
 ### E090 OLD_SYNTAX
 
-Edition 1 replaces some edition 0 syntax; the message names the replacement:
+Edition 1 replaces some edition 0 syntax; the message names the replacement, at its position:
+`example.tin:7:13: error E090 OLD_SYNTAX: edition 1 statements end at a newline, not a
+semicolon`. Without `-edition`, a file is read in the edition it is written in, decided by
+the first of a `fn` at the start of a line (edition 1), a `func` or `var` at the start of a
+line, or a short variable declaration (edition 0); a `;` alone does not decide (#646). Edition 0 is retired, and the
+message points at the token that decided it: `example.tin:3:1: error E090 OLD_SYNTAX:
+example.tin is edition 0 (a 'func' declaration here), which is retired: translate it with tin
+fix -edition 1`.
 
 <!-- docs-check: old-syntax begin -->
 

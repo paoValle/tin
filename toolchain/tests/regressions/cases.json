@@ -1009,5 +1009,14 @@
       "stdout": "body\ndone\nt",
       "stderr": ""
     }
+  },
+  {
+    "source": "edition-semicolon.tin",
+    "issue": 646,
+    "expected": {
+      "phase": "compile",
+      "exit": 1,
+      "stderr_contains": "edition-semicolon.tin:8:13: error E090 OLD_SYNTAX: edition 1 statements end at a newline, not a semicolon"
+    }
   }
 ]

@@ -1,0 +1,9 @@
+package main
+
+import "say"
+
+// #646: a := in a file whose declarations are fn is an edition-1 error at its position.
+fn main() {
+	n := 1
+	say.Line(n)
+}
