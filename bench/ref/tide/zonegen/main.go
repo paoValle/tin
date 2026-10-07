@@ -5,13 +5,44 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"time"
 )
+
+// layoutNames exercise every reference-time chunk; both sides format with these.
+var layoutNames = []string{
+	"01/02 03:04:05PM '06 -0700",
+	"Mon Jan _2 15:04:05 2006",
+	"Mon Jan _2 15:04:05 MST 2006",
+	"Mon Jan 02 15:04:05 -0700 2006",
+	"02 Jan 06 15:04 MST",
+	"02 Jan 06 15:04 -0700",
+	"Monday, 02-Jan-06 15:04:05 MST",
+	"Mon, 02 Jan 2006 15:04:05 MST",
+	"Mon, 02 Jan 2006 15:04:05 -0700",
+	"2006-01-02T15:04:05Z07:00",
+	"2006-01-02T15:04:05.999999999Z07:00",
+	"3:04PM",
+	"Jan _2 15:04:05",
+	"Jan _2 15:04:05.000",
+	"Jan _2 15:04:05.000000",
+	"Jan _2 15:04:05.000000000",
+	"2006-01-02 15:04:05",
+	"2006-01-02",
+	"15:04:05",
+	"__2 002 1 01 Apr April 3 03 PM pm 15 4 04 5 05 06 -07 -0700 -07:00 -070000 -07:00:00 Z07 Z0700 Z07:00 Z070000 Z07:00:00 MST",
+	"2006-01-02T15:04:05,000000000Z07:00",
+	"2006-01-02T15:04:05.000000000Z07:00",
+	"2006-01-02T15:04:05.999999999,07:00",
+	"Mon Jan _2 15:04:05.999 -070000 MST",
+	"2006-01-02T15:04:05.999999999-07:00:00",
+}
 
 var zoneNames = []string{
 	"UTC",
@@ -74,6 +105,20 @@ func expF(format string, args ...any) {
 	fmt.Fprintf(exp, format, args...)
 }
 
+// parsed renders ParseInLocation's result as an instant or "err".
+func parsed(layout, value string, loc *time.Location) string {
+	t, err := time.ParseInLocation(layout, value, loc)
+	if err != nil {
+		return "err"
+	}
+	// Go wraps UnixNano outside its range; tide faults there, so the twin compares "out".
+	sec := t.Unix()
+	if sec > 9223372036 || sec < -9223372037 {
+		return "out"
+	}
+	return strconv.FormatInt(t.UnixNano(), 10)
+}
+
 func main() {
 	if len(os.Args) != 2 {
 		log.Fatal("usage: tide DIR (writes DIR/zones.in and DIR/expected.txt)")
@@ -89,6 +134,9 @@ func main() {
 		log.Fatal(err)
 	}
 	defer exp.Close()
+	for i, layout := range layoutNames {
+		fmt.Fprintf(in, "LAYOUT %d %s\n", i, hex.EncodeToString([]byte(layout)))
+	}
 	for _, name := range zoneNames {
 		loc, err := time.LoadLocation(name)
 		if err != nil {
@@ -117,7 +165,25 @@ func main() {
 			}
 		}
 		sort.Slice(instants, func(i, j int) bool { return instants[i] < instants[j] })
-		for _, sec := range instants {
+		formatAt := func(sec int64, nano int64) {
+			t := time.Unix(sec, nano).In(loc)
+			for i, layout := range layoutNames {
+				s := t.Format(layout)
+				fmt.Fprintf(in, "FMT %d %d %d\n", sec, nano, i)
+				expF("fmt %s %d %d %d %s\n", name, sec, nano, i, s)
+				fmt.Fprintf(in, "PARSE %d %d %d\n", sec, nano, i)
+				expF("parse %s %d %d %d %s\n", name, sec, nano, i, parsed(layout, s, loc))
+				variants := []string{s[:max(0, len(s)-1)], "!" + s, s + "!"}
+				for v, bad := range variants {
+					fmt.Fprintf(in, "PARSEBAD %d %d %d %d\n", sec, nano, i, v)
+					expF("parsebad %s %d %d %d %d %s\n", name, sec, nano, i, v, parsed(layout, bad, loc))
+				}
+			}
+		}
+		for k, sec := range instants {
+			if k%1000 == 0 {
+				formatAt(sec, 0)
+			}
 			fmt.Fprintf(in, "IN %d\n", sec)
 			t := time.Unix(sec, 0).In(loc)
 			abbr, off := t.Zone()
@@ -128,7 +194,19 @@ func main() {
 			fmt.Fprintf(in, "DATE %d %d %d %d %d %d 0\n", t.Year(), int(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second())
 			expF("date %s %d %d %d %d %d %d 0 %d\n", name, t.Year(), int(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), d.UnixNano())
 		}
+		for _, sec := range []int64{0, 1735603200, 1740787200, 1743379200, 1745971200, 1751414400, 1759190400, 1762041600, 2222121600} {
+			formatAt(sec, 0)
+		}
+		if len(trs) > 0 {
+			bases := []int64{trs[0], trs[len(trs)/2], trs[len(trs)-1], 1759317725}
+			for _, base := range bases {
+				for _, nano := range []int64{1, 999999999, 123456789} {
+					formatAt(base, nano)
+				}
+			}
+		}
 		for _, tr := range trs {
+			formatAt(tr, 0)
 			for _, d := range []int64{-7200, -3600, -1800, -900, -1, 0, 1, 900, 1800, 3600, 7200} {
 				t := time.Unix(tr+d, 0).In(loc)
 				fmt.Fprintf(in, "DATE %d %d %d %d %d %d 0\n", t.Year(), int(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second())

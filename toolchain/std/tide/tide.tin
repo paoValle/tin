@@ -440,6 +440,9 @@ fn daysBefore(m i64) i64 {
 	if m == 11 {
 		return 304
 	}
+	if m >= 13 {
+		return 365
+	}
 	return 334
 }
 

@@ -546,8 +546,13 @@ fn yearYday(sec i64) (i64, i64) {
 // In returns the civil time of the instant ns in zone z, with Offset (seconds east of UTC) and
 // Zone (the abbreviation, like "CET") set.
 fn In(ns i64, z Zone) Civil {
-	let sec = floorDiv(ns, Second)
-	let nano = ns - sec*Second
+	// Split without multiplying a floor value that could overflow at i64's ends.
+	mut sec = ns / Second
+	mut nano = ns - sec*Second
+	if nano < 0 {
+		nano += Second
+		sec -= 1
+	}
 	let (name, offset, _, _) = z.lookup(sec)
 	mut c = UTCSec(sec + offset)
 	c.Nano = nano
@@ -573,10 +578,9 @@ fn norm(hi i64, lo i64, base i64) (i64, i64) {
 	return h, l
 }
 
-// DateIn returns the Unix nanoseconds of the civil time in zone z. Fields out of range carry
-// like Date. A wall time in a gap (the clocks going forward) or an overlap (going back) picks
-// the instant Go's time.Date picks: the one whose zone offset is valid there.
-fn DateIn(year0 i64, month0 i64, day0 i64, hour0 i64, min0 i64, sec0 i64, nano0 i64, z Zone) i64 {
+// dateInSec is the wall time of DateIn as Unix seconds and nanoseconds, before scaling (the
+// nanoseconds are in [0, 1e9)); it does not scale, so callers can range-check first.
+fn dateInSec(year0 i64, month0 i64, day0 i64, hour0 i64, min0 i64, sec0 i64, nano0 i64, z Zone) (i64, i64) {
 	// Normalize the month into the year, then the fields that carry, as Go's Date does.
 	mut m = month0 - 1
 	let q = floorDiv(m, 12)
@@ -600,5 +604,13 @@ fn DateIn(year0 i64, month0 i64, day0 i64, hour0 i64, min0 i64, sec0 i64, nano0 
 		}
 		unix -= off
 	}
+	return unix, nano
+}
+
+// DateIn returns the Unix nanoseconds of the civil time in zone z. Fields out of range carry
+// like Date. A wall time in a gap (the clocks going forward) or an overlap (going back) picks
+// the instant Go's time.Date picks: the one whose zone offset is valid there.
+fn DateIn(year0 i64, month0 i64, day0 i64, hour0 i64, min0 i64, sec0 i64, nano0 i64, z Zone) i64 {
+	let (unix, nano) = dateInSec(year0, month0, day0, hour0, min0, sec0, nano0, z)
 	return unix*Second + nano
 }

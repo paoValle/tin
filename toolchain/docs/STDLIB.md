@@ -814,6 +814,27 @@ Package lever parses command-line flags (like Go's flag): register handles, Pars
 
 Package tide is clocks, durations and civil (calendar) time in UTC, like Go's time package.
 
+- `const Layout = "01/02 03:04:05PM '06 -0700"`: The standard layouts, as Go's time package names them.
+- `const ANSIC = "Mon Jan _2 15:04:05 2006"`
+- `const UnixDate = "Mon Jan _2 15:04:05 MST 2006"`
+- `const RubyDate = "Mon Jan 02 15:04:05 -0700 2006"`
+- `const RFC822 = "02 Jan 06 15:04 MST"`
+- `const RFC822Z = "02 Jan 06 15:04 -0700"`
+- `const RFC850 = "Monday, 02-Jan-06 15:04:05 MST"`
+- `const RFC1123 = "Mon, 02 Jan 2006 15:04:05 MST"`
+- `const RFC1123Z = "Mon, 02 Jan 2006 15:04:05 -0700"`
+- `const RFC3339 = "2006-01-02T15:04:05Z07:00"`
+- `const RFC3339Nano = "2006-01-02T15:04:05.999999999Z07:00"`
+- `const Kitchen = "3:04PM"`
+- `const Stamp = "Jan _2 15:04:05"`
+- `const StampMilli = "Jan _2 15:04:05.000"`
+- `const StampMicro = "Jan _2 15:04:05.000000"`
+- `const StampNano = "Jan _2 15:04:05.000000000"`
+- `const DateTime = "2006-01-02 15:04:05"`
+- `const DateOnly = "2006-01-02"`
+- `const TimeOnly = "15:04:05"`
+- `Format(ns i64, z Zone, layout str) str`: Format renders the instant ns in zone z with a reference-time layout, like Go's Time.Format.
+- `Parse(layout str, value str, z Zone) !i64`: Parse parses value with a reference-time layout, like Go's time.ParseInLocation: a wall time with no zone in the value is read in z, while a zone offset or abbreviation is that instant (matched against z when it names one of z's zones). It returns Unix nanoseconds; malformed or out-of-range values fail with a parse fault (tide's message carries the layout and text).
 - `const Nanosecond = 1`: Durations are i64 nanoseconds; these constants are the units, like Go's time.Duration.
 - `const Microsecond = 1000`
 - `const Millisecond = 1000000`

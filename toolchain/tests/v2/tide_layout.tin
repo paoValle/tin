@@ -1,0 +1,130 @@
+package main
+
+import "say"
+import "fault"
+import "quarry"
+import "tide"
+
+// zone loads a committed TZif fixture, as tide_zones does.
+fn zone(name str) !tide.Zone {
+	let (data, err) = quarry.ReadFile("toolchain/tests/data/tzdata/" + name)
+	if err != nil {
+		fail err
+	}
+	return try tide.LoadZoneData(name, data)
+}
+
+// LayoutCase is one layout checked against a set of instants.
+type LayoutCase struct {
+	name   str
+	layout str
+}
+
+fn main() {
+	// The standard layouts, so their text is pinned.
+	say.Line("layout", "Layout", tide.Layout)
+	say.Line("layout", "ANSIC", tide.ANSIC)
+	say.Line("layout", "UnixDate", tide.UnixDate)
+	say.Line("layout", "RubyDate", tide.RubyDate)
+	say.Line("layout", "RFC822", tide.RFC822)
+	say.Line("layout", "RFC822Z", tide.RFC822Z)
+	say.Line("layout", "RFC850", tide.RFC850)
+	say.Line("layout", "RFC1123", tide.RFC1123)
+	say.Line("layout", "RFC1123Z", tide.RFC1123Z)
+	say.Line("layout", "RFC3339", tide.RFC3339)
+	say.Line("layout", "RFC3339Nano", tide.RFC3339Nano)
+	say.Line("layout", "Kitchen", tide.Kitchen)
+	say.Line("layout", "Stamp", tide.Stamp)
+	say.Line("layout", "StampMilli", tide.StampMilli)
+	say.Line("layout", "StampMicro", tide.StampMicro)
+	say.Line("layout", "StampNano", tide.StampNano)
+	say.Line("layout", "DateTime", tide.DateTime)
+	say.Line("layout", "DateOnly", tide.DateOnly)
+	say.Line("layout", "TimeOnly", tide.TimeOnly)
+
+	let names = []str{"Europe/Paris", "America/New_York", "Asia/Kathmandu", "Australia/Lord_Howe", "Pacific/Chatham", "America/Sao_Paulo", "Africa/Casablanca", "Etc/GMT+5"}
+	mut zones = make([]tide.Zone, 0, 8)
+	for _, name in names {
+		let z = zone(name) catch err {
+			say.Line("fixture fault", name, err)
+			return
+		}
+		zones = append(zones, z)
+	}
+
+	let cases = []LayoutCase{
+		LayoutCase{name: "RFC3339", layout: tide.RFC3339},
+		LayoutCase{name: "RFC3339Nano", layout: tide.RFC3339Nano},
+		LayoutCase{name: "ANSIC", layout: tide.ANSIC},
+		LayoutCase{name: "UnixDate", layout: tide.UnixDate},
+		LayoutCase{name: "RFC822", layout: tide.RFC822},
+		LayoutCase{name: "RFC1123", layout: tide.RFC1123},
+		LayoutCase{name: "Kitchen", layout: tide.Kitchen},
+		LayoutCase{name: "DateTime", layout: tide.DateTime},
+		LayoutCase{name: "DateOnly", layout: tide.DateOnly},
+		LayoutCase{name: "TimeOnly", layout: tide.TimeOnly},
+		LayoutCase{name: "StampMilli", layout: tide.StampMilli},
+		LayoutCase{name: "verbs", layout: "__2 002 1 01 Apr April 3 03 PM pm 15 4 04 5 05 06 -07 -0700 -07:00 -070000 -07:00:00 Z07 Z0700 Z07:00 Z070000 Z07:00:00 MST"},
+	}
+	let secs = []i64{0, 1735603200, 1740787200, 1745971200, 1759190400, 1762041600, 2222121600}
+	for _, z in zones {
+		for _, sec in secs {
+			for _, c in cases {
+				let ns = sec * 1000000000
+				let text = tide.Format(ns, z, c.layout)
+				say.Line("fmt", z.Name(), sec, c.name, text)
+				let (back, perr) = tide.Parse(c.layout, text, z)
+				say.Line("parse", z.Name(), sec, c.name, perr == nil && back == ns)
+			}
+		}
+	}
+
+	// Fractional seconds, including the layout without one taking every digit.
+	let p = zone("Europe/Paris") catch err {
+		say.Line("fault", err)
+		return
+	}
+	let nanos = []i64{1, 500000000, 999999999, 123456789}
+	for _, nano in nanos {
+		let ns = 1759317725*1000000000 + nano
+		say.Line("frac fmt", nano, tide.Format(ns, p, "2006-01-02T15:04:05.000000000Z07:00"), tide.Format(ns, p, "2006-01-02T15:04:05.999999999Z07:00"), tide.Format(ns, p, "2006-01-02T15:04:05.999999999,07:00"))
+		let t1 = tide.Format(ns, p, "2006-01-02T15:04:05.000000000Z07:00")
+		let (v1, e1) = tide.Parse("2006-01-02T15:04:05.000000000Z07:00", t1, p)
+		let t2 = tide.Format(ns, p, "2006-01-02T15:04:05.999999999Z07:00")
+		let (v2, e2) = tide.Parse("2006-01-02T15:04:05.999999999Z07:00", t2, p)
+		say.Line("frac parse", nano, e1 == nil && v1 == ns, e2 == nil && v2 == ns)
+		// A fractional second with no fraction in the layout still parses.
+		let (v3, e3) = tide.Parse("2006-01-02T15:04:05Z07:00", t2, p)
+		say.Line("frac implicit", nano, e3 == nil && v3 == ns)
+	}
+
+	// FormatRFC3339 and friends are fast paths and must agree with Format in UTC.
+	let stamps = []i64{0, 1, 999999999, 1759317725000000000, 1759317725123456789, -1, 9223372036854775807, -9223372036854775807 - 1}
+	for _, ns in stamps {
+		say.Line("fastpath", ns, tide.Format(ns, tide.UTCZone(), tide.RFC3339) == tide.FormatRFC3339(ns), tide.Format(ns, tide.UTCZone(), tide.RFC3339Nano) == tide.FormatRFC3339Nano(ns))
+	}
+
+	// Malformed text, a bad layout element, a day out of range and the range fault.
+	let (_, e1) = tide.Parse(tide.RFC3339, "not a time", p)
+	say.Line("parse bad1", e1 != nil)
+	let (_, e2) = tide.Parse(tide.RFC3339, "2025-01-01T00:00:00Z junk", p)
+	say.Line("parse bad2", e2 != nil)
+	let (_, e3) = tide.Parse(tide.DateOnly, "2023-02-29", p)
+	say.Line("parse bad3", e3 != nil)
+	let (_, e4) = tide.Parse(tide.DateOnly, "2025-13-01", p)
+	say.Line("parse bad4", e4 != nil)
+	let (_, e5) = tide.Parse("15:04", "12:60", p)
+	say.Line("parse bad5", e5 != nil)
+	let (v6, e6) = tide.Parse("2006-01-02 15:04", "2025-10-01 11:22", p)
+	say.Line("parse implicit zone", e6 == nil, v6, tide.Format(v6, p, "2006-01-02T15:04Z07:00"))
+	// Parsing a layout with no year gives year 0, outside Unix nanoseconds: a range fault.
+	let (_, e7) = tide.Parse(tide.Kitchen, "12:30PM", p)
+	say.Line("parse range", e7 != nil, len(fault.Message(e7)) > 0)
+	// A zone abbreviation in the text is matched against the zone.
+	let (v8, e8) = tide.Parse("2006-01-02 15:04:05 MST", "2025-07-01 12:00:00 CEST", p)
+	say.Line("parse abbr", e8 == nil, v8)
+	let (v9, e9) = tide.Parse("2006-01-02 15:04:05 -0700", "2025-07-01 12:00:00 +0300", p)
+	say.Line("parse offset", e9 == nil, v9)
+	let (v10, e10) = tide.Parse("2006-01-02 15:04:05 Z07:00", "2025-07-01 12:00:00 Z", p)
+	say.Line("parse z", e10 == nil, v10)
+}
