@@ -3,7 +3,7 @@
 A text editor written entirely in Tin: the editing engine (`packages/textedit`), the window and drawing
 (`packages/appkit`, which reaches AppKit and CoreGraphics through `@framework` externs, with no C and no
 callbacks: events are polled, and a menu item or the close button appends itself to an `NSMutableArray` the
-loop reads), and the application (`app/`). It runs on macOS; Linux is next.
+loop reads), and the application (`app/`). It runs on macOS: per AGENTS.md the editor is a development tool, and Linux is the deployment platform for servers, not for this.
 
 ```
 bin/tinc -o tinland products/tinland/app/*.tin
