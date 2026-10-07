@@ -1410,7 +1410,8 @@ fn map_val(pos i64, m i64, j i64, vt i64) i64 {
 // runtime counts the entries of a long-lived map by itself (its m[9] decides).
 fn map_make_call(pos i64, t Ty) i64 {
 	let counted = rc_map_bits(t)
-	let isstr = mk_int(pos, map_str_keys(t.key), ty_int)
+	// Bit 1 tells the runtime the keys are floats, compared with float == (#643).
+	let isstr = mk_int(pos, map_str_keys(t.key) | (2 * is_float_t(t.key)), ty_int)
 	if counted == 0 {
 		return rt_call(pos, "rt_map_make", args1(isstr), cast(i64, t))
 	}
@@ -1523,7 +1524,8 @@ fn key_enc_field(pos i64, body []i64, b i64, x i64, t i64, fi i64) {
 	} else if k == K_STRING {
 		nb = rt_call(pos, "rt_kb_str", args2(sym_ref_node(pos, cast(Sym, b)), fv), ty_int)
 	} else if is_float_t(ft) != 0 {
-		nb = rt_call(pos, "rt_kb_word", args2(sym_ref_node(pos, cast(Sym, b)), mk_conv(pos, fv, CV_F2BITS, ty_int)), ty_int)
+		// -0 as +0, and a NaN never found again (#643).
+		nb = rt_call(pos, "rt_kb_float", args2(sym_ref_node(pos, cast(Sym, b)), mk_conv(pos, fv, CV_F2BITS, ty_int)), ty_int)
 	} else if k == K_STRUCT {
 		nb = cast(i64, call_fn(pos, cast(Fn, key_enc_fn(cast(Ty, ft))), args2(sym_ref_node(pos, cast(Sym, b)), fv), ty_int))
 	} else {

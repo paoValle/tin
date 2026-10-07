@@ -1964,12 +1964,14 @@ fn rt_copy_str(dst i64, s str) i64 {
 // as many slots as there are entries, so it is never more than half full. Header words:
 // count, index slots, keys, values, index, str keys?, shift, index tombstones, hashes,
 // ingot, entries used, entry capacity, live bytes, value drop, counted sides (#176), then the
-// words of a chunked map (see below).
+// words of a chunked map (see below); word 25 marks float keys, which compare with == (#643).
 
 fn rt_map_make(isstr i64) i64 {
 	let ingot = __ctx()[ctxIngot]
 	let m = rt_region_alloc(ingot, mapHdr)
-	m[5] = isstr
+	// isstr bit 1: float keys (#643), kept in word 25.
+	m[5] = isstr & 1
+	m[25] = isstr >> 1
 	m[9] = ingot
 	rt_map_init(m, 8)
 	return m
@@ -1982,7 +1984,8 @@ fn rt_map_make(isstr i64) i64 {
 fn rt_map_make_rc(isstr i64, drop fn(i64), counted i64) i64 {
 	let ingot = __ctx()[ctxIngot]
 	let m = rt_region_alloc(ingot, mapHdr)
-	m[5] = isstr
+	m[5] = isstr & 1
+	m[25] = isstr >> 1
 	m[9] = ingot
 	m[13] = cast(i64, drop)
 	m[14] = counted
@@ -2088,11 +2091,33 @@ fn rt_hash_int(k i64) i64 {
 }
 
 // rt_map_hash is key k's hash: rt_hash_str for str (and struct or enum) keys, else rt_hash_int.
+// A float key -0 hashes as +0, the key it equals (#643).
 fn rt_map_hash(m i64, k i64) i64 {
 	if m[5] != 0 {
 		return rt_hash_str(cast(str, k))
 	}
+	if m[25] != 0 && (k << 1) == 0 {
+		return rt_hash_int(0)
+	}
 	return rt_hash_int(k)
+}
+
+// rt_fkey_eq is == on the bits of two float map keys (#643): +0 and -0 are one key, and a NaN
+// equals no key, itself included, so each NaN stored is a new entry and none is ever found, as
+// in Go. Infinities are keys like any number.
+fn rt_fkey_eq(a i64, b i64) bool {
+	if a == b {
+		return (a & 0x7ff0000000000000) != 0x7ff0000000000000 || (a & 0xfffffffffffff) == 0
+	}
+	return ((a | b) << 1) == 0
+}
+
+// rt_key_eq compares two stored words of a map whose keys are not str: bits, or float ==.
+fn rt_key_eq(m i64, a i64, b i64) bool {
+	if m[25] != 0 {
+		return rt_fkey_eq(a, b)
+	}
+	return a == b
 }
 
 // An index slot holds 0 (empty), -1 (deleted) or fp<<32 | entry+1, fp being 31 hash bits,
@@ -2115,6 +2140,18 @@ fn rt_map_slot(m i64, k i64, h i64) i64 {
 				return -1
 			}
 			if v > 0 && v&-4294967296 == fp && rt_str_eq(cast(str, keys[(v&0xffffffff)-1]), cast(str, k)) {
+				return i
+			}
+			i = (i + 1) & mask
+		}
+	}
+	if m[25] != 0 {
+		for {
+			let v = idx[i]
+			if v == 0 {
+				return -1
+			}
+			if v > 0 && v&-4294967296 == fp && rt_fkey_eq(keys[(v&0xffffffff)-1], k) {
 				return i
 			}
 			i = (i + 1) & mask
@@ -2269,7 +2306,7 @@ fn rt_map_set(m i64, k i64, v i64, dup i64) {
 			}
 		} else if x&-4294967296 == fp {
 			let e0 = (x & 0xffffffff) - 1
-			if (str_keys && rt_str_eq(cast(str, keys[e0]), cast(str, k))) || (!str_keys && keys[e0] == k) {
+			if (str_keys && rt_str_eq(cast(str, keys[e0]), cast(str, k))) || (!str_keys && rt_key_eq(m, keys[e0], k)) {
 				if m[9] != 0 {
 					if (m[14] & 2) != 0 {
 						// The old value's count leaves with the slot; the new one takes it.
@@ -2787,7 +2824,7 @@ fn rt_cmap_probe(m i64, idx i64, mask i64, shift i64, k i64, h i64, rec i64) i64
 		} else if v&-4294967296 == fp {
 			let e = (v & 0xffffffff) - 1
 			let kw = ((keys + (e >> mapChunkBits)*8)[0] + (e & (mapChunk - 1))*8)[0]
-			if (str_keys && rt_str_eq(cast(str, kw), cast(str, k))) || (!str_keys && kw == k) {
+			if (str_keys && rt_str_eq(cast(str, kw), cast(str, k))) || (!str_keys && rt_key_eq(m, kw, k)) {
 				mapSlot = i
 				return e
 			}
@@ -2958,8 +2995,25 @@ type qarg enum {
 
 mut kdOff i64 // per core: where rt_kd_* reads next
 
+mut kbNaN i64 // per core: the key being encoded holds a NaN (#643)
+mut kbSeq i64 // per core: numbers the NaN keys, so no two encode alike
+
 fn rt_kb_new() i64 {
+	kbNaN = 0
 	return rt_slice_make(0, 32, 1)
+}
+
+// rt_kb_float appends the bits of a float field of a struct or enum key (#643): -0 as +0, the
+// key it equals; a NaN marks the key, which rt_kb_done makes unlike every other, so it is
+// never found again (a NaN equals nothing, as for float keys).
+fn rt_kb_float(b i64, v i64) i64 {
+	if (v << 1) == 0 {
+		return rt_kb_word(b, 0)
+	}
+	if (v & 0x7ff0000000000000) == 0x7ff0000000000000 && (v & 0xfffffffffffff) != 0 {
+		kbNaN = 1
+	}
+	return rt_kb_word(b, v)
 }
 
 // rt_kb_word appends v's 8 bytes to byte slice b.
@@ -2985,6 +3039,12 @@ fn rt_kb_str(b i64, s str) i64 {
 }
 
 fn rt_kb_done(b i64) str {
+	if kbNaN != 0 {
+		// After the fields, which decoding reads by position, so it never sees these words.
+		kbSeq += 1
+		b = rt_kb_word(b, __ctx()[ctxID])
+		b = rt_kb_word(b, kbSeq)
+	}
 	return rt_str_from_raw(b[2], b[0])
 }
 
@@ -4278,6 +4338,7 @@ fn rt_keep_slice(s i64, esz i64) i64 {
 fn rt_keep_map_new(m i64, drop fn(i64), counted i64) i64 {
 	let k = rt_ingot_alloc(mapHdr)
 	k[5] = m[5]
+	k[25] = m[25]
 	k[9] = 1
 	k[13] = cast(i64, drop)
 	k[14] = counted
@@ -4318,7 +4379,7 @@ fn rt_arena_slice(s i64, esz i64) i64 {
 }
 
 fn rt_arena_map_new(m i64) i64 {
-	return rt_map_make(m[5])
+	return rt_map_make(m[5] | (m[25] << 1))
 }
 
 fn rt_keep_closure(f i64) i64 {

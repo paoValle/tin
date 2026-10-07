@@ -1,0 +1,14 @@
+package main
+
+import "say"
+
+// #643: -0.0 and 0.0 were two keys, and a NaN key was found again.
+fn main() {
+	let z = 0.0
+	mut m = map[f64]str{}
+	m[-z] = "neg"
+	m[z] = "pos"
+	let nan = z / z
+	m[nan] = "nan"
+	say.Line(len(m), m[0.0], m[-z], m[nan] == "")
+}

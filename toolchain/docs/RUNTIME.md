@@ -14,7 +14,7 @@ JSON (`argo`) are ordinary library packages built on it.
 | `f64` | IEEE double in a d register |
 | `str` | pointer to `[length (8 bytes)][bytes][NUL]`; literals live in the executable's constant segment |
 | slice | pointer to a 32-byte header `[len, cap, data pointer, region]`; `region` is 1 when the data lives in the ingot heap |
-| map | pointer to a 192-byte header (count, index slots, keys, values, index, string keys?, shift, tombstones, hashes, region, entries used, entry capacity, live bytes, ...); entries in insertion order found through an open-addressing index, in chunks of 4096 past that many entries (see Maps) |
+| map | pointer to a 208-byte header (count, index slots, keys, values, index, string keys?, shift, tombstones, hashes, region, entries used, entry capacity, live bytes, ..., float keys? in word 25); entries in insertion order found through an open-addressing index, in chunks of 4096 past that many entries (see Maps). Float keys compare with `==` (`rt_fkey_eq`: -0 is +0 and hashes like it, a NaN matches nothing), and a struct key's float field is encoded with -0 as +0 and a NaN that makes the key unlike every other (#643) |
 | struct | pointer to its fields, laid out widest first with natural alignment, size rounded to 8 |
 | `?T` | the T pointer, or 0 for nil; `?dyn S` is the dyn value's two words, nil when the object word is 0 |
 | `?T` over a number or `bool` | two words, `[tag, payload]`: tag 0 is nil (payload 0), tag 1 holds the number's bits in the payload (an `f32` or `f64` as its f64 bits); passed and returned in two registers like a `dyn` value, 16 bytes in fields and slice elements, a 24-byte cell in a map, never allocated (#632) |

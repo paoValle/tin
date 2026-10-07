@@ -266,8 +266,12 @@ struct whose slice fields the callee grows, growth two calls deep, and other tas
   `atlas.Keys` / `atlas.Values` follow the same order; printing a map sorts its keys like
   Go (strings bytewise, numbers by value, floats with NaN first, `false` before `true`)
   and prints each key and value with its own type.
-- Keys are `str`, integers, `bool`, `f64` (by bits), or structs and enums made only of
-  those, which hash and compare **by value**. A struct key is copied in, so changing the
+- Keys are `str`, integers, `bool`, `f64`, or structs and enums made only of those, which
+  hash and compare **by value**. Float keys compare with `==`, as in Go (#643): `0.0` and
+  `-0.0` are one key (the first stored is the one kept), and a NaN equals no key, itself
+  included, so each NaN stored is a new entry that no read, `delete` or later store finds
+  (iteration and `len` still see it). A float field of a struct or enum key follows the same
+  rule. A struct key is copied in, so changing the
   original afterwards does not change the map. Slices, maps, funcs, optionals and faults
   cannot be keys (compile error).
 - `atlas.Keys(m)`, `atlas.Values(m)`, `atlas.SortedKeys(m)` return the keys or values as a

@@ -989,5 +989,15 @@
       "exit": 1,
       "stderr_contains": "E292 MATCH_UNREACHABLE: this pattern is never reached: 2 is already handled by the arm on line 9"
     }
+  },
+  {
+    "source": "map-float-negzero.tin",
+    "issue": 643,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "2 pos pos true\n",
+      "stderr": ""
+    }
   }
 ]
