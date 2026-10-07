@@ -732,6 +732,16 @@ fn check() {
 		let e3 = err_code(m.pos, "E121 MAIN_SIGNATURE")
 		buf_str(e3, "main takes no parameters")
 		err_end(cast([]u8, e3))
+	} else if cast(i64, cast(Fn, m.fn_).tparams) != 0 {
+		// A generic main is a template that is never instantiated (#555).
+		let e4 = err_code(m.pos, "E121 MAIN_SIGNATURE")
+		if len(entry_name) != 0 {
+			buf_str(e4, entry_name)
+		} else {
+			buf_str(e4, "main")
+		}
+		buf_str(e4, " cannot have type parameters")
+		err_end(cast([]u8, e4))
 	}
 	make_start(cast(Fn, m.fn_))
 	mark_reach(cast(Fn, start_fn))

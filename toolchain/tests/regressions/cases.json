@@ -868,5 +868,14 @@
       "stdout": "20 11\n",
       "stderr": ""
     }
+  },
+  {
+    "source": "main-type-params.tin",
+    "issue": 555,
+    "expected": {
+      "phase": "compile",
+      "exit": 1,
+      "stderr_contains": "E046 EMPTY_TYPE_PARAMS"
+    }
   }
 ]

@@ -1,0 +1,6 @@
+package main
+
+// An empty type parameter list is an error (#555): fn main[]() used to crash the compiler.
+
+fn main[]() {
+}

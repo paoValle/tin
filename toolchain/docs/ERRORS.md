@@ -411,6 +411,27 @@ example.tin:3:12: error E045 EMPTY_ENUM: an enum needs at least one variant
 
 Fix: list the variants (`type Shape enum { Circle(r f64), Empty }`), or use a struct.
 
+### E046 EMPTY_TYPE_PARAMS
+
+A type parameter list names at least one parameter.
+
+```tin edition=1
+package main
+
+fn first[](xs []i64) i64 {
+	return xs[0]
+}
+
+fn main() {
+}
+```
+
+```text
+example.tin:3:9: error E046 EMPTY_TYPE_PARAMS: a type parameter list needs at least one parameter
+```
+
+Fix: name the parameters (`fn first[T constraints.Any](xs []T) T`), or leave the brackets out.
+
 ### E050 LABEL_PLACEMENT
 
 A label names a loop for `break` and `continue`, so it goes right before `for`.
@@ -875,7 +896,9 @@ Fix: add `fn main()` to the program's `package main`.
 
 ### E121 MAIN_SIGNATURE
 
-`main` takes no parameters (the program reads its arguments with `lever`), and it is not `extern`.
+`main` takes no parameters (the program reads its arguments with `lever`), it has no type
+parameters (`fn main[T]()` would be a template that nothing instantiates), and it is not `extern`.
+The function `-entry` names follows the same rules.
 
 ```tin edition=1
 package main
