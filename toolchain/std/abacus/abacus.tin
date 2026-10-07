@@ -1,0 +1,580 @@
+// Package abacus is arbitrary-precision integers, like Go's math/big.Int, with value semantics:
+// every operation returns a new value and leaves its operands alone. A value is a sign and a
+// little-endian magnitude of 64-bit limbs, normalized (no leading zero limbs; zero is an empty
+// magnitude with a false sign).
+//
+// It is not constant-time: use seal for cryptography. There is no formatting hook in say yet, so
+// print an Int with x.Str() or x.Text(base) (see design/stdlib_verified.md).
+package abacus
+
+import "bits"
+import "gauge"
+import "say"
+
+// Int is an arbitrary-precision integer.
+type Int struct {
+	neg   bool
+	limbs []u64
+}
+
+// FromI64 returns v as an Int.
+fn FromI64(v i64) Int {
+	if v == 0 {
+		return Int{neg: false, limbs: []u64{}}
+	}
+	if v < 0 {
+		// |MinI64| fits u64, so negate without overflowing.
+		return Int{neg: true, limbs: []u64{u64(0-(v+1)) + 1}}
+	}
+	return Int{neg: false, limbs: []u64{u64(v)}}
+}
+
+// Sign returns -1, 0 or 1.
+fn (a Int) Sign() i64 {
+	if len(a.limbs) == 0 {
+		return 0
+	}
+	if a.neg {
+		return -1
+	}
+	return 1
+}
+
+// IsZero reports whether the value is zero.
+fn (a Int) IsZero() bool {
+	return len(a.limbs) == 0
+}
+
+// BitLen returns the number of bits of the magnitude, 0 for zero.
+fn (a Int) BitLen() i64 {
+	if len(a.limbs) == 0 {
+		return 0
+	}
+	return (len(a.limbs)-1)*64 + 64 - bits.LeadingZeros64(a.limbs[len(a.limbs)-1])
+}
+
+// Neg returns -a.
+fn (a Int) Neg() Int {
+	if len(a.limbs) == 0 {
+		return a
+	}
+	return Int{neg: !a.neg, limbs: a.limbs}
+}
+
+// Abs returns |a|.
+fn (a Int) Abs() Int {
+	if !a.neg {
+		return a
+	}
+	return Int{neg: false, limbs: a.limbs}
+}
+
+// Cmp returns -1, 0 or 1 as a is less than, equal to or greater than b.
+fn (a Int) Cmp(b Int) i64 {
+	if a.neg != b.neg {
+		if a.neg {
+			return -1
+		}
+		return 1
+	}
+	let c = ucmp(a.limbs, b.limbs)
+	if a.neg {
+		return -c
+	}
+	return c
+}
+
+// Add returns a + b.
+fn (a Int) Add(b Int) Int {
+	if a.neg == b.neg {
+		return Int{neg: a.neg, limbs: uadd(a.limbs, b.limbs)}
+	}
+	let c = ucmp(a.limbs, b.limbs)
+	if c == 0 {
+		return Int{neg: false, limbs: []u64{}}
+	}
+	if c > 0 {
+		return Int{neg: a.neg, limbs: usub(a.limbs, b.limbs)}
+	}
+	return Int{neg: b.neg, limbs: usub(b.limbs, a.limbs)}
+}
+
+// Sub returns a - b.
+fn (a Int) Sub(b Int) Int {
+	return a.Add(b.Neg())
+}
+
+// Mul returns a * b.
+fn (a Int) Mul(b Int) Int {
+	if len(a.limbs) == 0 || len(b.limbs) == 0 {
+		return Int{neg: false, limbs: []u64{}}
+	}
+	return Int{neg: a.neg != b.neg, limbs: umul(a.limbs, b.limbs)}
+}
+
+// I64 returns the value as an i64 and whether it fits.
+fn (a Int) I64() (i64, bool) {
+	if len(a.limbs) == 0 {
+		return 0, true
+	}
+	if len(a.limbs) > 1 {
+		return 0, false
+	}
+	let m = a.limbs[0]
+	if a.neg {
+		if m > 9223372036854775808 {
+			return 0, false
+		}
+		if m == 9223372036854775808 {
+			return -9223372036854775808, true
+		}
+		return -i64(m), true
+	}
+	if m > 9223372036854775807 {
+		return 0, false
+	}
+	return i64(m), true
+}
+
+// U64 returns the value as a u64 and whether it fits (a negative value does not).
+fn (a Int) U64() (u64, bool) {
+	if len(a.limbs) == 0 {
+		return 0, true
+	}
+	if len(a.limbs) > 1 || a.neg {
+		return 0, false
+	}
+	return a.limbs[0], true
+}
+
+// F64 returns the value as the nearest f64, ties to even, like Go's Int.Float64 (which is
+// ±Inf when the value is too large).
+fn (a Int) F64() f64 {
+	let n = a.BitLen()
+	if n == 0 {
+		return 0
+	}
+	mut f = 0.0
+	if n <= 53 {
+		mut i = len(a.limbs)
+		for i > 0 {
+			i -= 1
+			f = f*18446744073709551616.0 + f64(a.limbs[i])
+		}
+	} else {
+		// Keep the top 54 bits, then round to 53 with a sticky bit.
+		let drop = n - 54
+		let hi = ushrBits(a.limbs, drop)
+		let u = hi[0]
+		let sticky = bitsBelow(a.limbs, drop)
+		mut res = u >> 1
+		if u&1 == 1 && (sticky || res&1 == 1) {
+			res += 1
+		}
+		// res is the top 53 bits, one bit below u, so the scale is 2^(drop+1).
+		f = f64(res) * gauge.Ldexp(1.0, drop+1)
+	}
+	if a.neg {
+		return -f
+	}
+	return f
+}
+
+// Bytes returns the magnitude as big-endian bytes, like Go's Int.Bytes (zero is empty).
+fn (a Int) Bytes() []u8 {
+	if len(a.limbs) == 0 {
+		return []u8{}
+	}
+	mut out = make([]u8, 0, len(a.limbs)*8)
+	mut i = len(a.limbs)
+	for i > 0 {
+		i -= 1
+		let v = a.limbs[i]
+		mut k = 8
+		// Skip the top limb's leading zero bytes.
+		if i == len(a.limbs)-1 {
+			for k > 1 && (v>>u64((k-1)*8))&0xff == 0 {
+				k -= 1
+			}
+		}
+		for k > 0 {
+			k -= 1
+			out = append(out, u8(v>>u64(k*8)&0xff))
+		}
+	}
+	return out
+}
+
+// FromBytes returns the value of the big-endian magnitude b (the sign is always positive).
+fn FromBytes(b []u8) Int {
+	if len(b) == 0 {
+		return Int{neg: false, limbs: []u64{}}
+	}
+	mut limbs = make([]u64, 0, (len(b)+7)/8)
+	mut i = len(b)
+	for i > 0 {
+		mut v = u64(0)
+		mut k = 0
+		for k < 8 && i > 0 {
+			i -= 1
+			v |= u64(b[i]) << u64(k*8)
+			k += 1
+		}
+		limbs = append(limbs, v)
+	}
+	return Int{neg: false, limbs: unorm(limbs)}
+}
+
+// Parse returns the value of s, like Go's big.Int.SetString: base 2 to 36, or 0 to read a prefix
+// (0x and 0X for 16, 0o and 0O for 8, 0b and 0B for 2, a leading 0 for 8, otherwise 10). The
+// string may start with + or -.
+fn Parse(s str, base i64) !Int {
+	mut b = base
+	mut neg = false
+	mut i = 0
+	if i < len(s) && (s[i] == '+' || s[i] == '-') {
+		neg = s[i] == '-'
+		i += 1
+	}
+	if b == 0 {
+		if i+1 < len(s) && s[i] == '0' {
+			let c = s[i+1]
+			if c == 'x' || c == 'X' {
+				b = 16
+				i += 2
+			} else if c == 'o' || c == 'O' {
+				b = 8
+				i += 2
+			} else if c == 'b' || c == 'B' {
+				b = 2
+				i += 2
+			} else {
+				b = 8
+			}
+		} else {
+			b = 10
+		}
+	}
+	if b < 2 || b > 36 {
+		fail say.Fault("abacus: invalid base %d", b)
+	}
+	mut limbs = []u64{}
+	mut digits = 0
+	for i < len(s) {
+		let d = digitValue(s[i])
+		if d < 0 || d >= b {
+			fail say.Fault("abacus: %s: invalid digit", s)
+		}
+		limbs = umulAddSmall(limbs, u64(b), u64(d))
+		digits += 1
+		i += 1
+	}
+	if digits == 0 {
+		fail say.Fault("abacus: %s: no digits", s)
+	}
+	if len(limbs) == 0 {
+		neg = false
+	}
+	return Int{neg: neg, limbs: limbs}
+}
+
+// Str returns the decimal value.
+fn (a Int) Str() str {
+	return a.Text(10)
+}
+
+// Text returns the value in the given base, 2 to 36.
+fn (a Int) Text(base i64) str {
+	if base < 2 || base > 36 {
+		panic("abacus: Text base out of range")
+	}
+	if len(a.limbs) == 0 {
+		return "0"
+	}
+	mut digits = []u8{}
+	mut cur = a.limbs
+	for len(cur) > 0 {
+		let (q, r) = udivmodSmall(cur, u64(base))
+		digits = append(digits, digitChars[i64(r)])
+		cur = q
+	}
+	mut out = make([]u8, 0, len(digits)+1)
+	if a.neg {
+		out = append(out, '-')
+	}
+	mut i = len(digits)
+	for i > 0 {
+		i -= 1
+		out = append(out, digits[i])
+	}
+	return rt_str_from_raw(cast(i64, out)[2], len(out))
+}
+
+const digitChars = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+// digitValue returns the value of a digit character, or -1.
+fn digitValue(c u8) i64 {
+	if c >= '0' && c <= '9' {
+		return i64(c - '0')
+	}
+	if c >= 'a' && c <= 'z' {
+		return i64(c-'a') + 10
+	}
+	if c >= 'A' && c <= 'Z' {
+		return i64(c-'A') + 10
+	}
+	return -1
+}
+
+// unorm drops leading zero limbs.
+fn unorm(xs []u64) []u64 {
+	mut n = len(xs)
+	for n > 0 && xs[n-1] == 0 {
+		n -= 1
+	}
+	return xs[0:n]
+}
+
+// ucmp compares two magnitudes.
+fn ucmp(a []u64, b []u64) i64 {
+	if len(a) != len(b) {
+		if len(a) < len(b) {
+			return -1
+		}
+		return 1
+	}
+	mut i = len(a)
+	for i > 0 {
+		i -= 1
+		if a[i] != b[i] {
+			if a[i] < b[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+// uadd returns a + b.
+fn uadd(a []u64, b []u64) []u64 {
+	mut n = len(a)
+	if len(b) > n {
+		n = len(b)
+	}
+	mut out = make([]u64, 0, n+1)
+	mut carry = u64(0)
+	for i in 0..n {
+		mut x = u64(0)
+		if i < len(a) {
+			x = a[i]
+		}
+		mut y = u64(0)
+		if i < len(b) {
+			y = b[i]
+		}
+		let s = x +% y
+		mut c = u64(0)
+		if s < x {
+			c = 1
+		}
+		let t = s +% carry
+		if t < s {
+			c += 1
+		}
+		out = append(out, t)
+		carry = c
+	}
+	if carry != 0 {
+		out = append(out, carry)
+	}
+	return out
+}
+
+// usub returns a - b, which needs a >= b.
+fn usub(a []u64, b []u64) []u64 {
+	mut out = make([]u64, 0, len(a))
+	mut borrow = u64(0)
+	for i in 0..len(a) {
+		let x = a[i]
+		mut y = u64(0)
+		if i < len(b) {
+			y = b[i]
+		}
+		let d = x -% y
+		mut br = u64(0)
+		if x < y {
+			br = 1
+		}
+		let t = d -% borrow
+		if d < borrow {
+			br = 1
+		}
+		out = append(out, t)
+		borrow = br
+	}
+	return unorm(out)
+}
+
+// karatsubaThreshold is the smallest operand length (in limbs) that uses Karatsuba; bench/v2/bigint
+// measures it.
+const karatsubaThreshold = 32
+
+// umul returns a * b.
+fn umul(a []u64, b []u64) []u64 {
+	if len(a) < karatsubaThreshold || len(b) < karatsubaThreshold {
+		return umulSchool(a, b)
+	}
+	return umulKaratsuba(a, b)
+}
+
+// umulSchool is the schoolbook multiplication.
+fn umulSchool(a []u64, b []u64) []u64 {
+	mut out = make([]u64, len(a)+len(b))
+	for i in 0..len(a) {
+		let ai = a[i]
+		if ai == 0 {
+			continue
+		}
+		mut carry = u64(0)
+		for j in 0..len(b) {
+			let (hi, lo) = bits.Mul64(ai, b[j])
+			let s = out[i+j] +% lo
+			mut c = u64(0)
+			if s < out[i+j] {
+				c = 1
+			}
+			let t = s +% carry
+			if t < s {
+				c += 1
+			}
+			out[i+j] = t
+			carry = hi +% c
+		}
+		mut k = i + len(b)
+		for carry != 0 {
+			if k >= len(out) {
+				panic("abacus: multiplication overflow")
+			}
+			let s = out[k] +% carry
+			if s < out[k] {
+				out[k] = s
+				carry = 1
+			} else {
+				out[k] = s
+				carry = 0
+			}
+			k += 1
+		}
+	}
+	return unorm(out)
+}
+
+// umulKaratsuba is the Karatsuba multiplication: the halves give z0 = a0*b0, z2 = a1*b1 and
+// z1 = (a0+a1)*(b0+b1) - z0 - z2, and the result is z0 + z1*2^(64h) + z2*2^(128h).
+fn umulKaratsuba(a []u64, b []u64) []u64 {
+	mut n = len(a)
+	if len(b) > n {
+		n = len(b)
+	}
+	let h = (n + 1) / 2
+	if h >= len(a) || h >= len(b) {
+		return umulSchool(a, b)
+	}
+	let a0 = a[0:h]
+	let a1 = a[h:len(a)]
+	let b0 = b[0:h]
+	let b1 = b[h:len(b)]
+	let z0 = umul(a0, b0)
+	let z2 = umul(a1, b1)
+	let s1 = uadd(a1, a0)
+	let s2 = uadd(b1, b0)
+	let z1 = usub(usub(umul(s1, s2), z0), z2)
+	return uadd(uadd(z0, ushlLimbs(z1, h)), ushlLimbs(z2, 2*h))
+}
+
+// ushlLimbs multiplies a magnitude by 2^(64*n).
+fn ushlLimbs(x []u64, n i64) []u64 {
+	if len(x) == 0 {
+		return []u64{}
+	}
+	mut out = make([]u64, 0, len(x)+n)
+	for i in 0..n {
+		out = append(out, 0)
+	}
+	out = append(out, x...)
+	return out
+}
+
+// udivmodSmall divides a magnitude by a single nonzero limb and returns the quotient and the
+// remainder.
+fn udivmodSmall(a []u64, d u64) ([]u64, u64) {
+	let q = make([]u64, len(a))
+	mut rem = u64(0)
+	mut i = len(a)
+	for i > 0 {
+		i -= 1
+		let (qq, rr) = bits.Div64(rem, a[i], d)
+		q[i] = qq
+		rem = rr
+	}
+	return unorm(q), rem
+}
+
+// umulAddSmall returns x*d + v for a single limb d and v < d.
+fn umulAddSmall(x []u64, d u64, v u64) []u64 {
+	mut out = make([]u64, 0, len(x)+1)
+	mut carry = v
+	for i in 0..len(x) {
+		let (hi, lo) = bits.Mul64(x[i], d)
+		let s = lo +% carry
+		mut c = u64(0)
+		if s < lo {
+			c = 1
+		}
+		out = append(out, s)
+		carry = hi +% c
+	}
+	if carry != 0 {
+		out = append(out, carry)
+	}
+	return out
+}
+
+// ushrBits shifts a magnitude right by n bits (truncating).
+fn ushrBits(a []u64, n i64) []u64 {
+	let limbShift = n / 64
+	let bitShift = n % 64
+	if limbShift >= len(a) {
+		return []u64{}
+	}
+	mut out = make([]u64, 0, len(a)-limbShift)
+	mut i = limbShift
+	for i < len(a) {
+		mut v = a[i] >> u64(bitShift)
+		if bitShift > 0 && i+1 < len(a) {
+			v |= a[i+1] << u64(64-bitShift)
+		}
+		out = append(out, v)
+		i += 1
+	}
+	return unorm(out)
+}
+
+// bitsBelow reports whether any bit of a below bit n is set.
+fn bitsBelow(a []u64, n i64) bool {
+	let limbs = n / 64
+	let bits = n % 64
+	for i in 0..limbs {
+		if i < len(a) && a[i] != 0 {
+			return true
+		}
+	}
+	if bits > 0 && limbs < len(a) {
+		let mask = (u64(1) << u64(bits)) - 1
+		if a[limbs]&mask != 0 {
+			return true
+		}
+	}
+	return false
+}

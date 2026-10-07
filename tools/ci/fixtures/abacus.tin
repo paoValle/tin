@@ -1,0 +1,176 @@
+package main
+
+import "say"
+import "abacus"
+import "gauge"
+import "mint"
+import "quarry"
+
+// The abacus corpus, Tin side: the same operands and operations as bench/ref/abacus, printing a
+// hash per operation (or every case with "dump"). ABACUS_N is the number of random operand pairs.
+
+mut seed u64 = 88172645463325252
+
+fn next() u64 {
+	seed ^= seed >> 12
+	seed ^= seed << 25
+	seed ^= seed >> 27
+	return seed *% 2685821657736338717
+}
+
+let sizes = []i64{0, 1, 2, 63, 64, 65, 127, 128, 129, 255, 256, 257, 512, 1024, 2048, 4096}
+
+// edges are the edge magnitudes with their signs.
+let edgeMags = []u64{0, 1, 1, 2, 2, 1 << 62, 1 << 62, 1<<63 - 1, 1<<63 - 1, 1 << 63, 1 << 63, 18446744073709551615, 18446744073709551615}
+
+let edgeNegs = []bool{false, false, true, false, true, false, true, false, true, false, true, false, true}
+
+fn randInt(bits i64) abacus.Int {
+	if bits == 0 {
+		return abacus.FromI64(0)
+	}
+	let nbytes = (bits + 7) / 8
+	let buf = make([]u8, nbytes)
+	for i in 0..nbytes {
+		buf[i] = u8(next() >> 24)
+	}
+	let extra = nbytes*8 - bits
+	if extra > 0 {
+		buf[0] &= u8(0xff >> u64(extra))
+	}
+	mut z = abacus.FromBytes(buf)
+	if next()&1 == 1 {
+		z = z.Neg()
+	}
+	return z
+}
+
+fn operand(i i64) abacus.Int {
+	if i < len(edgeMags) {
+		mut z = abacus.FromBytes(magBytes(edgeMags[i]))
+		if edgeNegs[i] {
+			z = z.Neg()
+		}
+		return z
+	}
+	mut bits = sizes[i64(next()%u64(len(sizes)))]
+	if next()&3 == 0 {
+		bits = i64(next() % 4097)
+	}
+	return randInt(bits)
+}
+
+// magBytes is the big-endian byte form of a u64 magnitude.
+fn magBytes(v u64) []u8 {
+	if v == 0 {
+		return []u8{}
+	}
+	mut out = []u8{}
+	mut k = 8
+	for k > 1 && (v>>u64((k-1)*8))&0xff == 0 {
+		k -= 1
+	}
+	for k > 0 {
+		k -= 1
+		out = append(out, u8(v>>u64(k*8)&0xff))
+	}
+	return out
+}
+
+const hexDigits = "0123456789abcdef"
+
+// hexInt is a signed value as sign + magnitude hex, or "0".
+fn hexInt(z abacus.Int) str {
+	if z.IsZero() {
+		return "0"
+	}
+	let bs = z.Bytes()
+	mut out = []u8{}
+	if z.Sign() < 0 {
+		out = append(out, '-')
+	}
+	mut first = true
+	for _, b in bs {
+		// The top byte keeps no leading zero nibble.
+		if !first || b >= 16 {
+			out = append(out, hexDigits[i64(b>>4)])
+		}
+		out = append(out, hexDigits[i64(b&0xf)])
+		first = false
+	}
+	return rt_str_from_raw(cast(i64, out)[2], len(out))
+}
+
+fn i64Text(z abacus.Int) str {
+	let (v, ok) = z.I64()
+	if ok {
+		return say.Fmt("%d true", v)
+	}
+	return "0 false"
+}
+
+fn u64Text(z abacus.Int) str {
+	let (v, ok) = z.U64()
+	if ok {
+		return say.Fmt("%d true", u64(v))
+	}
+	return "0 false"
+}
+
+fn hashAdd(h u64, s str) u64 {
+	mut x = h
+	for i in 0..len(s) {
+		x ^= u64(s[i])
+		x = x*%1099511628211
+	}
+	return x
+}
+
+fn main() {
+	mut n = i64(100000)
+	let env = quarry.Getenv("ABACUS_N")
+	if len(env) > 0 {
+		let (v, err) = mint.Atoi(env)
+		if err == nil && v > 0 {
+			n = v
+		}
+	}
+	let dump = len(quarry.Args()) > 1 && quarry.Args()[1] == "dump"
+	let ops = []str{"add", "sub", "mul", "cmp", "text10", "text16", "text36", "bytes", "i64", "u64", "f64"}
+	mut hashes = make([]u64, len(ops))
+	for i in 0..len(ops) {
+		hashes[i] = 14695981039346656037
+	}
+	for i in 0..n {
+		let a = operand(i)
+		let b = operand(i + 7)
+		if dump {
+			say.Line("operands", i, hexInt(a), hexInt(b))
+		}
+		let results = []str{
+			hexInt(a.Add(b)),
+			hexInt(a.Sub(b)),
+			hexInt(a.Mul(b)),
+			say.Fmt("%d", a.Cmp(b)),
+			a.Text(10),
+			a.Text(16),
+			a.Text(36),
+			hexInt(abacus.FromBytes(a.Bytes())),
+			i64Text(a),
+			u64Text(a),
+			say.Fmt("%016x", gauge.F64bits(a.F64())),
+		}
+		for k in 0..len(ops) {
+			if dump {
+				say.Line(ops[k], i, results[k])
+			} else {
+				hashes[k] = hashAdd(hashes[k], results[k])
+			}
+		}
+	}
+	if !dump {
+		for k in 0..len(ops) {
+			say.Line(ops[k], n, say.Fmt("%016x", hashes[k]))
+		}
+	}
+}

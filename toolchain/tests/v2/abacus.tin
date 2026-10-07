@@ -1,0 +1,120 @@
+package main
+
+import "say"
+import "abacus"
+import "gauge"
+
+// parse prints a parse result or its fault message.
+fn parse(s str, base i64) str {
+	let v = abacus.Parse(s, base) catch err {
+		return say.Fmt("fault: %s", err)
+	}
+	return v.Str()
+}
+
+// boolText is "true" or "false".
+fn boolText(b bool) str {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+// big parses a decimal or 0x-prefixed value for the test.
+fn big(s str) abacus.Int {
+	return abacus.Parse(s, 0) catch err {
+		say.Line("test parse failed", s, err)
+		abacus.FromI64(0)
+	}
+}
+
+// pow2 returns 2^n.
+fn pow2(n i64) abacus.Int {
+	mut v = abacus.FromI64(1)
+	for i in 0..n {
+		v = v.Add(v)
+	}
+	return v
+}
+
+fn convI64(v abacus.Int) str {
+	let (x, ok) = v.I64()
+	return say.Fmt("%d/%s", x, boolText(ok))
+}
+
+fn convU64(v abacus.Int) str {
+	let (x, ok) = v.U64()
+	return say.Fmt("%d/%s", u64(x), boolText(ok))
+}
+
+fn fbits(f f64) str {
+	return say.Fmt("%016x", gauge.F64bits(f))
+}
+
+fn main() {
+	// Parsing: bases, prefixes, signs and the errors.
+	for _, c in [][2]str{{"0", "0"}, {"1", "0"}, {"-1", "0"}, {"+123", "0"}, {"0777", "0"},
+		{"0xdeadbeef", "0"}, {"0b1010", "0"}, {"0o777", "0"}, {"zz", "36"}, {"-zz", "36"},
+		{"101", "2"}, {"12x", "0"}, {"", "0"}, {"0x", "0"}, {"-", "0"}} {
+		say.Line("parse", c[0], c[1], parse(c[0], parseBase(c[1])))
+	}
+	for _, b in []i64{1, 37, -1} {
+		say.Line("parse base", b, parse("11", b))
+	}
+
+	// Arithmetic on the edges: carries, borrows, zero and the signed boundaries.
+	let zero = abacus.FromI64(0)
+	let one = abacus.FromI64(1)
+	let maxi = abacus.FromI64(9223372036854775807)
+	let mini = abacus.FromI64(-9223372036854775807 - 1)
+	let p63 = pow2(63)
+	let p64 = pow2(64)
+	say.Line("zero", zero.Str(), zero.Sign(), zero.IsZero(), zero.BitLen())
+	say.Line("min", mini.Str(), mini.BitLen(), mini.Neg().Str())
+	say.Line("max", maxi.Str(), maxi.BitLen())
+	say.Line("p63", p63.Str(), p63.BitLen())
+	say.Line("p64", p64.Str(), p64.BitLen())
+	say.Line("carry", p64.Sub(one).Add(one).Str(), p64.Add(p64).Sub(p64).Str())
+	say.Line("borrow", zero.Sub(p64).Str(), boolText(p64.Sub(p64).IsZero()))
+	say.Line("adds", maxi.Add(one).Str(), mini.Sub(one).Str())
+	say.Line("cancel", big("123456789012345678901234567890").Sub(big("123456789012345678901234567890")).Str())
+	say.Line("sub sign", one.Sub(abacus.FromI64(3)).Str(), abacus.FromI64(3).Sub(one).Str())
+
+	// Multiplication, including the Karatsuba path above the threshold.
+	say.Line("muls", abacus.FromI64(-6).Mul(abacus.FromI64(7)).Str(), zero.Mul(maxi).Str())
+	let big1 = big("340282366920938463463374607431768211455") // 2^128 - 1
+	say.Line("bigmul", big1.Mul(big1).Str())
+	let k1 = pow2(2048)
+	let k2 = pow2(2048).Sub(one)
+	let kk = k2.Mul(k2)
+	say.Line("karatsuba", k1.Mul(k2).BitLen(), k2.Cmp(k1), kk.Str()[0:20], kk.Str()[len(kk.Str())-20:len(kk.Str())])
+
+	// Comparison over the sign and magnitude combinations.
+	for _, p in [][2]str{{"0", "0"}, {"1", "-1"}, {"-1", "1"}, {"-2", "-1"}, {"2", "1"},
+		{"0xffffffffffffffff", "0x10000000000000000"}, {"-0xffffffffffffffff", "-0x10000000000000000"}} {
+		say.Line("cmp", p[0], p[1], big(p[0]).Cmp(big(p[1])))
+	}
+
+	// Text in several bases and the byte round trip.
+	let t = big("123456789012345678901234567890")
+	say.Line("text", t.Str(), t.Text(16), t.Text(36), t.Text(2)[0:32])
+	say.Line("text neg", t.Neg().Str(), t.Neg().Text(16), zero.Text(36))
+	say.Line("bytes", len(t.Bytes()), abacus.FromBytes(t.Bytes()).Cmp(t), len(zero.Bytes()))
+	say.Line("bytes round", abacus.FromBytes([]u8{1, 0, 0, 0, 0, 0, 0, 0, 0}).Str())
+	say.Line("bits", t.BitLen(), t.Abs().Cmp(t), t.Neg().Abs().Cmp(t))
+
+	// Conversions.
+	say.Line("i64", convI64(maxi), convI64(mini), convI64(p64), convI64(maxi.Add(one)))
+	say.Line("u64", convU64(p64), convU64(p64.Sub(one)), convU64(abacus.FromI64(-1)))
+	say.Line("f64", fbits(abacus.FromI64(1).F64()), fbits(abacus.FromI64(-2).F64()), fbits(p63.F64()), fbits(p63.Add(one).F64()))
+	say.Line("f64 round", fbits(big("9007199254740993").F64()), fbits(big("9007199254740995").F64()))
+	say.Line("f64 inf", fbits(pow2(2048).F64()))
+}
+
+// parseBase turns the test's base strings into numbers.
+fn parseBase(s str) i64 {
+	if s == "0" {
+		return 0
+	}
+	return 36
+}

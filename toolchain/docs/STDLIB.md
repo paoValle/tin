@@ -35,6 +35,7 @@ Generated from the comments in `toolchain/std/*/` and `packages/*/` by `tools/ge
 | [stamp](#stamp) | hashes and checksums (hash/*) |
 | [squash](#squash) | compression: DEFLATE, gzip, zlib, Snappy, LZ4, Zstandard (compress/flate, compress/gzip, compress/zlib) |
 | [ledger](#ledger) | CSV reading and writing (encoding/csv) |
+| [abacus](#abacus) | arbitrary-precision integers (math/big) |
 | [seal](#seal) | crypto and encodings (crypto/sha256, hmac, encoding/hex, base64) |
 | [herald](#herald) | logging (log/slog) |
 | [crucible](#crucible) | testing helpers (testing) |
@@ -1221,6 +1222,32 @@ A Reader over a stream holds a fixed window (64 KiB by default; NewStreamSize ch
 - `(w mut Writer) Write(fields []str) !`: Write appends one record, quoting fields that hold the delimiter, a quote, a newline or a leading space, and doubling quotes, as Go's encoding/csv does.
 - `(w mut Writer) WriteAll(records [][]str) !`: WriteAll writes every record in order.
 - `(w Writer) String() str`: String returns the bytes written so far as a str.
+
+## abacus
+
+Package abacus is arbitrary-precision integers, like Go's math/big.Int, with value semantics: every operation returns a new value and leaves its operands alone. A value is a sign and a little-endian magnitude of 64-bit limbs, normalized (no leading zero limbs; zero is an empty magnitude with a false sign).
+
+It is not constant-time: use seal for cryptography. There is no formatting hook in say yet, so print an Int with x.Str() or x.Text(base) (see design/stdlib_verified.md).
+
+- `type Int struct`: Int is an arbitrary-precision integer.
+- `FromI64(v i64) Int`: FromI64 returns v as an Int.
+- `(a Int) Sign() i64`: Sign returns -1, 0 or 1.
+- `(a Int) IsZero() bool`: IsZero reports whether the value is zero.
+- `(a Int) BitLen() i64`: BitLen returns the number of bits of the magnitude, 0 for zero.
+- `(a Int) Neg() Int`: Neg returns -a.
+- `(a Int) Abs() Int`: Abs returns |a|.
+- `(a Int) Cmp(b Int) i64`: Cmp returns -1, 0 or 1 as a is less than, equal to or greater than b.
+- `(a Int) Add(b Int) Int`: Add returns a + b.
+- `(a Int) Sub(b Int) Int`: Sub returns a - b.
+- `(a Int) Mul(b Int) Int`: Mul returns a * b.
+- `(a Int) I64() (i64, bool)`: I64 returns the value as an i64 and whether it fits.
+- `(a Int) U64() (u64, bool)`: U64 returns the value as a u64 and whether it fits (a negative value does not).
+- `(a Int) F64() f64`: F64 returns the value as the nearest f64, ties to even, like Go's Int.Float64 (which is ±Inf when the value is too large).
+- `(a Int) Bytes() []u8`: Bytes returns the magnitude as big-endian bytes, like Go's Int.Bytes (zero is empty).
+- `FromBytes(b []u8) Int`: FromBytes returns the value of the big-endian magnitude b (the sign is always positive).
+- `Parse(s str, base i64) !Int`: Parse returns the value of s, like Go's big.Int.SetString: base 2 to 36, or 0 to read a prefix (0x and 0X for 16, 0o and 0O for 8, 0b and 0B for 2, a leading 0 for 8, otherwise 10). The string may start with + or -.
+- `(a Int) Str() str`: Str returns the decimal value.
+- `(a Int) Text(base i64) str`: Text returns the value in the given base, 2 to 36.
 
 ## seal
 
