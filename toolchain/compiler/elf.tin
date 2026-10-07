@@ -176,6 +176,7 @@ fn write_elf(path str) {
 	let text_addr = align_up(ro_end, E_ALIGN)
 	let start_addr = text_addr
 	mut pc = text_addr + 4 * E_START_WORDS
+	relax_branches()
 	lk_labels = slice_filled(g_labels + 1, 0)
 	i = 0
 	for i < len(code) {

@@ -226,6 +226,7 @@ fn write_executable(path str) {
 	// Addresses: code, stubs, strings, then the data segment.
 	let text_off = align_up(32 + cmds_size, 16)
 	let text_addr = TEXT_BASE + text_off
+	relax_branches()
 	lk_labels = slice_filled(g_labels + 1, 0)
 	mut pc = text_addr
 	i = 0
