@@ -2,6 +2,7 @@ package main
 
 import "say"
 import "abacus"
+import "fault"
 import "gauge"
 
 // parse prints a parse result or its fault message.
@@ -102,6 +103,39 @@ fn main() {
 	say.Line("bytes", len(t.Bytes()), abacus.FromBytes(t.Bytes()).Cmp(t), len(zero.Bytes()))
 	say.Line("bytes round", abacus.FromBytes([]u8{1, 0, 0, 0, 0, 0, 0, 0, 0}).Str())
 	say.Line("bits", t.BitLen(), t.Abs().Cmp(t), t.Neg().Abs().Cmp(t))
+
+	// Division: truncated QuoRem, Euclidean DivMod, the single-limb path, the Knuth path and
+	// the signs. Division by zero panics.
+	let dv = big("100000000000000000000000000000000000000000000000000000000000")
+	let dr = big("123456789012345678901234567890")
+	let (q1, r1) = dv.QuoRem(dr)
+	say.Line("quo", q1.Str(), r1.Str())
+	let (q2, r2) = dv.Neg().QuoRem(dr)
+	say.Line("quo neg", q2.Str(), r2.Str())
+	let (q3, r3) = dv.QuoRem(dr.Neg())
+	say.Line("quo negd", q3.Str(), r3.Str())
+	let (e1, e2) = dv.Neg().DivMod(dr)
+	say.Line("divmod", e1.Str(), e2.Str())
+	say.Line("mod", dv.Neg().Mod(big("97")).Str(), dv.Mod(big("97")).Str())
+	let (s1, s2) = big("18446744073709551616").QuoRem(big("18446744073709551615"))
+	say.Line("small", s1.Str(), s2.Str())
+	let bigA = pow2(2048).Sub(one)
+	let bigB = pow2(1024).Add(abacus.FromI64(3))
+	let (kq, kr) = bigA.QuoRem(bigB)
+	say.Line("knuth", kq.Mul(bigB).Add(kr).Cmp(bigA), kq.BitLen(), kr.Cmp(bigB) < 0)
+	let zdiv = guard {
+		let (_, _) = bigA.QuoRem(zero)
+		false
+	} catch err {
+		fault.Is(err, fault.Panic)
+	}
+	say.Line("divzero", zdiv)
+
+	// Exp: a plain power, a modular one, and the small cases.
+	say.Line("exp", abacus.FromI64(3).Exp(abacus.FromI64(100), zero).Str())
+	say.Line("expmod", abacus.FromI64(3).Exp(abacus.FromI64(100), abacus.FromI64(7)).Str())
+	say.Line("expmod big", big("12345678901234567890").Exp(abacus.FromI64(65537), big("1000000007")).Str())
+	say.Line("exp zero", abacus.FromI64(5).Exp(zero, zero).Str(), abacus.FromI64(5).Exp(zero, abacus.FromI64(7)).Str())
 
 	// Conversions.
 	say.Line("i64", convI64(maxi), convI64(mini), convI64(p64), convI64(maxi.Add(one)))

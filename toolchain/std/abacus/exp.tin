@@ -1,0 +1,53 @@
+package abacus
+
+// Exp returns a**e, or a**e mod |m| when m is not zero, like Go's Exp: the sign of m is ignored
+// and e <= 0 gives 1 for a plain power. A negative exponent with a modulus needs ModInverse,
+// the third step of #577, and panics until then.
+fn (a Int) Exp(e Int, m Int) Int {
+	if m.IsZero() {
+		if e.Sign() <= 0 {
+			return Int{neg: false, limbs: []u64{1}}
+		}
+		return a.pow(e)
+	}
+	if e.Sign() < 0 {
+		panic("abacus: Exp with a modulus needs a non-negative exponent (ModInverse is #577's third step)")
+	}
+	let mod = m.Abs()
+	if mod.Cmp(Int{neg: false, limbs: []u64{1}}) == 0 {
+		return zeroInt()
+	}
+	let (_, base0) = a.DivMod(mod)
+	mut base = base0
+	mut result = Int{neg: false, limbs: []u64{1}}
+	mut ee = e
+	for !ee.IsZero() {
+		if ee.limbs[0]&1 == 1 {
+			let (_, r) = result.Mul(base).DivMod(mod)
+			result = r
+		}
+		ee = half(ee)
+		if !ee.IsZero() {
+			let (_, r2) = base.Mul(base).DivMod(mod)
+			base = r2
+		}
+	}
+	return result
+}
+
+// pow returns a**e for e > 0 by repeated squaring.
+fn (a Int) pow(e Int) Int {
+	mut base = a
+	mut result = Int{neg: false, limbs: []u64{1}}
+	mut ee = e
+	for !ee.IsZero() {
+		if ee.limbs[0]&1 == 1 {
+			result = result.Mul(base)
+		}
+		ee = half(ee)
+		if !ee.IsZero() {
+			base = base.Mul(base)
+		}
+	}
+	return result
+}

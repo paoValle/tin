@@ -1,0 +1,240 @@
+package abacus
+
+import "bits"
+
+// Division: Knuth's algorithm D (TAOCP 4.3.1), as Go's math/big does it.
+
+// QuoRem returns the truncated quotient and remainder of a/b, like Go's QuoRem: the quotient is
+// rounded toward zero and r = a - q*b, so the remainder has a's sign. Division by zero panics.
+fn (a Int) QuoRem(b Int) (Int, Int) {
+	if b.IsZero() {
+		panic("abacus: division by zero")
+	}
+	if a.IsZero() {
+		return zeroInt(), zeroInt()
+	}
+	if ucmp(a.limbs, b.limbs) < 0 {
+		return zeroInt(), a
+	}
+	let (q, r) = udivmod(a.limbs, b.limbs)
+	mut rr = Int{neg: a.neg, limbs: r}
+	if len(rr.limbs) == 0 {
+		rr = zeroInt()
+	}
+	return Int{neg: a.neg != b.neg, limbs: q}, rr
+}
+
+// DivMod returns the Euclidean quotient and remainder, like Go's DivMod: q = a div b and
+// r = a - q*b with 0 <= r < |b|. Division by zero panics.
+fn (a Int) DivMod(b Int) (Int, Int) {
+	let (q, r) = a.QuoRem(b)
+	if !r.neg {
+		return q, r
+	}
+	// The truncated quotient was one step too far from -infinity; |b| adjusts the remainder.
+	return q.Sub(Int{neg: b.neg, limbs: []u64{1}}), r.Add(b.Abs())
+}
+
+// Mod returns the Euclidean remainder of a/b, like Go's Mod (0 <= r < |b|).
+fn (a Int) Mod(b Int) Int {
+	let (_, r) = a.DivMod(b)
+	return r
+}
+
+// zeroInt is 0.
+fn zeroInt() Int {
+	return Int{neg: false, limbs: []u64{}}
+}
+
+// half returns e/2 for a non-negative e.
+fn half(e Int) Int {
+	let (q, _) = udivmodSmall(e.limbs, 2)
+	return Int{neg: false, limbs: q}
+}
+
+// udivmod divides magnitudes: one divisor limb goes through bits.Div64, more through Knuth.
+fn udivmod(a []u64, b []u64) ([]u64, []u64) {
+	if len(b) == 1 {
+		let (q, r) = udivmodSmall(a, b[0])
+		if r == 0 {
+			return q, []u64{}
+		}
+		return q, []u64{r}
+	}
+	return udivmodKnuth(a, b)
+}
+
+// udivmodKnuth is algorithm D, a faithful port of Go's nat.divBasic: scale the divisor so its top
+// bit is set, estimate each quotient limb (with the 3-by-2 refinement), multiply and subtract, and
+// add the divisor back when the estimate was one too large. The remainder is the scaled u[0:n]
+// shifted back.
+fn udivmodKnuth(a []u64, b []u64) ([]u64, []u64) {
+	let n = len(b)
+	let m = len(a) - n
+	let shift = bits.LeadingZeros64(b[n-1])
+	let v = lshBits(b, shift)
+	mut u = lshBits(a, shift)
+	for len(u) < m+n+1 {
+		u = append(u, 0)
+	}
+	let q = make([]u64, m+1)
+	let qhatv = make([]u64, n+1)
+	// The leading limb of the scaled dividend (the shift's carry), which the first iteration's
+	// quotient estimate uses.
+	mut ujn = u[m+n]
+	mut j = m + 1
+	for j > 0 {
+		j -= 1
+		let vn1 = v[n-1]
+		// qhat = (ujn:u[j+n-1]) / vn1.
+		mut qhat = u64(18446744073709551615)
+		if ujn != vn1 {
+			let (x, y) = bits.Div64(ujn, u[j+n-1], vn1)
+			qhat = x
+			mut rhat = y
+			let vn2 = v[n-2]
+			let (hi0, lo0) = bits.Mul64(qhat, vn2)
+			mut hi = hi0
+			mut lo = lo0
+			for hi > rhat || (hi == rhat && lo > u[j+n-2]) {
+				qhat -= 1
+				let prev = rhat
+				rhat = rhat +% vn1
+				if rhat < prev {
+					break
+				}
+				// (hi:lo) -= vn2, since qhat was stepped down.
+				if vn2 > lo {
+					hi -= 1
+				}
+				lo = lo -% vn2
+			}
+		}
+		// qhatv = qhat * v (n+1 limbs).
+		qhatv[n] = umulInto(qhatv, v, qhat)
+		mut qhl = n + 1
+		if j+qhl > len(u) && qhatv[n] == 0 {
+			qhl = n
+		}
+		// u[j..j+qhl] -= qhatv.
+		let c = usubAt(u, qhatv, j, qhl)
+		if c != 0 {
+			// qhat was one too large: add v back and step down.
+			let c2 = uaddAt(u, v, j, n)
+			if n < qhl {
+				u[j+n] = u[j+n] +% c2
+			}
+			qhat -= 1
+		}
+		ujn = u[j+n-1]
+		q[j] = qhat
+	}
+	// Undo the scaling of the remainder.
+	return unorm(q), unorm(rshBits(u[0:n], shift))
+}
+
+// umulInto sets dst[0:len(x)] = x*d and returns the carry into dst[len(x)].
+fn umulInto(dst []u64, x []u64, d u64) u64 {
+	mut carry = u64(0)
+	for i in 0..len(x) {
+		let (hi, lo) = bits.Mul64(x[i], d)
+		let s = lo +% carry
+		mut c = u64(0)
+		if s < lo {
+			c = 1
+		}
+		dst[i] = s
+		carry = hi +% c
+	}
+	return carry
+}
+
+// usubAt does u[j..j+n] -= p[0:n] and returns the borrow out.
+fn usubAt(u []u64, p []u64, j i64, n i64) u64 {
+	mut borrow = u64(0)
+	for i in 0..n {
+		let x = u[j+i]
+		let s = p[i] +% borrow
+		mut c = u64(0)
+		if s < p[i] {
+			c = 1
+		}
+		let diff = x -% s
+		// p[i]+borrow may have wrapped past 2^64, which always borrows.
+		if x < s || c == 1 {
+			borrow = 1
+		} else {
+			borrow = 0
+		}
+		u[j+i] = diff
+	}
+	return borrow
+}
+
+// uaddAt does u[j..j+n] += v[0:n] and returns the carry out.
+fn uaddAt(u []u64, v []u64, j i64, n i64) u64 {
+	mut carry = u64(0)
+	for i in 0..n {
+		let x = u[j+i]
+		let s = x +% v[i]
+		mut c = u64(0)
+		if s < x {
+			c = 1
+		}
+		let t = s +% carry
+		if t < s {
+			c += 1
+		}
+		u[j+i] = t
+		carry = c
+	}
+	return carry
+}
+
+// lshBits shifts a magnitude left by n bits.
+fn lshBits(a []u64, n i64) []u64 {
+	if len(a) == 0 {
+		return []u64{}
+	}
+	if n == 0 {
+		mut out = make([]u64, 0, len(a))
+		out = append(out, a...)
+		return out
+	}
+	mut out = make([]u64, 0, len(a)+1)
+	mut carry = u64(0)
+	for i in 0..len(a) {
+		let v = a[i]
+		out = append(out, (v << u64(n)) | carry)
+		carry = v >> u64(64-n)
+	}
+	if carry != 0 {
+		out = append(out, carry)
+	}
+	return out
+}
+
+// rshBits shifts a magnitude right by n bits (truncating).
+fn rshBits(a []u64, n i64) []u64 {
+	if n == 0 {
+		mut out = make([]u64, 0, len(a))
+		out = append(out, a...)
+		return out
+	}
+	let limbShift = n / 64
+	let bitShift = n % 64
+	if limbShift >= len(a) {
+		return []u64{}
+	}
+	mut out = make([]u64, 0, len(a)-limbShift)
+	mut i = limbShift
+	for i < len(a) {
+		mut v = a[i] >> u64(bitShift)
+		if bitShift > 0 && i+1 < len(a) {
+			v |= a[i+1] << u64(64-bitShift)
+		}
+		out = append(out, v)
+		i += 1
+	}
+	return unorm(out)
+}

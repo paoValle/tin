@@ -13,6 +13,9 @@ from pathlib import Path
 from suite import ROOT
 
 PAIRS = 100000
+# One process per batch: a whole 100,000-pair run in one process is OOM-killed on the Linux
+# runners, so the corpus generates any range of pairs alone (ABACUS_START and ABACUS_N).
+BATCH = 10000
 
 
 def run(exe, env, mode=None):
@@ -42,15 +45,21 @@ def main():
         go = work / 'abacus-go'
         subprocess.run(['go', 'build', '-o', str(go), './bench/ref/abacus'], check=True,
                        cwd=ROOT, timeout=300)
-        want = run(go, env)
-        got = run(tin, env)
-        if got != want:
-            detail = first_difference(env, go, tin)
-            raise AssertionError(f'abacus: results differ from math/big: {detail}')
-        ops = [line.split()[0] for line in got]
-        assert len(ops) == 11, f'abacus: {len(ops)} operations, want 11'
-        print(f'PASS abacus: {len(ops)} operations on {PAIRS} operand pairs match Go\'s math/big '
-              f'({", ".join(ops)})')
+        ops = None
+        for start in range(0, PAIRS, BATCH):
+            batch = dict(env, ABACUS_START=str(start), ABACUS_N=str(BATCH))
+            want = run(go, batch)
+            got = run(tin, batch)
+            if got != want:
+                detail = first_difference(batch, go, tin, start)
+                raise AssertionError(f'abacus: results differ from math/big: {detail}')
+            names = [line.split()[0] for line in got]
+            if ops is None:
+                ops = names
+            assert names == ops, 'abacus: the operation set changed between batches'
+        assert len(ops) == 16, f'abacus: {len(ops)} operations, want 16'
+        print(f'PASS abacus: {len(ops)} operations on {PAIRS} operand pairs in '
+              f'{PAIRS // BATCH} batches match Go\'s math/big ({", ".join(ops)})')
 
 
 if __name__ == '__main__':

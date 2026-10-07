@@ -57,7 +57,19 @@ func randInt(r *rng, bits int) *big.Int {
 	return z
 }
 
-func operand(r *rng, i int) *big.Int {
+// seedFor mixes a pair index into a seed, so any range of pairs can be generated alone: the
+// check runs the corpus in batches, which bounds memory.
+func seedFor(i int) uint64 {
+	x := uint64(i) + 0x9e3779b97f4a7c15
+	x ^= x >> 30
+	x *= 0xbf58476d1ce4e5b9
+	x ^= x >> 27
+	x *= 0x94d049bb133111eb
+	x ^= x >> 31
+	return x
+}
+
+func operand(i int) *big.Int {
 	if i < len(edges) {
 		z := new(big.Int).SetUint64(edges[i].mag)
 		if edges[i].neg {
@@ -65,6 +77,7 @@ func operand(r *rng, i int) *big.Int {
 		}
 		return z
 	}
+	r := &rng{s: seedFor(i)}
 	bits := sizes[int(r.next()%uint64(len(sizes)))]
 	if r.next()&3 == 0 {
 		bits = int(r.next() % 4097)
@@ -99,19 +112,50 @@ func main() {
 		}
 	}
 	dump := len(os.Args) > 1 && os.Args[1] == "dump"
-	r := &rng{s: 88172645463325252}
-	ops := []string{"add", "sub", "mul", "cmp", "text10", "text16", "text36", "bytes", "i64", "u64", "f64"}
+	start := 0
+	if s := os.Getenv("ABACUS_START"); s != "" {
+		if v, err := strconv.Atoi(s); err == nil && v >= 0 {
+			start = v
+		}
+	}
+	ops := []string{"add", "sub", "mul", "cmp", "text10", "text16", "text36", "bytes", "i64", "u64", "f64",
+		"quo", "rem", "div", "mod", "exp"}
 	hash := make(map[string]*hasher, len(ops))
 	for _, op := range ops {
 		hash[op] = &hasher{h: 14695981039346656037}
 	}
-	for i := 0; i < n; i++ {
-		a := operand(r, i)
-		b := operand(r, i+7)
+	for i := start; i < start+n; i++ {
+		a := operand(i)
+		b := operand(i + 7)
 		if dump {
 			fmt.Printf("operands %d %s %s\n", i, hexInt(a), hexInt(b))
 		}
+		// Division needs a nonzero divisor.
+		d := b
+		if d.Sign() == 0 {
+			d = big.NewInt(1)
+		}
+		q, r := new(big.Int).QuoRem(a, d, new(big.Int))
+		dd, mm := new(big.Int).DivMod(a, d, new(big.Int))
+		// A small exponent and a 256-bit modulus (zero means a tiny plain power).
+		e := new(big.Int).Mod(new(big.Int).Abs(b), big.NewInt(65))
+		m := new(big.Int).Mod(new(big.Int).Abs(b), new(big.Int).Lsh(big.NewInt(1), 256))
+		var xp *big.Int
+		if m.Sign() == 0 {
+			small := e
+			if small.Cmp(big.NewInt(8)) > 0 {
+				small = big.NewInt(8)
+			}
+			xp = new(big.Int).Exp(a, small, nil)
+		} else {
+			xp = new(big.Int).Exp(a, e, m)
+		}
 		results := map[string]string{
+			"quo":    hexInt(q),
+			"rem":    hexInt(r),
+			"div":    hexInt(dd),
+			"mod":    hexInt(mm),
+			"exp":    hexInt(xp),
 			"add":    hexInt(new(big.Int).Add(a, b)),
 			"sub":    hexInt(new(big.Int).Sub(a, b)),
 			"mul":    hexInt(new(big.Int).Mul(a, b)),

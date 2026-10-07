@@ -11,6 +11,18 @@ import "quarry"
 
 mut seed u64 = 88172645463325252
 
+// seedFor mixes a pair index into a seed, so any range of pairs can be generated alone: the
+// check runs the corpus in batches, which bounds memory.
+fn seedFor(i i64) u64 {
+	mut x = u64(i) +% 0x9e3779b97f4a7c15
+	x ^= x >> 30
+	x = x *% 0xbf58476d1ce4e5b9
+	x ^= x >> 27
+	x = x *% 0x94d049bb133111eb
+	x ^= x >> 31
+	return x
+}
+
 fn next() u64 {
 	seed ^= seed >> 12
 	seed ^= seed << 25
@@ -46,6 +58,7 @@ fn randInt(bits i64) abacus.Int {
 }
 
 fn operand(i i64) abacus.Int {
+	seed = seedFor(i)
 	if i < len(edgeMags) {
 		mut z = abacus.FromBytes(magBytes(edgeMags[i]))
 		if edgeNegs[i] {
@@ -58,6 +71,15 @@ fn operand(i i64) abacus.Int {
 		bits = i64(next() % 4097)
 	}
 	return randInt(bits)
+}
+
+// pow2 returns 2^n.
+fn pow2(n i64) abacus.Int {
+	mut v = abacus.FromI64(1)
+	for i in 0..n {
+		v = v.Add(v)
+	}
+	return v
 }
 
 // magBytes is the big-endian byte form of a u64 magnitude.
@@ -136,16 +158,45 @@ fn main() {
 		}
 	}
 	let dump = len(quarry.Args()) > 1 && quarry.Args()[1] == "dump"
-	let ops = []str{"add", "sub", "mul", "cmp", "text10", "text16", "text36", "bytes", "i64", "u64", "f64"}
+	mut start = i64(0)
+	let startEnv = quarry.Getenv("ABACUS_START")
+	if len(startEnv) > 0 {
+		let (v, err) = mint.Atoi(startEnv)
+		if err == nil && v >= 0 {
+			start = v
+		}
+	}
+	let ops = []str{"add", "sub", "mul", "cmp", "text10", "text16", "text36", "bytes", "i64", "u64", "f64",
+		"quo", "rem", "div", "mod", "exp"}
 	mut hashes = make([]u64, len(ops))
 	for i in 0..len(ops) {
 		hashes[i] = 14695981039346656037
 	}
-	for i in 0..n {
+	for i in start..start+n {
 		let a = operand(i)
 		let b = operand(i + 7)
 		if dump {
 			say.Line("operands", i, hexInt(a), hexInt(b))
+		}
+		// Division needs a nonzero divisor.
+		mut d = b
+		if d.IsZero() {
+			d = abacus.FromI64(1)
+		}
+		let (q, r) = a.QuoRem(d)
+		let (dd, mm) = a.DivMod(d)
+		// A small exponent and a 256-bit modulus (zero means a tiny plain power).
+		let e = b.Abs().Mod(abacus.FromI64(65))
+		let m = b.Abs().Mod(pow2(256))
+		mut xp = abacus.FromI64(0)
+		if m.IsZero() {
+			mut small = e
+			if small.Cmp(abacus.FromI64(8)) > 0 {
+				small = abacus.FromI64(8)
+			}
+			xp = a.Exp(small, abacus.FromI64(0))
+		} else {
+			xp = a.Exp(e, m)
 		}
 		let results = []str{
 			hexInt(a.Add(b)),
@@ -159,6 +210,11 @@ fn main() {
 			i64Text(a),
 			u64Text(a),
 			say.Fmt("%016x", gauge.F64bits(a.F64())),
+			hexInt(q),
+			hexInt(r),
+			hexInt(dd),
+			hexInt(mm),
+			hexInt(xp),
 		}
 		for k in 0..len(ops) {
 			if dump {
