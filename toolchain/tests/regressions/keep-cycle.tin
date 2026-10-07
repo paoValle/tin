@@ -1,0 +1,22 @@
+package main
+
+import "say"
+
+// keep copies a recursive value object by object (#628); a cycle (an object reachable from
+// itself) cannot be copied into long-lived memory, whose reference counts could never free it,
+// so it panics with a message saying so instead of recursing until the stack runs out.
+
+type Node struct {
+	name str
+	next ?Node
+}
+
+mut ring ?Node = nil
+
+fn main() {
+	mut a = Node{name: "a", next: nil}
+	let b = Node{name: "b", next: a}
+	a.next = b
+	ring = keep(a)
+	say.Line("not reached")
+}

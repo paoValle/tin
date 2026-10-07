@@ -218,7 +218,12 @@ adopted):
   increments the new value's count and decrements the old one's; a count reaching zero runs the
   type's generated `drop`, which decrements its children.
 - Counts are per core and not atomic: long-lived objects never cross cores (share-nothing).
-- Kept data has no cycles (`keep` rejects recursive types), so counting reclaims everything.
+- Kept data has no cycles, so counting reclaims everything. Decided in #628: `keep` (and an
+  arena's value) copies recursive types object by object with a table from source to copy, so a
+  shared object is copied once (a DAG stays a DAG), and a back edge to an object still being
+  copied, a cycle, panics. Chosen over refusing recursive types (E320 until #628), which kept
+  every list, tree and parsed document out of long-lived memory, and over accepting the leak a
+  cycle would be: a cycle in data meant to be kept is almost always a bug.
 - A block whose count reaches zero waits in the core's limbo until every task that started before
   it has finished (an epoch), so a request that read `u := cache[k]` keeps a valid `u` even if
   another request replaced `cache[k]` meanwhile. The wait is bounded by the request deadline.

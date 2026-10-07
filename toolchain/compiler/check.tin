@@ -10292,40 +10292,17 @@ fn format_fn(t Ty) Fn {
 	return f
 }
 
-shared mut keep_at i64     // the position of the keep (or capture) that asks keep_fn for a copy (#625)
-shared mut keep_err_at i64 // where E320 was last reported: one keep reports one type
-shared mut keep_bad []i64  // the recursive types keep_fn has made a keep$N for
-
-// keep_cycle_error reports E320 for recursive type t at the keep that asked for the copy,
-// once per keep: the copy of a recursive type asks for its fields' types too.
-fn keep_cycle_error(t Ty) {
-	if keep_at != 0 && keep_err_at == keep_at {
-		return
-	}
-	keep_err_at = keep_at
-	err_code_type(keep_at, "E320 KEEP_TYPE", "keep cannot copy the recursive type ", cast(i64, t), "")
-}
-
 fn keep_fn(t Ty) Fn {
 	if cast(i64, keep_types) == 0 {
 		keep_types = []i64{}
 		keep_fns = cast([]Fn, []i64{})
-		keep_bad = []i64{}
 	}
 	mut i = 0
 	for i < len(keep_types) {
 		if cast(i64, cast(Ty, cast([]i64, keep_types)[i])) == cast(i64, t) {
-			if slice_has(keep_bad, cast(i64, t)) != 0 {
-				// Every keep of a recursive type is reported, not only the first.
-				keep_cycle_error(t)
-			}
 			return keep_fns[i]
 		}
 		i = i + 1
-	}
-	if type_cycle(t, cast([]Ty, []i64{})) != 0 {
-		keep_cycle_error(t)
-		keep_bad = append(keep_bad, cast(i64, t))
 	}
 	lifted_count = lifted_count + 1
 	let pos = 0
@@ -10481,6 +10458,7 @@ fn keep_fn(t Ty) Fn {
 	} else {
 		ret.value = sym_ref_node(pos, x)
 	}
+	copy_memo_wrap(pos, body, x, t)
 	body = append(body, cast(i64, ret))
 	ck_fn = saved_fn
 	return cast(Fn, f)
@@ -10647,7 +10625,19 @@ fn drop_fn(t i64) i64 {
 	let x = cast([]i64, f.locals)[0]
 	rc_drop_body(pos, cast(Block, f.body).stmts, sym_ref_node(pos, cast(Sym, x)), cast(Ty, t))
 	ck_fn = saved_fn
+	rc_remark(cast(Fn, f))
 	return cast(i64, f)
+}
+
+// rc_remark walks a drop function's body again once it is complete (#628). A recursive type's
+// drop asks for its fields' drops while its own body is being built, and one of them refers
+// back to it, marking it reachable while its body is still empty: the walk then missed the
+// drops it calls, which were never emitted.
+fn rc_remark(f Fn) {
+	if rc_reach_ok != 0 && f.reach != 0 {
+		f.reach = 0
+		mark_reach(f)
+	}
 }
 
 // rc_drop_body appends the releases of x's children to body: what one long-lived
@@ -10778,6 +10768,7 @@ fn arrdrop_fn(et i64) i64 {
 	wb.stmts = append(wb.stmts, expr_stmt(rc_dec_call(pos, cell, drop_fn(et))))
 	body = append(body, cast(i64, w))
 	ck_fn = saved_fn
+	rc_remark(cast(Fn, f))
 	return cast(i64, f)
 }
 
@@ -11002,61 +10993,55 @@ fn arenacopy_fn(t Ty) Fn {
 	} else {
 		ret.value = sym_ref_node(pos, x)
 	}
+	copy_memo_wrap(pos, body, x, t)
 	body = append(body, cast(i64, ret))
 	ck_fn = saved_fn
 	return cast(Fn, f)
 }
 
-shared mut keep_panic_types []i64
-shared mut keep_panic_fns []i64
-
-// keep_panic_fn is the keep entry of a dyn table whose concrete type t is recursive
-// (#625): converting such a value to dyn is fine, and keeping it panics with E320's text.
-fn keep_panic_fn(t Ty) Fn {
-	if cast(i64, keep_panic_types) == 0 {
-		keep_panic_types = []i64{}
-		keep_panic_fns = []i64{}
+// copy_memo_wrap makes a copy function's body (keep$N, arenacopy$N) copy each object once
+// (#628): the copy already made of x is returned at once, the new copy is registered before
+// its fields are copied, and marked finished at the end (rt_keep_seen and its siblings, which
+// panic on a cycle). A type that can reach itself opens the table for the whole copy
+// (rt_keep_enter, rt_keep_leave); other structs, slices and maps use it while one is open, so
+// an object shared anywhere in a recursive value is copied once, and cost one check otherwise.
+// out is the body's first let, the copy the function returns.
+fn copy_memo_wrap(pos i64, body []i64, x Sym, t Ty) {
+	let k = kind_of(t)
+	if !(k == K_STRUCT || k == K_SLICE || k == K_MAP) {
+		return
 	}
-	mut i = 0
-	for i < len(keep_panic_types) {
-		if keep_panic_types[i] == cast(i64, t) {
-			return cast(Fn, keep_panic_fns[i])
-		}
-		i = i + 1
+	let opens = type_cycle(t, cast([]Ty, []i64{}))
+	mut oi = 0
+	for oi < len(body) && cast(Node, body[oi]).kind != ST_LET {
+		oi = oi + 1
 	}
-	lifted_count = lifted_count + 1
-	let pos = 0
-	let f = fn_new(pos, "keep")
-	let nb = buf_new()
-	buf_str(nb, "keep$")
-	buf_int(nb, lifted_count)
-	f.qname = str(nb)
-	f.name = str(nb)
-	f.lifted = 2
-	f.params = append(f.params, "x")
-	f.ptypes = append(f.ptypes, cast(i64, t))
-	f.rtypes = append(f.rtypes, cast(i64, t))
-	f.type_ = func_of(f.ptypes, f.rtypes, 0)
-	f.locals = cast([]Sym, []i64{})
-	f.body = empty_block(pos)
-	keep_panic_types = append(keep_panic_types, cast(i64, t))
-	keep_panic_fns = append(keep_panic_fns, cast(i64, f))
-	prog_fns = append(prog_fns, cast(Fn, f))
-	let x = sym_new(SYM_LOCAL, "x", pos)
-	x.type_ = cast(i64, t)
-	x.slot = 0
-	f.slots = 1
-	mut vs1 = cast([]i64, f.locals)
-	vs1 = append(vs1, cast(i64, x))
-	let mb = buf_new()
-	buf_str(mb, "keep cannot copy the recursive type ")
-	type_name(cast([]u8, mb), t)
-	mut body = cast(Block, f.body).stmts
-	body = append(body, expr_stmt(cast(Node, rt_call(pos, "rt_panic", args1(lit_string(pos, str(mb))), ty_void))))
-	let ret = cast(ReturnStmt, node_new(ST_RETURN, pos))
-	ret.value = sym_ref_node(pos, x)
-	body = append(body, cast(i64, ret))
-	return f
+	if oi >= len(body) {
+		return
+	}
+	let out = cast(Sym, cast(LetStmt, body[oi]).sym)
+	mut after = []i64{}
+	after = append(after, expr_stmt(cast(Node, rt_call(pos, "rt_keep_begin", args2(sym_ref_node(pos, x), sym_ref_node(pos, out)), ty_void))))
+	rc_splice(body, oi + 1, after)
+	mut pre = []i64{}
+	let seen = temp(pos, rt_call(pos, "rt_keep_seen", args1(sym_ref_node(pos, x)), cast(i64, t)), cast(i64, t))
+	pre = append(pre, cast(i64, seen))
+	let ifs = cast(IfStmt, node_new(ST_IF, pos))
+	ifs.cond = mk_bin(pos, "!=", sym_ref_node(pos, cast(Sym, seen.sym)), mk_int(pos, 0, cast(i64, t)), ty_bool)
+	ifs.then = empty_block(pos)
+	let r0 = cast(ReturnStmt, node_new(ST_RETURN, pos))
+	r0.value = sym_ref_node(pos, cast(Sym, seen.sym))
+	mut vs1 = cast(Block, ifs.then).stmts
+	vs1 = append(vs1, cast(i64, r0))
+	pre = append(pre, cast(i64, ifs))
+	if opens != 0 {
+		pre = append(pre, expr_stmt(cast(Node, rt_call(pos, "rt_keep_enter", cast(i64, []i64{}), ty_void))))
+	}
+	rc_splice(body, 0, pre)
+	body = append(body, expr_stmt(cast(Node, rt_call(pos, "rt_keep_end", args1(sym_ref_node(pos, x)), ty_void))))
+	if opens != 0 {
+		body = append(body, expr_stmt(cast(Node, rt_call(pos, "rt_keep_leave", cast(i64, []i64{}), ty_void))))
+	}
 }
 
 // type_cycle reports whether t can reach itself through references (keep would not end).

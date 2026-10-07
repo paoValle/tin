@@ -16,7 +16,9 @@ fn twice(x i64) i64 {
 	return x * 2
 }
 
-// An arena block's value is copied out of it, so its type must be one a copy can follow (#236).
+// An arena block's value is copied out of it, so its type must be one a copy can follow (#236):
+// not one holding a func or dyn value. A recursive one (Node) is copied object by object since
+// #628, so only the Handler block is an error.
 fn main() {
 	let n = arena {
 		Node{name: "a", next: nil}

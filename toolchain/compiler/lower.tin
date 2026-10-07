@@ -2632,7 +2632,6 @@ fn closure_keeper(pos i64, cf Fn) i64 {
 		let old = mk_mem(pos, mk_mem(pos, sym_ref_node(pos, d), 0, 0, 8 * (2 + i), ty_int), 0, 0, 0, ct)
 		mut val = old
 		if is_ref(ct) != 0 || is_dyn_value(cast(Ty, ct)) != 0 {
-			keep_at = pos
 			val = keep_call(pos, keep_fn(cast(Ty, ct)), old, ct)
 		}
 		body = append(body, assign_stmt(pos, mk_mem(pos, sym_ref_node(pos, cast(Sym, cell.sym)), 0, 0, 0, ct), val))
@@ -3243,7 +3242,8 @@ fn chk_arena(e i64) i64 {
 }
 
 // arena_value_check reports a value type the arena cannot copy out: one holding a func or dyn
-// value (their objects are not described by the type), or a recursive one.
+// value (their objects are not described by the type). A recursive one is copied object by
+// object, and a cycle in it panics (#628).
 fn arena_value_check(pos i64, vt i64) {
 	if holds_value_ref(cast(Ty, vt), []i64{}) != 0 {
 		err_code_type(pos, "E295 NOT_YET", "an arena block's value of type ", vt, " is not built yet (#669): it holds a value struct with a str or optional field")
@@ -3252,8 +3252,6 @@ fn arena_value_check(pos i64, vt i64) {
 	mut bad = ""
 	if arena_copyable(cast(Ty, vt), []i64{}) == 0 {
 		bad = " holds a func or dyn value, which cannot be copied: return the data it needs instead"
-	} else if type_cycle(cast(Ty, vt), cast([]Ty, []i64{})) != 0 {
-		bad = " is recursive, so it cannot be copied: return a value of a non-recursive type"
 	}
 	if i64(byte_at(bad, 0)) != 0 {
 		let m = err_code(pos, "E316 ARENA_VALUE")
@@ -4778,8 +4776,6 @@ fn lower_keep(e Node, want i64) i64 {
 	if is_untyped(t) != 0 {
 		t = reconvert(cast(Node, x), default_type(t))
 	}
-	// E320 names this keep (#625).
-	keep_at = pos
 	if holds_value_ref(cast(Ty, t), []i64{}) != 0 {
 		err_code_type(pos, "E295 NOT_YET", "keep of ", t, " is not built yet (#669): it holds a value struct with a str or optional field")
 		return t

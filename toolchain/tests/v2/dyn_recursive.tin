@@ -4,8 +4,8 @@ import "fault"
 import "say"
 
 // A recursive type can be a dyn object (#625): building its table asked keep_fn for a copy
-// and reported E320 at 0:0 although nothing was kept. Keeping such a dyn value panics with
-// E320's text instead.
+// and reported E320 at 0:0 although nothing was kept. Since #628 keep copies recursive types,
+// so keeping such a dyn value works too.
 
 shape Named {
 	Name() str
@@ -42,7 +42,7 @@ fn try_keep(d dyn Named) str {
 
 fn main() {
 	let d dyn Named = Node{name: "a", next: Node{name: "b", next: nil}}
-	say.Line(d.Name())
-	say.Line(try_keep(d))
-	say.Line(len(kept))
+	say.Line("a", d.Name())
+	say.Line("b", try_keep(d))
+	say.Line("c", len(kept), kept[0].Name())
 }

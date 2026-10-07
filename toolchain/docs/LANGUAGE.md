@@ -1691,6 +1691,15 @@ Without `keep`, the compiler reports: `request memory stored into global 'recent
 which outlives the request: wrap the value in keep()` (or `... into long-lived memory
 (it may be reachable from a global)`).
 
+`keep` copies recursive types too, a list, a tree, a parsed document, object by object (#628):
+an object reachable twice is copied once, so a value that shares a node keeps sharing it
+(`same` holds), and a **cycle** (an object reachable from itself) panics, since long-lived
+memory frees what nothing refers to by counting references, and a count could never free a
+cycle. A long-lived tree that a global lets go of is freed node by node, one level per
+quiescent point (the end of a request, `hearth.Reset()`). `keep` recurses as deep as the value
+is: a list of a million nodes needs that many frames, more than a task's stack holds. A
+`shared let` value is not copied, so it may be recursive.
+
 What the checker tracks:
 - every value's possible origins: a fresh allocation, long-lived memory, an unknown
   source, or one of the function's parameters;
@@ -1756,8 +1765,9 @@ let names = try arena {                 // a body that can fail is a !T: try or 
   `try` or `fail` can leave it is a `!T`, used with `try` or `catch` like the other boundary
   blocks. `return` cannot leave it. A panic passes through it (the arena is freed on the way)
   to the nearest `guard`.
-- The value is deep-copied, like `keep`, but into the enclosing region. A recursive type, or
-  one holding a `func` or `dyn` value, cannot be the value (E316 ARENA_VALUE).
+- The value is deep-copied, like `keep`, but into the enclosing region. A type holding a
+  `func` or `dyn` value cannot be the value (E316 ARENA_VALUE); a recursive one is copied
+  object by object, and a cycle in it panics (#628).
 - **Nothing else made in the arena may leave it** (E315 ARENA_ESCAPE): storing it into a
   variable from outside the block, into a field, element or map entry of an object from
   outside, or through a call's `mut` argument. Appending to or inserting into a slice or

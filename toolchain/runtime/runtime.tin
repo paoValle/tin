@@ -4437,6 +4437,111 @@ fn rt_keep_raw(p i64, n i64) i64 {
 	return q
 }
 
+// ---- copies of recursive values (#628) ----
+//
+// keep$N and arenacopy$N of a type that can reach itself copy each object once. The first
+// visit registers source -> copy, still in progress, before the fields are copied; a later
+// path to a finished object gets the same copy, so a DAG stays a DAG, and a path back to an
+// object still being copied is a cycle, which panics: reference counts could never free a
+// cycle in long-lived memory. The table lives while the outermost such copy runs.
+mut keepDepth i64
+mut keepCap i64
+mut keepN i64
+mut keepTab i64 // keepCap entries of [source, copy, done]
+
+fn rt_keep_enter() {
+	keepDepth += 1
+}
+
+fn rt_keep_leave() {
+	keepDepth -= 1
+	if keepDepth <= 0 {
+		keepDepth = 0
+		rt_keep_clear()
+	}
+}
+
+fn rt_keep_clear() {
+	if keepN != 0 {
+		memset(keepTab, 0, keepCap*24)
+		keepN = 0
+	}
+}
+
+// rt_keep_slot is the index of x's entry, or of the empty one it would take.
+fn rt_keep_slot(x i64) i64 {
+	mut i = lsr(x * -7046029254386353131, 40) & (keepCap - 1)
+	for {
+		let e = keepTab + i*24
+		if e[0] == 0 || e[0] == x {
+			return i
+		}
+		i = (i + 1) & (keepCap - 1)
+	}
+	return 0
+}
+
+// rt_keep_seen is the copy already made of x in this copy, or 0. x still being copied is a cycle.
+fn rt_keep_seen(x i64) i64 {
+	if keepN == 0 || x == 0 {
+		return 0
+	}
+	let e = keepTab + rt_keep_slot(x)*24
+	if e[0] != x {
+		return 0
+	}
+	if e[2] == 0 {
+		rt_keep_clear()
+		keepDepth = 0
+		rt_panic("this value contains a cycle (an object reachable from itself): keep and an arena's value copy each object once, and a cycle cannot be copied, since long-lived memory could never free it (#628)")
+	}
+	return e[1]
+}
+
+// rt_keep_begin registers out as the copy of x, in progress, before x's fields are copied. With
+// no recursive copy running, nothing needs remembering.
+fn rt_keep_begin(x i64, out i64) {
+	if keepDepth == 0 {
+		return
+	}
+	if keepTab == 0 {
+		keepCap = 64
+		keepTab = calloc(keepCap, 24)
+	}
+	if (keepN+1)*2 > keepCap {
+		let old = keepTab
+		let ocap = keepCap
+		keepCap = keepCap * 2
+		keepTab = calloc(keepCap, 24)
+		for i in 0..ocap {
+			let o = old + i*24
+			if o[0] != 0 {
+				let e = keepTab + rt_keep_slot(o[0])*24
+				e[0] = o[0]
+				e[1] = o[1]
+				e[2] = o[2]
+			}
+		}
+		free(old)
+	}
+	let e = keepTab + rt_keep_slot(x)*24
+	e[0] = x
+	e[1] = out
+	e[2] = 0
+	keepN += 1
+}
+
+// rt_keep_end marks x's copy finished: another path to x now shares it.
+fn rt_keep_end(x i64) {
+	if keepN == 0 {
+		return
+	}
+	let e = keepTab + rt_keep_slot(x)*24
+	if e[0] == x {
+		e[2] = 1
+	}
+}
+
 fn rt_keep_slice(s i64, esz i64) i64 {
 	let n = s[0]
 	let h = rt_ingot_alloc(32)

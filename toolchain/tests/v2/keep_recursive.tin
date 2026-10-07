@@ -1,0 +1,118 @@
+package main
+
+import "fault"
+import "hearth"
+import "say"
+
+// keep copies recursive types (#628; this was keep_recursive_bad, E320, until #628): a list,
+// a 16,383-node tree and a struct holding one reach long-lived memory and survive the pool's
+// reset. An object reachable twice is copied once (same), a cycle panics, a recursive value
+// leaves an arena, and a kept tree is freed when its global lets go of it.
+
+type Node struct {
+	name str
+	next ?Node
+}
+
+type Wrapper struct {
+	head ?Node
+	count i64
+}
+
+type Tree struct {
+	val i64
+	left ?Tree
+	right ?Tree
+}
+
+type Leaf struct {
+	n i64
+}
+
+type Pair struct {
+	a Leaf
+	b Leaf
+	kids []Pair
+}
+
+mut root ?Node = nil
+mut w = Wrapper{head: nil, count: 0}
+mut tree ?Tree = nil
+mut pair ?Pair = nil
+mut ring ?Node = nil
+
+fn build(depth i64, base i64) Tree {
+	if depth == 0 {
+		return Tree{val: base, left: nil, right: nil}
+	}
+	return Tree{val: base, left: build(depth - 1, base * 2), right: build(depth - 1, base * 2 + 1)}
+}
+
+fn sum(t ?Tree) i64 {
+	if t == nil {
+		return 0
+	}
+	return t.val + sum(t.left) + sum(t.right)
+}
+
+fn count(t ?Tree) i64 {
+	if t == nil {
+		return 0
+	}
+	return 1 + count(t.left) + count(t.right)
+}
+
+fn names(n ?Node) str {
+	if n == nil {
+		return ""
+	}
+	return n.name + names(n.next)
+}
+
+fn cyclic() str {
+	let r = guard {
+		mut a = Node{name: "a", next: nil}
+		let b = Node{name: "b", next: a}
+		a.next = b
+		ring = keep(a)
+		"kept"
+	} catch err {
+		if fault.Is(err, fault.Panic) {
+			return "panic"
+		}
+		return "other"
+	}
+	return r
+}
+
+fn main() {
+	let a = Node{name: "a", next: nil}
+	root = keep(a)
+	let b = Node{name: "b", next: Node{name: "c", next: Node{name: "d", next: nil}}}
+	root = keep(b)
+	w = keep(Wrapper{head: Node{name: "w", next: nil}, count: 1})
+	tree = keep(build(13, 1))
+	let leaf = Leaf{n: 7}
+	pair = keep(Pair{a: leaf, b: leaf, kids: []Pair{Pair{a: leaf, b: Leaf{n: 8}, kids: []Pair{}}}})
+	hearth.Reset()
+	say.Line("a list", names(root))
+	say.Line("b wrapper", names(w.head), w.count)
+	say.Line("c tree", count(tree), sum(tree))
+	let p = pair
+	if p != nil {
+		say.Line("d dag", same(p.a, p.b), same(p.a, p.kids[0].a), same(p.a, p.kids[0].b), p.kids[0].b.n)
+	}
+	say.Line("e cycle", cyclic())
+	let n = arena {
+		Node{name: "x", next: Node{name: "y", next: nil}}
+	}
+	say.Line("f arena", names(n))
+	let (blocks, _, _) = hearth.RcStats()
+	tree = nil
+	// Each reset is a quiescent point; dropping a node queues its children for the next one.
+	for i in 0..20 {
+		hearth.Reset()
+	}
+	let (after, _, _) = hearth.RcStats()
+	say.Line("g freed", blocks - after >= 16383)
+}

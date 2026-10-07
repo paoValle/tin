@@ -1063,5 +1063,15 @@
       "stdout": "56388890\n",
       "stderr": ""
     }
+  },
+  {
+    "source": "keep-cycle.tin",
+    "issue": 628,
+    "expected": {
+      "phase": "run",
+      "exit": 2,
+      "stdout": "",
+      "stderr_contains": "this value contains a cycle"
+    }
   }
 ]

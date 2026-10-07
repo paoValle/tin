@@ -2408,61 +2408,43 @@ slices and maps after the block from its value, or `keep()` the value (long-live
 ### E316 ARENA_VALUE
 
 An `arena { }` block's value is deep-copied out of the arena, so its type must be one the
-copy can follow: not recursive, and holding no `func` or `dyn` value.
+copy can follow: holding no `func` or `dyn` value, whose objects the type does not describe. A
+recursive type is copied object by object, as by `keep`, and a cycle in the value panics
+(#628).
 
 ```tin edition=1
 package main
 
 import "say"
 
-type Node struct {
+type Handler struct {
 	name str
-	next ?Node
+	run fn() i64
 }
 
 fn main() {
-	let n = arena {
-		Node{name: "a", next: nil}
+	let h = arena {
+		Handler{name: "a", run: fn() i64 { return 1 }}
 	}
-	say.Line(n.name)
+	say.Line(h.name)
 }
 ```
 
 ```text
-example.tin:11:10: error E316 ARENA_VALUE: an arena block's value is copied out of the arena, but type Node is recursive, so it cannot be copied: return a value of a non-recursive type
+example.tin:11:10: error E316 ARENA_VALUE: an arena block's value is copied out of the arena, but type Handler holds a func or dyn value, which cannot be copied: return the data it needs instead
 ```
 
-Fix: return the data the caller needs (a slice of names instead of a linked list, a name
-instead of a handler), and build the rest after the block.
+Fix: return the data the caller needs (a name instead of a handler), and build the rest after
+the block.
 
 ### E320 KEEP_TYPE
 
-`keep(x)` copies a value into the long-lived heap, following every reference in it; a type
-that contains itself through references would need a copy without end. The error names the
-`keep` call, once per call. A recursive type can still be a `dyn` object; keeping such a
-`dyn` value panics with the same text (#625).
+Reported `keep(x)` of a recursive type (a list, a tree, a parsed document), which keep could
+not copy.
 
-```tin edition=1
-package main
-
-type Node struct {
-	next ?Node
-}
-
-mut head ?Node = nil
-
-fn main() {
-	let n = Node{next: nil}
-	head = keep(n)
-}
-```
-
-```text
-example.tin:11:9: error E320 KEEP_TYPE: keep cannot copy the recursive type Node
-```
-
-Fix: keep a flat value instead (an index into a kept slice, or the fields you need), or
-build the structure in long-lived memory from kept parts.
+Retired: since #628 `keep` copies recursive types object by object. An object reachable twice
+is copied once, and a cycle, an object reachable from itself, panics at run time, since
+long-lived memory's reference counts could never free it.
 
 ## E4xx Faults and optionals
 
