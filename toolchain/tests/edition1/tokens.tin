@@ -1,0 +1,11 @@
+package main
+
+import "say"
+
+// The token dump (tinc -tokens) is the lexer's contract for the tools; this file is its golden input.
+fn main() {
+	let s = "a\"b\n"
+	let raw = `r`
+	let brace = "{{x}}"
+	say.Line(s, 0x2a, 1.5, 200ms, 1_000) // note
+}

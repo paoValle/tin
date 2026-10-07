@@ -1,0 +1,9 @@
+package main
+
+import "appkit"
+import "say"
+
+// A call into CoreGraphics through @framework: the binding is a dylib load command and a bind to its ordinal.
+fn main() {
+	say.Line("main display known:", appkit.MainDisplayID() != 0)
+}

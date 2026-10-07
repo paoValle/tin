@@ -9,10 +9,12 @@ and the files you must not touch. The CI and regression policy is in [toolchain/
   on Linux, and server behaviour (epoll, `SO_REUSEPORT`, cgroup limits, signals in
   containers, glibc) is designed and judged there. If behaviour differs between macOS and
   Linux, Linux decides.
-- **macOS arm64 is for development only:** writing, building and testing on a Mac. The
-  compiler, the strict suite and `tin run` must keep working on macOS (it is a native CI
-  gate), but don't add macOS-only features, don't treat macOS as a deployment target, and
-  don't justify a design with macOS behaviour.
+- **macOS arm64 is for development only:** writing, building and testing on a Mac, and the
+  developer tools that run there (the Tinland editor, `tin lsp`), which may use macOS
+  frameworks through the platform binding `packages/appkit`. The compiler, the strict suite
+  and `tin run` must keep working on macOS (it is a native CI gate). macOS is never a
+  deployment target: servers and libraries stay portable, and no design is justified by macOS
+  behaviour.
 
 ## Benchmarks are Linux
 

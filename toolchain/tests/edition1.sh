@@ -8,6 +8,10 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 "$compiler" -edition 1 -parse-only toolchain/tests/edition1/accepted.tin
 # Without -edition the file says which edition it is written in (#226).
 "$compiler" -parse-only toolchain/tests/edition1/accepted.tin
+# The token dump is the lexer's contract for the tools (tinc -tokens, #392): it must match the golden.
+"$compiler" -tokens toolchain/tests/edition1/tokens.tin > "$tmp/tokens.out"
+cmp "$tmp/tokens.out" toolchain/tests/edition1/tokens.tokens || { echo "FAIL tokens: the -tokens dump changed"; exit 1; }
+echo "PASS tokens"
 
 for name in legacy_func explicit_semicolon positional_literal short_declaration legacy_var block_comment unknown_unit unknown_integer_unit legacy_switch legacy_go legacy_increment legacy_channel legacy_pointer legacy_while legacy_c_loop grouped_import import_alias no_package grouped_const grouped_type import_after_decl grouped_global multiple_global_names multiple_const_names local_const missing_newline reserved_keyword invalid_match_expression invalid_match_range field_attr_bad
 do

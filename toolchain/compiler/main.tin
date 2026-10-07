@@ -7,6 +7,7 @@ shared mut project_lock []u8
 shared mut compiler_edition i64
 shared mut load_unsafe i64 // the file being loaded is a vendored package granted unsafe: trusted, same edition
 shared mut compiler_fix i64
+shared mut tokens_dump i64 // -tokens: print every file's tokens instead of building (#392)
 shared mut let_fix i64 // -fix-let: collect E711 declarations instead of reporting them (#526)
 shared mut let_fix_decls []i64
 shared mut compiler_parse_only i64 // -parse-only: like -fix, a library file reads trusted
@@ -94,9 +95,93 @@ fn set_target(t str) {
 
 fn usage() i64 {
 	let u = buf_new()
-	buf_str(u, "usage: tinc [-fix] [-polls] [-edition 0|1] [-parse-only] [-audit-secrets] [-caps] [-hash FILE...] [-S] [-o OUT] [-target darwin-arm64|linux-arm64|linux-amd64] FILE.tin...\n")
+	buf_str(u, "usage: tinc [-fix] [-polls] [-edition 0|1] [-parse-only] [-audit-secrets] [-caps] [-hash FILE...] [-tokens] [-S] [-o OUT] [-target darwin-arm64|linux-arm64|linux-amd64] FILE.tin...\n")
 	write_all(2, cast([]u8, u))
 	return 2
+}
+
+// token_kind_name is the name a token kind has in the -tokens dump (lex.tin's TK_ constants).
+fn token_kind_name(kind i64) str {
+	if kind == TK_IDENT {
+		return "IDENT"
+	} else if kind == TK_INT {
+		return "INT"
+	} else if kind == TK_FLOAT {
+		return "FLOAT"
+	} else if kind == TK_STRING {
+		return "STRING"
+	} else if kind == TK_KEYWORD {
+		return "KEYWORD"
+	} else if kind == TK_PUNCT {
+		return "PUNCT"
+	}
+	return "EOF"
+}
+
+// buf_quoted writes s as a double-quoted literal, escaping the characters that would break a line.
+fn buf_quoted(b []u8, s str) {
+	buf_byte(b, '"')
+	mut i = 0
+	for i < len(s) {
+		let c = i64(s[i])
+		if c == '"' || c == '\\' {
+			buf_byte(b, '\\')
+			buf_byte(b, c)
+		} else if c == '\n' {
+			buf_str(b, "\\n")
+		} else if c == '\r' {
+			buf_str(b, "\\r")
+		} else if c == '\t' {
+			buf_str(b, "\\t")
+		} else {
+			buf_byte(b, c)
+		}
+		i = i + 1
+	}
+	buf_byte(b, '"')
+}
+
+// dump_tokens prints the tokens of every file, one per line as `file:line:col KIND "text"`, for the
+// tools that read the lexer's output (tinc -tokens, #392). End-of-file is not printed; the flags are
+// listed where they are written.
+fn dump_tokens() i64 {
+	let out = buf_new()
+	mut f = 0
+	for f < len(files) {
+		let toks = cast([]Token, file_tokens[f])
+		mut i = 0
+		for i < len(toks) {
+			let t = toks[i]
+			if t.kind != TK_EOF {
+				buf_pos(out, t.pos)
+				buf_byte(out, ' ')
+				buf_str(out, token_kind_name(t.kind))
+				buf_byte(out, ' ')
+				buf_quoted(out, t.text)
+				// Flags, in this order: a unit suffix (200ms is INT "200" unit=ms); a raw string
+				// (backquoted); a string whose text holds an escaped brace doubled (lex.tin, Token.dbl);
+				// a ';' the lexer adds at a line end, which the source does not have (Token.synth).
+				if len(t.unit) != 0 {
+					buf_str(out, " unit=")
+					buf_str(out, t.unit)
+				}
+				if t.raw != 0 {
+					buf_str(out, " raw")
+				}
+				if t.dbl != 0 {
+					buf_str(out, " escaped-brace")
+				}
+				if t.synth != 0 {
+					buf_str(out, " synthetic")
+				}
+				buf_byte(out, '\n')
+			}
+			i = i + 1
+		}
+		f = f + 1
+	}
+	write_all(1, cast([]u8, out))
+	return 0
 }
 
 // real_path is the canonical path of path as a compiler string, or 0 when it does not exist.
@@ -773,6 +858,8 @@ fn compiler_main(argc i64, argv i64) i64 {
 		} else if a == "-strip" {
 			// -strip: a Linux executable without section headers and symbol table (#351)
 			link_strip = 1
+		} else if a == "-tokens" {
+			tokens_dump = 1
 		} else if a == "-S" {
 			asm_only = 1
 		} else if a == "-o" && i + 1 < argc {
@@ -785,6 +872,9 @@ fn compiler_main(argc i64, argv i64) i64 {
 	}
 	if len(files) == 0 {
 		return usage()
+	}
+	if tokens_dump != 0 {
+		return dump_tokens()
 	}
 	if fix_edition1 != 0 {
 		if compiler_edition != 1 || len(files) != 1 {

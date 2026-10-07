@@ -283,13 +283,22 @@ fn parse_mode(toks []i64, edition i64) {
 			}
 		} else if p_edition1 != 0 && p_is("@") != 0 {
 			let attrs = parse_attributes()
-			if p_is("fn") == 0 {
-				p_fail_found_code(p_peek().pos, "E040 ATTRIBUTE_PLACEMENT", "attributes here must precede a function", cast(i64, p_peek()))
+			if p_is("extern") != 0 {
+				// @framework("Name") extern fn: the macOS framework the function is bound from (macho.tin)
+				fn_attributes_check(attrs, 1)
+				p_next()
+				let ef = cast(Fn, parse_fn(1))
+				ef.attrs = cast([]i64, attrs)
+				prog_fns = append(prog_fns, cast(Fn, ef))
+			} else {
+				if p_is("fn") == 0 {
+					p_fail_found_code(p_peek().pos, "E040 ATTRIBUTE_PLACEMENT", "attributes here must precede a function", cast(i64, p_peek()))
+				}
+				fn_attributes_check(attrs, 0)
+				let f = cast(Fn, parse_fn(0))
+				f.attrs = cast([]i64, attrs)
+				prog_fns = append(prog_fns, cast(Fn, f))
 			}
-			fn_attributes_check(attrs)
-			let f = cast(Fn, parse_fn(0))
-			f.attrs = cast([]i64, attrs)
-			prog_fns = append(prog_fns, cast(Fn, f))
 		} else if p_is("fn") != 0 {
 			if p_edition1 == 0 {
 				p_fail_code(p_peek().pos, "E090 OLD_SYNTAX", "this file is not edition 1 (the untyped fn dialect is gone): translate it with tin fix -edition 1")
@@ -442,15 +451,22 @@ fn parse_on_decl() i64 {
 
 // fn_attributes_check rejects a function attribute the language does not define, or one given
 // arguments: a misspelt @wrap used to be ignored silently (#557).
-fn fn_attributes_check(attrs i64) {
+fn fn_attributes_check(attrs i64, is_extern i64) {
 	let list = cast([]i64, attrs)
 	mut i = 0
 	for i < len(list) {
 		let a = cast(Attr, list[i])
-		if a.name != "nopoll" && a.name != "wrap" {
-			p_fail_code(a.pos, "E041 UNKNOWN_ATTRIBUTE", "unknown function attribute @" + a.name + "; supported attributes are @nopoll and @wrap")
-		}
-		if len(cast([]i64, a.args)) != 0 {
+		if a.name == "framework" {
+			if is_extern == 0 {
+				p_fail_code(a.pos, "E041 UNKNOWN_ATTRIBUTE", "@framework belongs on an extern declaration: it names the framework the function is bound from")
+			}
+			let args = cast([]i64, a.args)
+			if len(args) != 1 || cast(Node, args[0]).kind != EX_STR {
+				p_fail_code(a.pos, "E042 ATTRIBUTE_ARGS", "@framework takes one string: the framework's name, like @framework(\"CoreGraphics\")")
+			}
+		} else if a.name != "nopoll" && a.name != "wrap" {
+			p_fail_code(a.pos, "E041 UNKNOWN_ATTRIBUTE", "unknown function attribute @" + a.name + "; supported attributes are @nopoll, @wrap and @framework")
+		} else if len(cast([]i64, a.args)) != 0 {
 			p_fail_code(a.pos, "E042 ATTRIBUTE_ARGS", "@" + a.name + " takes no arguments")
 		}
 		i = i + 1
@@ -475,6 +491,11 @@ fn parse_attributes() i64 {
 		}
 		attr.args = cast(i64, args)
 		attrs = append(attrs, cast(i64, attr))
+		// An attribute on its own line ends a statement for the lexer: the ';' it adds is not in the source,
+		// so it is skipped when a declaration follows (a let after it stays E040, as ERRORS.md shows).
+		if cast(Token, p_peek()).synth != 0 && (tok_is(p_peek2(), "fn") != 0 || tok_is(p_peek2(), "extern") != 0) {
+			p_next()
+		}
 	}
 	return cast(i64, attrs)
 }

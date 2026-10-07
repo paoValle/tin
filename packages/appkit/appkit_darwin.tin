@@ -1,0 +1,12 @@
+// The macOS platform binding for the developer tools (the Tinland editor, tin lsp): calls into the system
+// frameworks, one extern per function, each named with the framework it is bound from. Only developer
+// tools import it; libraries and servers never do (AGENTS.md, "Platforms").
+package appkit
+
+@framework("CoreGraphics")
+extern fn CGMainDisplayID() i64
+
+// MainDisplayID is the id of the main display (CoreGraphics' CGMainDisplayID, a 32-bit value).
+fn MainDisplayID() i64 {
+	return CGMainDisplayID() & 0xffffffff
+}

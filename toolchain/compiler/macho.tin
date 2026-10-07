@@ -11,6 +11,8 @@ const SIG_PAGE = 4096
 
 shared mut lk_labels []i64 // label -> address
 shared mut lk_imports []Fn // extern fns that are called
+shared mut lk_dylibs []str // the libraries the imports bind from: libSystem, then each @framework (ordinal = index + 1)
+shared mut lk_ords []i64 // per import: its library's ordinal
 shared mut lk_stubs i64 // address of the first import stub
 shared mut lk_strs []i64 // string literal -> address
 shared mut lk_tstrs []i64 // Tin string literal -> address of its length word
@@ -126,6 +128,65 @@ fn entry_fn() Fn {
 	return cast(Fn, 0)
 }
 
+// framework_of is the name of the @framework an extern declares, or "" for libSystem.
+fn framework_of(f Fn) str {
+	if cast(i64, f.attrs) == 0 {
+		return ""
+	}
+	let attrs = cast([]i64, f.attrs)
+	mut i = 0
+	for i < len(attrs) {
+		let a = cast(Attr, attrs[i])
+		if a.name == "framework" {
+			return cast(StrLit, cast([]i64, a.args)[0]).ptr
+		}
+		i = i + 1
+	}
+	return ""
+}
+
+// framework_path is the path dyld loads a system framework from.
+fn framework_path(name str) str {
+	return "/System/Library/Frameworks/" + name + ".framework/" + name
+}
+
+// dylib_index is the position of path in lk_dylibs, appending it when it is new.
+fn dylib_index(path str) i64 {
+	mut i = 0
+	for i < len(lk_dylibs) {
+		if lk_dylibs[i] == path {
+			return i
+		}
+		i = i + 1
+	}
+	lk_dylibs = append(lk_dylibs, path)
+	return len(lk_dylibs) - 1
+}
+
+// w_dylib writes an LC_LOAD_DYLIB for path and returns where the next command goes.
+fn w_dylib(p i64, path str) i64 {
+	let size = 24 + align_up(len(path) + 1, 8)
+	put32(p, 0xc)
+	put32(p + 4, size)
+	put32(p + 8, 24)
+	put32(p + 12, 2)
+	put32(p + 16, 0x10000)
+	put32(p + 20, 0x10000)
+	w_name16(p + 24, path)
+	return p + size
+}
+
+// bind_ordinal sets the library ordinal for the binds that follow (BIND_OPCODE_SET_DYLIB_ORDINAL_IMM,
+// or the ULEB form past 15).
+fn bind_ordinal(b []u8, ord i64) {
+	if ord < 16 {
+		buf_byte(b, 0x10 | ord)
+	} else {
+		buf_byte(b, 0x20)
+		uleb(b, ord)
+	}
+}
+
 fn write_executable(path str) {
 	let nvars = len(prog_vars)
 	lk_imports = cast([]Fn, []i64{})
@@ -139,9 +200,31 @@ fn write_executable(path str) {
 		i = i + 1
 	}
 	let nimp = len(lk_imports)
+	// The libraries: libSystem (ordinal 1) and one dylib per framework an extern names with @framework.
+	lk_dylibs = []str{"/usr/lib/libSystem.B.dylib"}
+	lk_ords = []i64{}
+	mut ii = 0
+	for ii < nimp {
+		let fw = framework_of(lk_imports[ii])
+		mut ord = 1
+		if len(fw) != 0 {
+			ord = dylib_index(framework_path(fw)) + 1
+		}
+		lk_ords = append(lk_ords, ord)
+		ii = ii + 1
+	}
+	// Each extra dylib is an LC_LOAD_DYLIB of 24 bytes plus its path, padded to 8.
+	mut extra_cmds = 0
+	mut di = 1
+	for di < len(lk_dylibs) {
+		extra_cmds = extra_cmds + 24 + align_up(len(lk_dylibs[di]) + 1, 8)
+		di = di + 1
+	}
+	let ncmds = NCMDS + len(lk_dylibs) - 1
+	let cmds_size = CMDS_SIZE + extra_cmds
 
 	// Addresses: code, stubs, strings, then the data segment.
-	let text_off = align_up(32 + CMDS_SIZE, 16)
+	let text_off = align_up(32 + cmds_size, 16)
 	let text_addr = TEXT_BASE + text_off
 	lk_labels = slice_filled(g_labels + 1, 0)
 	mut pc = text_addr
@@ -193,6 +276,7 @@ fn write_executable(path str) {
 	buf_byte(bind_, 0x11)
 	i = 0
 	for i < nimp {
+		bind_ordinal(bind_, lk_ords[i])
 		buf_byte(bind_, 0x40)
 		buf_byte(bind_, '_')
 		buf_str(bind_, lk_imports[i].name)
@@ -255,8 +339,8 @@ fn write_executable(path str) {
 	put32(mo + 4, 0x0100000c)
 	put32(mo + 8, 0)
 	put32(mo + 12, 2)
-	put32(mo + 16, NCMDS)
-	put32(mo + 20, CMDS_SIZE)
+	put32(mo + 16, ncmds)
+	put32(mo + 20, cmds_size)
 	put32(mo + 24, 0x00200085)
 	mut p = mo + 32
 	p = w_segment(p, "__PAGEZERO", 0, TEXT_BASE, 0, 0, 0, 0)
@@ -313,6 +397,11 @@ fn write_executable(path str) {
 	put32(p + 20, 0x10000)
 	w_name16(p + 24, "/usr/lib/libSystem.B.dylib")
 	p = p + 56
+	mut dk = 1
+	for dk < len(lk_dylibs) {
+		p = w_dylib(p, lk_dylibs[dk])
+		dk = dk + 1
+	}
 	put32(p, 0x1d)
 	put32(p + 4, 16)
 	put32(p + 8, sig_off)

@@ -1,0 +1,43 @@
+toolchain/tests/edition1/tokens.tin:1:1 KEYWORD "package"
+toolchain/tests/edition1/tokens.tin:1:9 IDENT "main"
+toolchain/tests/edition1/tokens.tin:3:1 PUNCT ";" synthetic
+toolchain/tests/edition1/tokens.tin:3:1 KEYWORD "import"
+toolchain/tests/edition1/tokens.tin:3:8 STRING "say"
+toolchain/tests/edition1/tokens.tin:6:1 PUNCT ";" synthetic
+toolchain/tests/edition1/tokens.tin:6:1 KEYWORD "fn"
+toolchain/tests/edition1/tokens.tin:6:4 IDENT "main"
+toolchain/tests/edition1/tokens.tin:6:8 PUNCT "("
+toolchain/tests/edition1/tokens.tin:6:9 PUNCT ")"
+toolchain/tests/edition1/tokens.tin:6:11 PUNCT "{"
+toolchain/tests/edition1/tokens.tin:7:2 KEYWORD "let"
+toolchain/tests/edition1/tokens.tin:7:6 IDENT "s"
+toolchain/tests/edition1/tokens.tin:7:8 PUNCT "="
+toolchain/tests/edition1/tokens.tin:7:10 STRING "a\"b\n"
+toolchain/tests/edition1/tokens.tin:8:2 PUNCT ";" synthetic
+toolchain/tests/edition1/tokens.tin:8:2 KEYWORD "let"
+toolchain/tests/edition1/tokens.tin:8:6 IDENT "raw"
+toolchain/tests/edition1/tokens.tin:8:10 PUNCT "="
+toolchain/tests/edition1/tokens.tin:8:12 STRING "r" raw
+toolchain/tests/edition1/tokens.tin:9:2 PUNCT ";" synthetic
+toolchain/tests/edition1/tokens.tin:9:2 KEYWORD "let"
+toolchain/tests/edition1/tokens.tin:9:6 IDENT "brace"
+toolchain/tests/edition1/tokens.tin:9:12 PUNCT "="
+toolchain/tests/edition1/tokens.tin:9:14 STRING "{{x}}"
+toolchain/tests/edition1/tokens.tin:10:2 PUNCT ";" synthetic
+toolchain/tests/edition1/tokens.tin:10:2 IDENT "say"
+toolchain/tests/edition1/tokens.tin:10:5 PUNCT "."
+toolchain/tests/edition1/tokens.tin:10:6 IDENT "Line"
+toolchain/tests/edition1/tokens.tin:10:10 PUNCT "("
+toolchain/tests/edition1/tokens.tin:10:11 IDENT "s"
+toolchain/tests/edition1/tokens.tin:10:12 PUNCT ","
+toolchain/tests/edition1/tokens.tin:10:14 INT "0x2a"
+toolchain/tests/edition1/tokens.tin:10:18 PUNCT ","
+toolchain/tests/edition1/tokens.tin:10:20 FLOAT "1.5"
+toolchain/tests/edition1/tokens.tin:10:23 PUNCT ","
+toolchain/tests/edition1/tokens.tin:10:25 INT "200" unit=ms
+toolchain/tests/edition1/tokens.tin:10:30 PUNCT ","
+toolchain/tests/edition1/tokens.tin:10:32 INT "1_000"
+toolchain/tests/edition1/tokens.tin:10:37 PUNCT ")"
+toolchain/tests/edition1/tokens.tin:11:1 PUNCT ";" synthetic
+toolchain/tests/edition1/tokens.tin:11:1 PUNCT "}"
+toolchain/tests/edition1/tokens.tin:12:1 PUNCT ";" synthetic
