@@ -1,0 +1,220 @@
+package main
+
+import "quarry"
+import "say"
+import "tinfmt"
+import "twine"
+
+// tin fmt: format Tin files (the whitespace rules of packages/tinfmt).
+//
+//	fmt [-l] [-d] [-w] FILE.tin...   -l lists the files that would change, -d prints what would change as a diff,
+//	                                 -w rewrites them (the default without -l and -d)
+//	fmt -stdin                       formats standard input to standard output
+//
+// A file that is not UTF-8 text is left alone. The exit status is 0, or 1 when -l or -d found a file to change, or 2
+// for a usage error or a file that could not be read or written.
+
+// warn prints a line on standard error.
+fn warn(msg str) {
+	quarry.WriteFile("/dev/stderr", msg + "\n") catch _ {
+	}
+}
+
+// lines splits text into its lines (a final newline does not start one more).
+fn lines(text str) []str {
+	let parts = twine.Split(text, "\n")
+	if len(parts) > 0 && len(parts[len(parts) - 1]) == 0 {
+		return parts[:len(parts) - 1]
+	}
+	return parts
+}
+
+// hunk output: the changed lines of one file with 3 lines of context around each change.
+fn diff(path str, old str, fresh str) str {
+	let a = lines(old)
+	let b = lines(fresh)
+	// the edit script: for each step 0 keeps a line, 1 deletes one of a, 2 inserts one of b
+	mut kinds = []i64{}
+	mut i = 0
+	mut j = 0
+	for i < len(a) || j < len(b) {
+		if i < len(a) && j < len(b) && a[i] == b[j] {
+			kinds = append(kinds, 0)
+			i += 1
+			j += 1
+			continue
+		}
+		// resynchronize on the nearest line the two sides share
+		mut best = -1
+		mut bestDelete = 0
+		mut bestInsert = 0
+		for k in 1..60 {
+			if i + k < len(a) && j < len(b) && a[i + k] == b[j] {
+				best = k
+				bestDelete = k
+				bestInsert = 0
+				break
+			}
+			if j + k < len(b) && i < len(a) && b[j + k] == a[i] {
+				best = k
+				bestDelete = 0
+				bestInsert = k
+				break
+			}
+		}
+		if best < 0 {
+			if i < len(a) {
+				bestDelete = 1
+			}
+			if j < len(b) {
+				bestInsert = 1
+			}
+		}
+		mut d = 0
+		for d < bestDelete {
+			kinds = append(kinds, 1)
+			i += 1
+			d += 1
+		}
+		mut e = 0
+		for e < bestInsert {
+			kinds = append(kinds, 2)
+			j += 1
+			e += 1
+		}
+	}
+	// hunks: runs of changes with 3 lines of context, merged when they touch
+	mut out = "--- " + path + "\n+++ " + path + "\n"
+	let n = len(kinds)
+	mut at = 0
+	for at < n {
+		if kinds[at] == 0 {
+			at += 1
+			continue
+		}
+		// the hunk covers changes until 6 unchanged lines in a row
+		mut start = at
+		mut end = at
+		mut scan = at
+		for scan < n {
+			if kinds[scan] != 0 {
+				end = scan
+			} else if scan - end > 6 {
+				break
+			}
+			scan += 1
+		}
+		start = max(0, start - 3)
+		let stop = min(n, end + 4)
+		// line numbers of the hunk's first line on each side
+		mut ai = 0
+		mut bi = 0
+		for s in 0..start {
+			if kinds[s] != 2 {
+				ai += 1
+			}
+			if kinds[s] != 1 {
+				bi += 1
+			}
+		}
+		mut na = 0
+		mut nb = 0
+		mut body = ""
+		mut x = ai
+		mut y = bi
+		for s in start..stop {
+			if kinds[s] == 0 {
+				body = body + " " + a[x] + "\n"
+				x += 1
+				y += 1
+				na += 1
+				nb += 1
+			} else if kinds[s] == 1 {
+				body = body + "-" + a[x] + "\n"
+				x += 1
+				na += 1
+			} else {
+				body = body + "+" + b[y] + "\n"
+				y += 1
+				nb += 1
+			}
+		}
+		out = out + "@@ -" + say.Str(ai + 1) + "," + say.Str(na) + " +" + say.Str(bi + 1) + "," + say.Str(nb) + " @@\n" + body
+		at = stop
+	}
+	return out
+}
+
+fn main() {
+	let args = quarry.Args()
+	mut list = false
+	mut showDiff = false
+	mut write = false
+	mut stdin = false
+	mut files = []str{}
+	for k in 1..len(args) {
+		let a = args[k]
+		if a == "-l" {
+			list = true
+		} else if a == "-d" {
+			showDiff = true
+		} else if a == "-w" {
+			write = true
+		} else if a == "-stdin" {
+			stdin = true
+		} else if len(a) > 1 && a[0] == '-' {
+			warn("tin fmt: unknown option " + a)
+			quarry.Exit(2)
+		} else {
+			files = append(files, a)
+		}
+	}
+	if stdin {
+		let text = quarry.ReadStdin() catch _ {
+			warn("tin fmt: cannot read standard input")
+			quarry.Exit(2)
+			return
+		}
+		say.Out("%s", tinfmt.Format(text))
+		return
+	}
+	if len(files) == 0 {
+		warn("usage: tin fmt [-l] [-d] [-w] FILE.tin... | tin fmt -stdin")
+		quarry.Exit(2)
+	}
+	if !list && !showDiff {
+		write = true
+	}
+	mut changed = 0
+	mut failed = 0
+	for path in files {
+		let text = quarry.ReadFile(path) catch _ {
+			warn("tin fmt: cannot read " + path)
+			failed += 1
+			continue
+		}
+		let fresh = tinfmt.Format(text)
+		if fresh == text {
+			continue
+		}
+		changed += 1
+		if list {
+			say.Line(path)
+		}
+		if showDiff {
+			say.Out("%s", diff(path, text, fresh))
+		}
+		if write {
+			quarry.WriteFile(path, fresh) catch _ {
+				warn("tin fmt: cannot write " + path)
+				failed += 1
+			}
+		}
+	}
+	if failed > 0 {
+		quarry.Exit(2)
+	}
+	if changed > 0 && (list || showDiff) && !write {
+		quarry.Exit(1)
+	}
+}

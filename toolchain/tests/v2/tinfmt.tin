@@ -1,0 +1,33 @@
+package main
+
+import "say"
+import "tinfmt"
+import "twine"
+
+fn show(name str, src str) {
+	// a ~ in the sources stands for a backquote (a raw string cannot hold one)
+	let once = tinfmt.Format(twine.ReplaceAll(src, "~", "`"))
+	say.Line("==", name)
+	say.Out("%s", once)
+	if tinfmt.Format(once) != once {
+		say.Line("NOT IDEMPOTENT")
+	}
+}
+
+// What tin fmt changes (whitespace only) and what it leaves: indentation by bracket depth, one blank line at most,
+// spacing after commas and around = and the comparison and logical operators, the space after //.
+fn main() {
+	show("indent", "package main\n\nfn main() {{\n    let x=1\n  if x==1 {{\n\t\tsay.Line(\"a\",x)\n    }}  \n}}\n")
+	show("blank lines", "\n\npackage main\n\n\n\nfn f() {{\n\n\tlet a = 1\n\n\n\tlet b = 2\n\n}}\n\n\n")
+	show("one level for several brackets", "fn main() {{\n\tshow(\"x\", fn() str {{\n\t\treturn \"y\"\n\t}})\n\tlet xs = []i64{{1, 2,\n\t\t3, 4}}\n}}\n")
+	show("else and closers", "fn f() {{\n\tif a {{\n\t\tb()\n\t}} else if c {{\n\t\td()\n\t}} else {{\n\t\te()\n\t}}\n}}\n")
+	show("comments", "//comment\nfn f() {{\n\tx := 1 //trailing\n\t//// kept\n\t/// kept too\n}}\n")
+	show("spacing", "fn f() {{\n\tlet a=b+c\n\tx +=1\n\tif a!=b&&c<=d||e>=f {{\n\t}}\n\ty :=z\n\tm = f(a ,b,c)\n}}\n")
+	show("wrapping arithmetic", "fn f() {{\n\th *%= 31\n\th +%= x\n\th -%= y\n\th = h *% 3\n}}\n")
+	show("strings and runes", "fn f() {{\n\tlet s = \"a,b=c //not a comment {{\"\n\tlet r = ','\n\tlet q = '\\''\n\tlet e = \"quote \\\" ,x\"\n}}\n")
+	show("raw strings", "fn f() {{\n\tlet s = ~line one\n   keeps its   spaces,\n\t// and this\n}}\n~\n\tg(1,2)\n}}\n")
+	show("continued expressions", "fn f() {{\n\tlet ok = a &&\n\tb &&\n\tc\n\tlet n = x +\n\t\ty\n\tz := obj\n\t.Method()\n}}\n")
+	show("crlf and no final newline", "package main\r\n\r\nfn f() {{\r\n    return\r\n}}")
+	show("empty", "")
+	show("only blanks", "\n\n  \n")
+}

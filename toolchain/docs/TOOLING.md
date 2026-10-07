@@ -104,6 +104,28 @@ tinc [-o OUT] [-S] [-edition 1] [-target darwin-arm64|linux-arm64|linux-amd64] F
 - `TINC_TRACE=1` prints each function as it is generated (to find which one crashes the
   code generator).
 
+### 3.2 Formatting: `tin fmt`
+
+`tin fmt` (the package `packages/tinfmt`, the command `tools/fmt`) rewrites whitespace and nothing else: formatting never
+changes a token (`tinc -tokens` of the file is the same before and after, which `tools/ci/test_tinfmt.py` checks over the
+tests and the examples) and formatting twice changes nothing. The rules:
+
+- **Indentation** is tabs, one level for each line that has an open bracket (`(`, `[`, `{`), so `f(a, fn() {` indents its
+  body once, and a line that starts by closing brackets (`}`, `})`, `} else {`) is indented as the line that opened them. A
+  line that continues an expression (the line before ends in a binary operator or `=`, or it starts with `&&`, `||` or `.name`)
+  is indented one more level.
+- **Trailing whitespace** is removed; `\r\n` becomes `\n`; the file ends with one newline.
+- **Blank lines**: at most one in a row, none at the start of the file, after an opening bracket or before a closing one.
+- **`//`** is followed by one space (`///` and `////` are left alone) and preceded by one space after code.
+- **Commas** are followed by one space and not preceded by one.
+- **Operators** `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`, `+%=`, `-%=`, `*%=`, `==`, `!=`,
+  `<=`, `>=`, `&&`, `||` and `=>` have one space on each side where there was none. Arithmetic operators are left as written.
+- **Left as written**: the spaces inside a line (so aligned fields and aligned trailing comments stay aligned), strings, raw
+  strings (every line of one, including its indentation), rune literals, the order and line breaks of the code.
+
+The tree has not been converted: `tin fmt -l toolchain packages` lists the files that differ (about one in eight).
+Converting them is a one-commit change for the maintainers to announce (like #226), after which `tin fmt -l` can gate CI.
+
 ## 4. Make targets
 
 | target | does |

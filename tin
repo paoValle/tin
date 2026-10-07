@@ -10,6 +10,7 @@
 #   tin test [-bench] [-run REGEX] [-json] [DIR]  run DIR's *_test.tin tests (TestXxx, BenchmarkXxx)
 #   tin replay CAPSULE --against BUILD [--live KIND]... [--save-test NAME --issue N]  replay a recorded request
 #   tin vendor [DIR]                copy tin.mod's requires into vendor/ and write tin.lock
+#   tin fmt [-l] [-d] [-w] FILE.tin... | DIR | -stdin   format source: the canonical whitespace
 #   tin caps FILE.tin...            print the capabilities each package can reach
 #   tin suite                       run the compiler's strict test suite (toolchain/tests/v2)
 #   tin bootstrap                   rebuild the compiler with itself and check the fixed point
@@ -66,6 +67,18 @@ case $1 in
   asm)
     shift
     "$tinc" -S "$@" ;;
+  fmt)
+    # tin fmt: the formatter (tools/fmt, packages/tinfmt) built here; a directory stands for the .tin files under it
+    shift
+    exe=$cache/tinfmt.$$; list=$cache/tinfmt.$$.list; trap 'rm -f "$exe" "$list"' EXIT
+    "$tinc" -o "$exe" "$root/tools/fmt/main.tin"
+    : > "$list"
+    for a do
+      if [ -d "$a" ]; then find "$a" -name '*.tin' -type f | sort >> "$list"; else printf '%s\n' "$a" >> "$list"; fi
+    done
+    set --
+    while IFS= read -r a; do set -- "$@" "$a"; done < "$list"
+    "$exe" "$@" ;;
   caps)
     shift
     [ $# -gt 0 ] || { echo "tin: caps: no files" >&2; exit 2; }

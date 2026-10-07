@@ -1,0 +1,92 @@
+== indent
+package main
+
+fn main() {
+	let x = 1
+	if x == 1 {
+		say.Line("a", x)
+	}
+}
+== blank lines
+package main
+
+fn f() {
+	let a = 1
+
+	let b = 2
+}
+== one level for several brackets
+fn main() {
+	show("x", fn() str {
+		return "y"
+	})
+	let xs = []i64{1, 2,
+		3, 4}
+}
+== else and closers
+fn f() {
+	if a {
+		b()
+	} else if c {
+		d()
+	} else {
+		e()
+	}
+}
+== comments
+// comment
+fn f() {
+	x := 1 // trailing
+	//// kept
+	/// kept too
+}
+== spacing
+fn f() {
+	let a = b+c
+	x += 1
+	if a != b && c <= d || e >= f {
+	}
+	y := z
+	m = f(a, b, c)
+}
+== wrapping arithmetic
+fn f() {
+	h *%= 31
+	h +%= x
+	h -%= y
+	h = h *% 3
+}
+== strings and runes
+fn f() {
+	let s = "a,b=c //not a comment {"
+	let r = ','
+	let q = '\''
+	let e = "quote \" ,x"
+}
+== raw strings
+fn f() {
+	let s = `line one
+   keeps its   spaces,
+	// and this
+}
+`
+	g(1, 2)
+}
+== continued expressions
+fn f() {
+	let ok = a &&
+		b &&
+		c
+	let n = x +
+		y
+	z := obj
+		.Method()
+}
+== crlf and no final newline
+package main
+
+fn f() {
+	return
+}
+== empty
+== only blanks

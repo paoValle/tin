@@ -1,0 +1,320 @@
+package tinfmt
+
+import "twine"
+
+// Package tinfmt is the canonical layout of Tin source (toolchain/docs/TOOLING.md, "Formatting"): the whitespace of a
+// file, and nothing else. It changes the indentation (tabs, by bracket depth, one more level for a line that continues
+// an expression), trailing whitespace, runs of blank lines, the space after `//` and after a comma, and the space
+// around the assignment, comparison and logical operators, and keeps every other byte: the alignment of fields and of
+// trailing comments, strings, raw strings, the order and line breaks of the code. Format is idempotent.
+
+// result is what scan makes of one line.
+type result struct {
+	text       str  // the line with its spacing fixed (no indentation)
+	raw        bool // the line ends inside a raw string that goes on
+	events     []u8 // the brackets in order (outside strings and comments): 'o' opens one, 'c' closes one
+	leadCloses i64  // closing brackets the line starts with
+	comment    bool // nothing but a comment
+	endsOp     bool // the code ends in an operator, so the next line continues it
+	startsOp   bool // the code starts with an operator that continues the previous line
+	endsOpen   bool // the code ends with an opening bracket
+}
+
+// operators that get a space on each side, longest first.
+fn operatorAt(s str, i i64) str {
+	if i + 3 <= len(s) {
+		let three = s[i:i + 3]
+		if three == "<<=" || three == ">>=" || three == "+%=" || three == "-%=" || three == "*%=" {
+			return three
+		}
+	}
+	if i + 2 <= len(s) {
+		let two = s[i:i + 2]
+		if two == "&&" || two == "||" || two == "==" || two == "!=" || two == "<=" || two == ">=" || two == ":=" || two == "+=" || two == "-=" || two == "*=" || two == "/=" || two == "%=" || two == "&=" || two == "|=" || two == "^=" || two == "=>" {
+			return two
+		}
+	}
+	if s[i] == '=' {
+		return "="
+	}
+	return ""
+}
+
+fn isSpace(c u8) bool {
+	return c == ' ' || c == '\t'
+}
+
+fn isCloser(c u8) bool {
+	return c == ')' || c == ']' || c == '}'
+}
+
+// trimRight drops trailing spaces and tabs from the bytes.
+fn trimRight(b []u8) []u8 {
+	mut n = len(b)
+	for n > 0 && isSpace(b[n - 1]) {
+		n -= 1
+	}
+	return b[:n]
+}
+
+// scan rewrites the spacing of one line; rawIn says the line starts inside a raw string.
+fn scan(s str, rawIn bool) result {
+	let r = result{text: "", raw: false, events: []u8{}, leadCloses: 0, comment: false, endsOp: false, startsOp: false, endsOpen: false}
+	mut o = []u8{}
+	mut i = 0
+	mut lastCode = u8(0)
+	mut firstCode = false
+	mut lead = true
+	mut codeEnd = 0 // length of o without a trailing comment
+	if rawIn {
+		for i < len(s) && s[i] != '`' {
+			o = append(o, s[i])
+			i += 1
+		}
+		if i >= len(s) {
+			r.text = str(o)
+			r.raw = true
+			return r
+		}
+		o = append(o, s[i])
+		i += 1
+		lead = false
+		firstCode = true
+	}
+	for i < len(s) {
+		let c = s[i]
+		if c == '/' && i + 1 < len(s) && s[i + 1] == '/' {
+			// a comment: one space before it after code, one space after the slashes
+			if len(o) > 0 && !isSpace(o[len(o) - 1]) {
+				o = append(o, ' ')
+			}
+			codeEnd = len(o)
+			o = append(o, '/')
+			o = append(o, '/')
+			i += 2
+			if i < len(s) && !isSpace(s[i]) && s[i] != '/' {
+				o = append(o, ' ')
+			}
+			let rest = trimRight([]u8(s[i:]))
+			for k in 0..len(rest) {
+				o = append(o, rest[k])
+			}
+			i = len(s)
+			if !firstCode {
+				r.comment = true
+			}
+			break
+		}
+		if !firstCode && isSpace(c) {
+			i += 1
+			continue
+		}
+		if !firstCode {
+			firstCode = true
+			if c == '.' && i + 1 < len(s) && ((s[i + 1] >= 'a' && s[i + 1] <= 'z') || (s[i + 1] >= 'A' && s[i + 1] <= 'Z')) {
+				r.startsOp = true
+			}
+			if (c == '&' || c == '|') && i + 1 < len(s) && s[i + 1] == c {
+				r.startsOp = true
+			}
+		}
+		if lead && isCloser(c) {
+			r.leadCloses += 1
+		} else {
+			lead = false
+		}
+		if c == '"' {
+			// a string: its bytes stay as they are
+			o = append(o, c)
+			i += 1
+			for i < len(s) && s[i] != '"' {
+				if s[i] == '\\' && i + 1 < len(s) {
+					o = append(o, s[i])
+					i += 1
+				}
+				o = append(o, s[i])
+				i += 1
+			}
+			if i < len(s) {
+				o = append(o, s[i])
+				i += 1
+			}
+			lastCode = '"'
+			continue
+		}
+		if c == '`' {
+			o = append(o, c)
+			i += 1
+			for i < len(s) && s[i] != '`' {
+				o = append(o, s[i])
+				i += 1
+			}
+			if i < len(s) {
+				o = append(o, s[i])
+				i += 1
+				lastCode = '`'
+				continue
+			}
+			r.raw = true
+			r.text = str(o)
+			return r
+		}
+		if c == '\'' {
+			// a rune literal: 'x' or '\x', else the quote is just copied
+			mut j = i + 1
+			if j < len(s) && s[j] == '\\' {
+				j += 2
+			} else if j < len(s) {
+				j += 1
+				for j < len(s) && (i64(s[j]) & 0xc0) == 0x80 {
+					j += 1
+				}
+			}
+			if j < len(s) && s[j] == '\'' {
+				for k in i..j + 1 {
+					o = append(o, s[k])
+				}
+				i = j + 1
+				lastCode = '\''
+				continue
+			}
+		}
+		if c == '(' || c == '[' || c == '{' {
+			r.events = append(r.events, 'o')
+		} else if isCloser(c) {
+			r.events = append(r.events, 'c')
+		}
+		if c == ',' {
+			o = trimRight(o)
+			o = append(o, c)
+			i += 1
+			if i < len(s) && !isSpace(s[i]) && !isCloser(s[i]) {
+				o = append(o, ' ')
+			}
+			lastCode = ','
+			continue
+		}
+		let op = operatorAt(s, i)
+		if len(op) > 0 {
+			if len(o) > 0 && !isSpace(o[len(o) - 1]) {
+				o = append(o, ' ')
+			}
+			for k in 0..len(op) {
+				o = append(o, op[k])
+			}
+			i += len(op)
+			if i < len(s) && !isSpace(s[i]) {
+				o = append(o, ' ')
+			}
+			lastCode = op[len(op) - 1]
+			continue
+		}
+		if !isSpace(c) {
+			lastCode = c
+		}
+		o = append(o, c)
+		i += 1
+	}
+	if codeEnd == 0 && !r.comment {
+		codeEnd = len(o)
+	}
+	o = trimRight(o)
+	r.text = str(o)
+	// does the code end in an operator or an opening bracket?
+	let code = trimRight(o[:min(codeEnd, len(o))])
+	if len(code) > 0 {
+		let last = code[len(code) - 1]
+		r.endsOpen = last == '(' || last == '[' || last == '{'
+		r.endsOp = last == '+' || last == '-' || last == '*' || last == '/' || last == '%' || last == '&' || last == '|' || last == '^' || last == '=' || last == '<' || last == '>'
+		// "x >" can end a generic argument list; a line cannot, in Tin
+	}
+	return r
+}
+
+// indentLevel is how many lines still have an open bracket: a line that opens several brackets indents once.
+fn indentLevel(open []i64) i64 {
+	mut n = 0
+	mut last = -1
+	for line in open {
+		if line != last {
+			n += 1
+			last = line
+		}
+	}
+	return n
+}
+
+// Format returns the canonical form of the source: tabs for indentation, no trailing whitespace, at most one blank
+// line in a row and none after an opening bracket, before a closing one or at either end of the file, and a final
+// newline.
+fn Format(src str) str {
+	let text = twine.ReplaceAll(src, "\r\n", "\n")
+	let lines = twine.Split(text, "\n")
+	mut out = []str{}
+	mut raw = false
+	mut open = []i64{} // the line each open bracket was opened on
+	mut cont = false
+	mut opens = false
+	mut pendingBlank = false
+	for n, line in lines {
+		if raw {
+			// the inside of a raw string is not ours to change
+			let r = scan(line, true)
+			out = append(out, r.text)
+			raw = r.raw
+			for e in r.events {
+				open = applyEvent(open, e, n)
+			}
+			cont = r.endsOp
+			opens = r.endsOpen
+			continue
+		}
+		let r = scan(line, false)
+		if len(r.text) == 0 {
+			if len(out) > 0 {
+				pendingBlank = true
+			}
+			cont = false
+			continue
+		}
+		if pendingBlank && !opens && r.leadCloses == 0 {
+			out = append(out, "")
+		}
+		pendingBlank = false
+		// the brackets the line starts by closing do not indent it
+		mut k = 0
+		for k < len(r.events) && k < r.leadCloses {
+			open = applyEvent(open, r.events[k], n)
+			k += 1
+		}
+		mut level = indentLevel(open)
+		if !r.comment && (cont || r.startsOp) {
+			level += 1
+		}
+		out = append(out, twine.Repeat("\t", level) + r.text)
+		raw = r.raw
+		for k < len(r.events) {
+			open = applyEvent(open, r.events[k], n)
+			k += 1
+		}
+		if !r.comment {
+			cont = r.endsOp
+			opens = r.endsOpen
+		}
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	return twine.Join(out, "\n") + "\n"
+}
+
+// applyEvent opens a bracket on line n or closes the innermost one.
+fn applyEvent(open []i64, e u8, n i64) []i64 {
+	if e == 'o' {
+		return append(open, n)
+	}
+	if len(open) > 0 {
+		return open[:len(open) - 1]
+	}
+	return open
+}
