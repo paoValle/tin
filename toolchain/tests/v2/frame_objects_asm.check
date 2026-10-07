@@ -1,0 +1,11 @@
+# #633: a struct literal whose local never leaves the function is a zeroed frame area, so a loop
+# of them calls no allocator; one passed to a parameter that is returned still allocates.
+[arm64]
+CHECK: (?m)^_contained:
+CHECK-NOT: rt_alloc
+CHECK: (?m)^_escapes:
+CHECK: bl _rt_alloc
+CHECK: (?m)^_main\.main:
+
+[amd64]
+CHECK: (?ms)# L(?P<c>[0-9]+): contained$.*?# L(?P<e>[0-9]+): escapes$.*?# L(?P<m>[0-9]+): main\.main$.*?^L(?P=c):\n(?:(?!rt_alloc)(?!^L(?P=e):$)[\s\S])*^L(?P=e):\n(?:(?!^L(?P=m):$)[\s\S])*?rt_alloc

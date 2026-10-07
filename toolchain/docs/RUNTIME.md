@@ -132,6 +132,11 @@ startup allocations and mappings. Without that explicit flag the variable is ign
 - Each extra core runs `__core_init` (the per-core global initializers) in ingot mode,
   then switches to its pool.
 
+**Frame objects (#633).** A struct literal of up to 128 bytes whose local never leaves its
+function (design/design_escape.md section 2) is not allocated: the compiler gives it a frame
+area, zeroed where the literal runs, and the object is its address. No runtime call is made;
+nothing in the runtime ever sees such an object.
+
 **Loop iterations (#633).** A loop whose iterations keep nothing they allocate (the compiler
 proves it after the region pass, design/design_escape.md section 3) reads context words 0, 9
 and 15 when each iteration starts, and when the first two moved by its end (or a `break`,

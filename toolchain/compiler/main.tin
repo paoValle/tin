@@ -944,6 +944,8 @@ fn compiler_main(argc i64, argv i64) i64 {
 	}
 	// Loops whose iterations keep nothing they make give it back each time (#633).
 	loop_pools()
+	// Struct literals that never leave their function live in its frame (#633).
+	frame_objects()
 	rc_mark()
 	if error_count > 0 {
 		return 1

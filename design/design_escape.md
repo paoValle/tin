@@ -70,6 +70,23 @@ E905 ceiling (#570) less a margin: an object over 4 KiB, or a function whose fra
 pass 64 KiB, keeps the pool for the rest (large frames cost a stack probe per page and wreck the
 cache; 64 KiB is well under the 16 MiB arm64 limit and Tin's task stacks).
 
+*As built (phase 1).* `frame_objects` runs after the region pass and the loop scan of §3. A
+candidate is a `let` or `mut` bound to a reference struct literal. It is contained when every
+use of the local:
+- reads or writes a field;
+- compares its address;
+- is a `keep` or a generated printing, comparing or key helper;
+- or is an argument of a direct call whose summary shows that parameter reaching no result and
+  no held pair, with the new may-keep word (§3) clear.
+
+A rebinding of the local, a capture, an indirect or `dyn` call, a conversion, a function literal,
+and a statement the pass does not know (`fail`, `defer`, `select`) all keep the pool.
+
+The literal's `rt_alloc` becomes a frame area typed as a value-struct twin of the struct (so both
+back ends home and zero it as #631 does), and the object is that area's address. The limits are
+tighter than above while the zeroing is unrolled: 128 bytes per object and 512 per function.
+That keeps deep recursion within the 256 KiB task stacks.
+
 **Slices.** A frame slice (phase 1b) starts with a frame buffer of its constant capacity; its
 header's region word says "frame". `append` past the capacity copies into the pool, as appending
 to a slice whose backing it does not own does today (`rt_own`), so a slice that grows stays

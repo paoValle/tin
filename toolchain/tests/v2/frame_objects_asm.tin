@@ -1,0 +1,41 @@
+package main
+
+import "say"
+
+type P struct {
+	x i64
+	y i64
+}
+
+fn dist(a P, b P) i64 {
+	return (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)
+}
+
+fn ident(p P) P {
+	return p
+}
+
+// contained: both literals stay in the frame, so the loop calls no allocator.
+fn contained(n i64) i64 {
+	mut total = 0
+	for i in 0..n {
+		let p = P{x: i, y: 2 * i}
+		let q = P{x: 1, y: 1}
+		total += dist(p, q)
+	}
+	return total
+}
+
+// escapes: the literal goes back to the caller through ident, so it stays in the pool.
+fn escapes(n i64) i64 {
+	mut total = 0
+	for i in 0..n {
+		let p = P{x: i, y: i}
+		total += ident(p).x
+	}
+	return total
+}
+
+fn main() {
+	say.Line(contained(10), escapes(10))
+}

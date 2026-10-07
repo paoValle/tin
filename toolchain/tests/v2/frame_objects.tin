@@ -1,0 +1,138 @@
+package main
+
+import "say"
+
+// #633 phase 1: a struct literal bound to a local that never leaves its function lives in the
+// frame. Every way it can leave keeps it in the pool, and both behave the same.
+
+type P struct {
+	x    i64
+	y    i64
+	name str
+}
+
+type Box struct {
+	inner P
+	tag   str
+}
+
+type Node struct {
+	v    i64
+	next ?Node
+}
+
+shape Named {
+	label() str
+}
+
+fn (p P) sum() i64 {
+	return p.x + p.y
+}
+
+fn (p mut P) shift(d i64) {
+	p.x += d
+	p.y -= d
+}
+
+fn (p P) label() str {
+	return "P{p.x}"
+}
+
+fn dist(a P, b P) i64 {
+	return (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)
+}
+
+fn same_name(a P, b P) bool {
+	return a.name == b.name
+}
+
+fn ident(p P) P {
+	return p
+}
+
+fn wrap(p P) Box {
+	return Box{inner: p, tag: "w"}
+}
+
+fn push(list mut []P, p P) {
+	list = append(list, p)
+}
+
+fn link(a mut Node, b Node) {
+	a.next = b
+}
+
+fn depth(n i64) i64 {
+	let p = P{x: n, y: n}
+	if n == 0 {
+		return p.sum()
+	}
+	let r = depth(n - 1)
+	// p is still this activation's own after the recursive call.
+	return r + p.x
+}
+
+mut saved []P = []P{}
+
+fn main() {
+	// Contained: fields read and written, methods, comparisons, a mut receiver.
+	mut total = 0
+	for i in 0..100 {
+		let p = P{x: i, y: 2 * i}
+		mut q = P{x: 1, y: 1, name: "q{i % 3}"}
+		q.shift(i)
+		q.x = q.x + p.y
+		total += p.sum() + dist(p, q) + len(q.name)
+		if same_name(p, q) {
+			total += 1000000
+		}
+	}
+	say.Line("contained", total)
+
+	// Each run of a literal starts from zero: fields left out are zero every time.
+	mut seen = ""
+	for i in 0..3 {
+		mut p = P{x: i}
+		seen = seen + "{p.y}{len(p.name)} "
+		p.y = 7
+		p.name = "set"
+	}
+	say.Line("zeroed", seen)
+
+	// Escapes: returned, wrapped, appended, stored, linked, kept, as a shape value, captured.
+	mut out = []P{}
+	mut boxes = []Box{}
+	mut list = []P{}
+	mut held = P{x: -1, y: -1}
+	for i in 0..3 {
+		let a = P{x: i, y: 10 + i, name: "a"}
+		out = append(out, ident(a))
+		let b = P{x: 20 + i, y: 0, name: "b"}
+		boxes = append(boxes, wrap(b))
+		let c = P{x: 30 + i, y: 0, name: "c"}
+		push(mut list, c)
+		let d = P{x: 40 + i, y: 0, name: "d"}
+		held = d
+		let e = P{x: 50 + i, y: 0, name: "e"}
+		saved = append(saved, keep(e))
+	}
+	say.Line(out, boxes, list, held, saved)
+
+	mut head = Node{v: 0}
+	for i in 1..4 {
+		let n = Node{v: i}
+		link(mut head, n)
+		if let m = head.next {
+			say.Text(m.v, " ")
+		}
+	}
+	say.Line(head.v)
+
+	let s = P{x: 7, y: 8}
+	let shown dyn Named = s
+	let c = P{x: 9, y: 9, name: "captured"}
+	let f = fn() str {
+		return c.name
+	}
+	say.Line(shown.label(), f(), depth(5))
+}
