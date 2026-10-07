@@ -897,7 +897,11 @@ fn parse_type_base() i64 {
 
 // parse_tparams reads [T constraints.Any, U i64 | f64] into f's (or a type decl's) names and constraints.
 fn parse_tparams(names []str, cons []i64) {
+	let open = cast(Token, p_peek()).pos
 	p_expect("[")
+	if p_is("]") != 0 {
+		p_fail_code(open, "E046 EMPTY_TYPE_PARAMS", "a type parameter list needs at least one parameter")
+	}
 	for p_is("]") == 0 {
 		names = append(names, p_expect_ident().text)
 		mut c = 0

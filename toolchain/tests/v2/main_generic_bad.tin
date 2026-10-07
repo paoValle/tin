@@ -1,0 +1,8 @@
+package main
+
+import "constraints"
+
+// main is not a template (#555): a generic main was never instantiated and crashed the compiler.
+
+fn main[T constraints.Any]() {
+}

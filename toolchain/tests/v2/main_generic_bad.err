@@ -1,0 +1,1 @@
+toolchain/tests/v2/main_generic_bad.tin:7:1: error E121 MAIN_SIGNATURE: main cannot have type parameters

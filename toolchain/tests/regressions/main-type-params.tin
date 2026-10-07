@@ -1,0 +1,8 @@
+package main
+
+import "say"
+
+// fn main[]() crashed the compiler (#555).
+fn main[]() {
+	say.Line(1)
+}
