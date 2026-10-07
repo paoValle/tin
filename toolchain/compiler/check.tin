@@ -813,6 +813,15 @@ fn declare_fn(f Fn) {
 		return
 	}
 	let np = len(f.params)
+	if f.variadic == 1 && f.extern_ == 0 && np > 0 {
+		// Only externs take variadic arguments so far (#558, #562). Inside, the parameter
+		// is the slice it will be, so its uses report nothing more.
+		err_code_at(f.pos, "E295 NOT_YET", "a variadic parameter is not implemented yet (#562): take a []T parameter and pass a slice")
+		let st = cast(TypeExpr, node_new(TX_SLICE, f.pos))
+		st.a = f.ptypes[np - 1]
+		f.ptypes[np - 1] = cast(i64, st)
+		f.variadic = 2
+	}
 	mut ptypes = []i64{}
 	mut i = 0
 	for i < np {

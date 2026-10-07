@@ -1092,26 +1092,28 @@ parameter variadic (`xs ...T`) or pass a slice.
 
 ### E211 VARIADIC_ARG
 
-`xs...` passes a slice as the variadic parameter, so it is the last argument of a call.
+`xs...` passes a slice as the variadic parameter, so it is the last argument of a call to a
+function that has one (`append`; variadic parameters of your own functions are E295 until #562).
 
 ```tin edition=1
 package main
 
-fn sum(base i64, xs ...i64) i64 {
-	return base
+fn first(xs []i64) i64 {
+	return xs[0]
 }
 
 fn main() {
 	let xs = []i64{1, 2}
-	_ = sum(xs..., 3)
+	_ = first(xs...)
 }
 ```
 
 ```text
-example.tin:9:12: error E211 VARIADIC_ARG: ... is only allowed on the last argument of a call
+example.tin:9:14: error E211 VARIADIC_ARG: ... is only allowed on the last argument of a call
 ```
 
-Fix: put the spread slice last, and pass the other values before it.
+Fix: pass the slice itself (`first(xs)`), or put the spread slice last in a call to a variadic
+function.
 
 ### E213 FIELD
 
@@ -2123,6 +2125,29 @@ example.tin:10:7: error E293 MATCH_VALUE: this arm gives no value
 ```
 
 Fix: end each block arm with its value, or leave from it.
+
+### E295 NOT_YET
+
+A few edition 1 forms are read by the parser but not built yet: `opt ?? fallback` (#561)
+and a variadic parameter `xs ...T` in a function that is not `extern` (#562, reported as `a
+variadic parameter is not implemented yet`). Until they are, write the form out another way.
+
+```tin edition=1
+package main
+
+fn main() {
+	let n ?i64 = nil
+	let v = n ?? 5
+	_ = v
+}
+```
+
+```text
+example.tin:5:12: error E295 NOT_YET: opt ?? fallback is not implemented yet (#561): test it with if let v = opt and an else branch (LANGUAGE.md section 9)
+```
+
+Fix: `if let x = n { ... } else { ... }`, or `if n != nil` and the narrowed `n` (section 9);
+for a variadic parameter, take a `[]T` and pass a slice.
 
 ## E3xx Memory and regions
 

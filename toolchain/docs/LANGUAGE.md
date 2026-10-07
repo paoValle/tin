@@ -35,7 +35,8 @@ Contents: 1 Programs and packages · 2 Lexical elements · 3 Types · 4 Constant
 **Status.** A few edition 1 forms are read by the parser but not yet accepted by the
 checker, and are marked *not yet implemented* where they appear: `opt ?? fallback`, `arena`
 blocks (#236), tuple type aliases (`type Pair = (i64, i64)`) and variadic parameters
-(`xs ...i64`). The checker also does not yet reject reassigning a `let` name.
+(`xs ...i64`). The checker reports `??` and variadic parameters as E295 NOT_YET. The checker
+also does not yet reject reassigning a `let` name.
 
 ---
 
