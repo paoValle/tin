@@ -27,13 +27,24 @@ fn chk_kind(e i64, want i64) i64 {
 		if is_f32(cast(Ty, want)) != 0 {
 			// An f32 constant: fold the rounding into the bits.
 			cast(FloatLit, e).bits = round_f32_bits(cast(FloatLit, e).bits)
+			if cast(Ty, want).under != 0 {
+				return want
+			}
 			return ty_f32
+		}
+		if kind_of(cast(Ty, want)) == K_FLOAT && cast(Ty, want).under != 0 {
+			// A literal takes a named float type: c + 1.0 with c a Celsius (#564).
+			return want
 		}
 		return ty_float
 	}
 	if k == EX_STR {
 		if is_query_t(cast(Ty, want)) != 0 {
 			return chk_query(e, want)
+		}
+		if kind_of(cast(Ty, want)) == K_STRING && cast(Ty, want).under != 0 && cast(Ty, want).secret_ == 0 {
+			// A string literal takes a named string type: let n Name = "tin" (#564).
+			return want
 		}
 		return ty_string
 	}
@@ -424,7 +435,13 @@ fn adapt_int(e i64, want_in i64) i64 {
 		cast(FloatLit, e).bits = int_to_float_bits(cast(IntLit, e).val)
 		if is_f32(cast(Ty, want)) != 0 {
 			cast(FloatLit, e).bits = round_f32_bits(cast(FloatLit, e).bits)
+			if cast(Ty, want).under != 0 {
+				return want
+			}
 			return ty_f32
+		}
+		if kind_of(cast(Ty, want)) == K_FLOAT && cast(Ty, want).under != 0 {
+			return want
 		}
 		return ty_float
 	}
@@ -446,6 +463,10 @@ fn chk_ident(e i64, want i64) i64 {
 	let name = cast(IdentExpr, e).name
 	if name == "true" || name == "false" {
 		replace_node(e, mk_int(cast(Node, e).pos, i64(name == "true"), 0))
+		if kind_of(cast(Ty, want)) == K_BOOL && cast(Ty, want).under != 0 {
+			// true and false take a named bool type (#564).
+			return want
+		}
 		return ty_bool
 	}
 	let s = lookup_name(name)
@@ -3899,10 +3920,24 @@ fn chk_conversion(e i64, to Ty) i64 {
 		err_code_type(pos, "E210 ARG_COUNT", "conversion to ", cast(i64, to), " needs exactly one argument")
 		return cast(i64, to)
 	}
+	if to.under != 0 && to.secret_ == 0 {
+		// A named type converts as its underlying type does, then takes the name (#564).
+		let bt = chk_conversion(e, cast(Ty, to.under))
+		if kind_of(cast(Ty, bt)) == K_FLOAT || kind_of(cast(Ty, bt)) == K_INT || cast(i64, bt) == to.under {
+			let inner = expr_clone(e)
+			replace_node(e, mk_conv(pos, inner, CV_SAME, cast(i64, to)))
+		}
+		return cast(i64, to)
+	}
 	let x = arg0(cast(Call, e))
 	let from = cast(Ty, chk(cast(Node, x), cast(i64, to)))
 	if saw_secret != 0 && (is_secret(from) != 0 || is_secret(to) != 0) {
 		return secret_conversion(e, cast(Node, x), from, cast(i64, to))
+	}
+	if from.under != 0 && from.under == cast(i64, to) {
+		// The named type's own value, seen as its underlying type: f64(c), []i64(ids) (#564).
+		replace_node(e, mk_conv(pos, x, CV_SAME, cast(i64, to)))
+		return cast(i64, to)
 	}
 	let fk = kind_of(from)
 	let tk = kind_of(to)

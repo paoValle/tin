@@ -1,0 +1,35 @@
+package main
+
+// A named type converts to and from its underlying type explicitly (#564): it does not mix
+// with it, or with another named type of the same underlying type, in assignments,
+// arguments, arithmetic or comparisons.
+
+type Celsius f64
+type Fahrenheit f64
+type Cents i64
+type Name str
+
+fn show(x f64) f64 {
+	return x
+}
+
+fn union[T i64 | f64](x T) T {
+	return x
+}
+
+fn main() {
+	let c Celsius = 100
+	let f Fahrenheit = 212
+	let p Cents = 5
+	let n Name = "a"
+	let a f64 = c
+	_ = show(c)
+	_ = c + f
+	_ = c == f
+	let i i64 = p
+	let s str = n
+	_ = union(p)
+	_ = a
+	_ = i
+	_ = s
+}

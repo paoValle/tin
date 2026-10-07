@@ -1,0 +1,17 @@
+alias 5
+back 1999 gift true
+celsius 100 101.5 212 true 36.6
+cents 300 251
+convert 100 100 2 399
+enum 0 1 true
+flag true false true
+fmt tin 100.00 250
+generic 6
+ids [3 1 2] 3 3 2 [9]
+json {"id":7,"total":1999,"note":"gift"}
+key one
+lookup map[a:1 b:2] 2
+name tin! 3 true false
+op 42
+range 6
+ratio 0.1 true

@@ -463,6 +463,19 @@ There are no implicit conversions between types. A conversion is a call of the t
 a named type converts to and from its underlying type explicitly. `type Id = i64` is an
 alias: another name for the same type.
 
+- A named number, `bool` or `str` type does not mix with its underlying type or with another
+  named type: `let f f64 = c` and `show(c)` for a `Celsius c` are E230, and so is `c + f` with
+  a `Fahrenheit f`. Convert: `f64(c)`, `Celsius(x)`, `i64(c)`, `Cents(n)`.
+- Constants and literals take the named type their context needs: `let c Celsius = 100`,
+  `c + 1.5`, `let n Name = "tin"`, `n + "!"`, `const Red Color = 0`.
+- Arithmetic and comparison keep the type: `Celsius + Celsius` is a `Celsius`.
+- A named slice, map or func type and its unnamed underlying type assign both ways, as in
+  Go: `let ids IDs = []i64{1}`, `let raw []i64 = ids`, `let op Op = double`. Indexing,
+  `len`, `append` (which returns the named type), `for` and map operations work as on the
+  underlying type.
+- Printing, formatting verbs, `argo` JSON and map keys use the underlying value.
+- A union constraint lists exact types: `[T i64 | f64]` does not accept a `Cents` (E510).
+
 A tuple alias names a list of results: `type Pair = (i64, i64)` makes `fn mk() Pair` the
 same as `fn mk() (i64, i64)` and `!Pair` the same as `!(i64, i64)`, in functions, methods,
 function types (`fn() Pair`) and shape methods, and from other packages (`pkg.Pair`). A

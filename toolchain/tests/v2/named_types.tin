@@ -1,0 +1,94 @@
+package main
+
+import "argo"
+import "constraints"
+import "say"
+
+// A named non-struct type is a type of its own (#564): Celsius and f64 convert explicitly,
+// arithmetic keeps the name, untyped constants adapt, and a named slice, map or func type
+// takes values of its unnamed underlying type, as in Go. An alias (type Score = i64) is
+// the same type as i64.
+
+type Celsius f64
+type Fahrenheit f64
+type Cents i64
+type Ratio f32
+type Name str
+type Flag bool
+type IDs []i64
+type Lookup map[str]i64
+type Op fn(i64) i64
+type Score = i64
+type Color i64
+
+const Red Color = 0
+const Green Color = 1
+
+type Order struct {
+	id    i64
+	total Cents
+	note  Name
+}
+
+fn toF(c Celsius) Fahrenheit {
+	return Fahrenheit(f64(c)*9.0/5.0 + 32.0)
+}
+
+fn sum[T constraints.Any](xs []T, add fn(T, T) T, zero T) T {
+	mut t = zero
+	for x in xs {
+		t = add(t, x)
+	}
+	return t
+}
+
+fn double(x i64) i64 {
+	return x * 2
+}
+
+fn main() {
+	let c Celsius = 100
+	let warm = c + 1.5
+	say.Line("celsius", c, warm, toF(c), c > 99.0, Celsius(36.6))
+	say.Line("convert", f64(c), i64(c), Celsius(2), Cents(i64(3.99 * 100)))
+	let price Cents = 250
+	let tax = price * 2 / 10
+	say.Line("cents", price + tax, i64(price) + 1)
+	let r Ratio = 0.1
+	say.Line("ratio", r, f64(r) == f64(f32(0.1)))
+	let n Name = "tin"
+	say.Line("name", n + "!", len(n), str(n) == "tin", Name("x") < n)
+	let ok Flag = true
+	say.Line("flag", ok, !ok, bool(ok) && true)
+	mut ids IDs = []i64{3, 1}
+	ids = append(ids, 2)
+	let raw []i64 = ids
+	say.Line("ids", ids, len(ids), ids[0], raw[2], IDs([]i64{9}))
+	mut total = 0
+	for _, x in ids {
+		total += x
+	}
+	say.Line("range", total)
+	mut m Lookup = map[str]i64{"a": 1}
+	m["b"] = 2
+	say.Line("lookup", m, len(m))
+	let op Op = double
+	say.Line("op", op(21))
+	let s Score = 5
+	let plain i64 = s
+	say.Line("alias", plain)
+	say.Line("enum", Red, Green, Green == Color(1))
+	let totals = map[Cents]str{Cents(1): "one"}
+	say.Line("key", totals[Cents(1)])
+	say.Line("generic", sum([]Cents{1, 2, 3}, fn(a Cents, b Cents) Cents { return a + b }, Cents(0)))
+	let o = Order{id: 7, total: 1999, note: "gift"}
+	mut b = []u8{}
+	argo.Put(mut b, o)
+	say.Line("json", str(b))
+	mut back = Order{id: 0, total: 0, note: ""}
+	argo.Get(str(b), mut back) catch err {
+		say.Line("get:", err)
+	}
+	say.Line("back", back.total, back.note, back.total == o.total)
+	say.Line(say.Fmt("fmt %v %.2f %d", n, c, price))
+}

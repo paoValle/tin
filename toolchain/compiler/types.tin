@@ -446,6 +446,14 @@ fn assignable(from Ty, to Ty) i64 {
 	if cast(i64, from) == cast(i64, to) || cast(i64, to) == 0 {
 		return 1
 	}
+	// A named type and its unnamed underlying slice, map or func type assign both ways, as in
+	// Go: let ids IDs = []i64{1} (#564). A basic type is named: Celsius and f64 convert.
+	if cast(i64, from) != 0 && (from.under != 0 || to.under != 0) && (from.under == 0 || to.under == 0) && cast(i64, base_ty(from)) == cast(i64, base_ty(to)) {
+		let bk = kind_of(base_ty(to))
+		if bk == K_SLICE || bk == K_MAP || bk == K_FUNC {
+			return 1
+		}
+	}
 	// A plain value may become secret (secret_of); a secret never becomes plain without reveal.
 	if to.secret_ != 0 {
 		if cast(i64, from) != 0 && from.secret_ != 0 {
@@ -716,7 +724,7 @@ fn bounded_assignable(from Ty, to Ty) i64 {
 	return 0
 }
 
-const TY_WORDS = 16 // the words of a Ty record, bounded types and secret twins included
+const TY_WORDS = 17 // the words of a Ty record, bounded types and secret twins included
 
 // ty_copy copies the words that describe a type (everything before secret_, bound and max) from src into dst.
 fn ty_copy(dst Ty, src Ty) {
@@ -733,4 +741,23 @@ fn ty_copy(dst Ty, src Ty) {
 	dst.targs = src.targs
 	dst.gdecl = src.gdecl
 	dst.enum_ = src.enum_
+	dst.under = src.under
+}
+
+// named_of is the distinct type `type name u` declares for a non-struct u (#564): a copy of u
+// under its own name, which converts to and from u explicitly and is otherwise a type of its own.
+fn named_of(u i64, name str) i64 {
+	let n = cast(Ty, calloc(TY_WORDS, 8))
+	ty_copy(n, cast(Ty, u))
+	n.name = name
+	n.under = cast(i64, base_ty(cast(Ty, u)))
+	return cast(i64, n)
+}
+
+// base_ty is t's underlying type: t itself unless t is a named non-struct type.
+fn base_ty(t Ty) Ty {
+	if cast(i64, t) != 0 && t.under != 0 {
+		return cast(Ty, t.under)
+	}
+	return t
 }

@@ -734,7 +734,14 @@ fn check() {
 			resolve_fields(cast(Ty, find_type(q)), cast(TypeExpr, d.type_))
 			layout_struct(cast(Ty, find_type(q)))
 		} else if cast(Node, d.type_).kind != TX_TUPLE {
-			name_type(q, resolve_type(d.type_))
+			let ut = resolve_type(d.type_)
+			let uk = kind_of(cast(Ty, ut))
+			if d.iota == 0 && (uk == K_INT || uk == K_FLOAT || uk == K_BOOL || uk == K_STRING || uk == K_SLICE || uk == K_MAP || uk == K_FUNC) && cast(Ty, ut).bound == 0 {
+				// type Celsius f64 declares a distinct type; type Score = i64 is an alias (#564).
+				name_type(q, named_of(ut, q))
+			} else {
+				name_type(q, ut)
+			}
 		}
 		i = i + 1
 	}

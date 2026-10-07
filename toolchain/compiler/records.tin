@@ -517,6 +517,7 @@ type Ty struct {
 	secret_ i64
 	bound i64
 	max i64
+	under i64 // a named non-struct type's underlying type (type Celsius f64, #564); 0 otherwise
 }
 
 type Unary struct {

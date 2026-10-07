@@ -1,0 +1,7 @@
+toolchain/tests/v2/named_types_bad.tin:25:14: error E230 TYPE_MISMATCH: cannot use Celsius as f64
+toolchain/tests/v2/named_types_bad.tin:26:11: error E230 TYPE_MISMATCH: cannot use Celsius as f64
+toolchain/tests/v2/named_types_bad.tin:27:6: error E230 TYPE_MISMATCH: mismatched types Celsius and Fahrenheit
+toolchain/tests/v2/named_types_bad.tin:28:6: error E230 TYPE_MISMATCH: mismatched types Celsius and Fahrenheit
+toolchain/tests/v2/named_types_bad.tin:29:14: error E230 TYPE_MISMATCH: cannot use Cents as i64
+toolchain/tests/v2/named_types_bad.tin:30:14: error E230 TYPE_MISMATCH: cannot use Name as str
+toolchain/tests/v2/named_types_bad.tin:31:6: error E510 NOT_IN_UNION: type Cents does not satisfy the constraint of T
