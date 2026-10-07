@@ -1,0 +1,185 @@
+package tide
+
+import "fault"
+import "twine"
+
+// tzif reads TZif files (RFC 8536), the format of the IANA time zone database: a list of
+// transitions with the local time type in effect after each, the abbreviations, and the footer
+// TZ string that extends the zone past its last transition. The port follows Go's
+// zoneinfo_read.go and accepts versions 1 to 4.
+
+// errBadZone is the fault of a TZif file that is truncated or inconsistent.
+let errBadZone = fault("malformed time zone information")
+
+// dataIO reads big-endian fields from a TZif file; a read past the end sets bad and gives zeros.
+type dataIO struct {
+	data str
+	pos  i64
+	bad  bool
+}
+
+// read returns the next n bytes.
+fn (d mut dataIO) read(n i64) str {
+	if d.bad || n < 0 || d.pos+n > len(d.data) {
+		d.bad = true
+		return ""
+	}
+	let p = d.data[d.pos : d.pos+n]
+	d.pos += n
+	return p
+}
+
+// big4 reads a big-endian 32-bit value.
+fn (d mut dataIO) big4() u64 {
+	let p = d.read(4)
+	if len(p) < 4 {
+		d.bad = true
+		return 0
+	}
+	return u64(p[0])<<24 | u64(p[1])<<16 | u64(p[2])<<8 | u64(p[3])
+}
+
+// big8 reads a big-endian 64-bit value.
+fn (d mut dataIO) big8() u64 {
+	let hi = d.big4()
+	let lo = d.big4()
+	return hi<<32 | lo
+}
+
+// byte reads one byte.
+fn (d mut dataIO) byte() u8 {
+	let p = d.read(1)
+	if len(p) < 1 {
+		d.bad = true
+		return 0
+	}
+	return p[0]
+}
+
+// rest returns everything left.
+fn (d mut dataIO) rest() str {
+	let p = d.data[d.pos:len(d.data)]
+	d.pos = len(d.data)
+	return p
+}
+
+// byteString returns the bytes of p up to its first NUL.
+fn byteString(p str) str {
+	let i = twine.IndexByte(p, 0)
+	if i >= 0 {
+		return p[0:i]
+	}
+	return p
+}
+
+// parseTZif parses a TZif file into a Zone named name.
+fn parseTZif(name str, data str) !Zone {
+	mut d = dataIO{data: data}
+	if d.read(4) != "TZif" {
+		fail errBadZone
+	}
+	let v = d.read(16)
+	if len(v) != 16 {
+		fail errBadZone
+	}
+	mut version = 1
+	if v[0] == '2' {
+		version = 2
+	} else if v[0] == '3' {
+		version = 3
+	} else if v[0] == '4' {
+		version = 4
+	} else if v[0] != 0 {
+		fail errBadZone
+	}
+
+	// Six big-endian counts: UTC/local, standard/wall, leap seconds, transitions, zones, chars.
+	mut nutc = i64(d.big4())
+	mut nstd = i64(d.big4())
+	mut nleap = i64(d.big4())
+	mut ntime = i64(d.big4())
+	mut nzone = i64(d.big4())
+	mut nchar = i64(d.big4())
+	if d.bad {
+		fail errBadZone
+	}
+
+	// A version 2+ file repeats the data in 64-bit form after the 32-bit block.
+	mut is64 = false
+	if version > 1 {
+		let skip = ntime*4 + ntime + nzone*6 + nchar + nleap*8 + nstd + nutc
+		d.read(skip + 4 + 16)
+		nutc = i64(d.big4())
+		nstd = i64(d.big4())
+		nleap = i64(d.big4())
+		ntime = i64(d.big4())
+		nzone = i64(d.big4())
+		nchar = i64(d.big4())
+		is64 = true
+	}
+	mut size i64 = 4
+	if is64 {
+		size = 8
+	}
+
+	let txtimes = d.read(ntime * size)
+	let txzones = d.read(ntime)
+	let zonedata = d.read(nzone * 6)
+	let abbrev = d.read(nchar)
+	d.read(nleap * (size + 4))
+	d.read(nstd)
+	d.read(nutc)
+	if d.bad {
+		fail errBadZone
+	}
+
+	// The footer: a TZ string between newlines.
+	mut extend = ""
+	let rest = d.rest()
+	if len(rest) > 2 && rest[0] == '\n' && rest[len(rest)-1] == '\n' {
+		extend = rest[1 : len(rest)-1]
+	}
+
+	if nzone == 0 {
+		fail errBadZone
+	}
+	mut zones = make([]zone, 0, nzone)
+	let z = dataIO{data: zonedata}
+	for i in 0..nzone {
+		let offset = i64(i32(z.big4()))
+		let isdst = z.byte() != 0
+		let idx = z.byte()
+		if i64(idx) >= len(abbrev) {
+			fail errBadZone
+		}
+		zones = append(zones, zone{name: byteString(abbrev[i64(idx):len(abbrev)]), offset: offset, isdst: isdst})
+	}
+	if z.bad {
+		fail errBadZone
+	}
+
+	mut when = make([]i64, 0, ntime)
+	mut index = make([]i64, 0, ntime)
+	let t = dataIO{data: txtimes}
+	for i in 0..ntime {
+		if is64 {
+			when = append(when, cast(i64, t.big8()))
+		} else {
+			when = append(when, i64(i32(t.big4())))
+		}
+		let zi = i64(txzones[i])
+		if zi >= nzone {
+			fail errBadZone
+		}
+		index = append(index, zi)
+	}
+	if t.bad {
+		fail errBadZone
+	}
+	if len(when) == 0 {
+		// A fixed zone (ETC/GMT0 and friends) is one zone covering all time.
+		when = append(when, -9223372036854775807 - 1)
+		index = append(index, 0)
+	}
+	return Zone{name: name, zones: zones, when: when, index: index, extend: extend}
+}

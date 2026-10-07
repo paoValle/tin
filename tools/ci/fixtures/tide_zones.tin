@@ -1,0 +1,51 @@
+// Command tide_zones runs the zone corpus bench/ref/tide writes: for every case in zones.in it
+// prints tide's In and DateIn result in Go's format, and tools/ci/helpers_check.py compares the
+// output with expected.txt line by line (#573).
+package main
+
+import "say"
+import "mint"
+import "twine"
+import "quarry"
+import "tide"
+
+// num parses a corpus field (the format is generated, so a bad field is a corpus bug).
+fn num(s str) i64 {
+	let (v, err) = mint.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+fn main() {
+	let (text, err) = quarry.ReadFile(quarry.Args()[1])
+	if err != nil {
+		say.Line("read fault", err)
+		return
+	}
+	mut z = tide.UTCZone()
+	for line in twine.Split(text, "\n") {
+		if len(line) == 0 {
+			continue
+		}
+		let p = twine.Split(line, " ")
+		if p[0] == "ZONE" {
+			let (zz, lerr) = tide.LoadZone(p[1])
+			if lerr != nil {
+				say.Line("zone", p[1], "fault")
+				z = tide.UTCZone()
+			} else {
+				say.Line("zone", p[1])
+				z = zz
+			}
+		} else if p[0] == "IN" {
+			let sec = num(p[1])
+			let c = tide.In(sec*1000000000, z)
+			say.Line("in", z.Name(), sec, c.Year, c.Month, c.Day, c.Hour, c.Min, c.Sec, c.Offset, c.Zone)
+		} else if p[0] == "DATE" {
+			let ns = tide.DateIn(num(p[1]), num(p[2]), num(p[3]), num(p[4]), num(p[5]), num(p[6]), num(p[7]), z)
+			say.Line("date", z.Name(), num(p[1]), num(p[2]), num(p[3]), num(p[4]), num(p[5]), num(p[6]), num(p[7]), ns)
+		}
+	}
+}

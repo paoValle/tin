@@ -1,0 +1,135 @@
+package main
+
+import "say"
+import "fault"
+import "quarry"
+import "tide"
+
+// zone loads a committed TZif fixture (an IANA database file, public domain), so the test does
+// not depend on the host's tzdata version.
+fn zone(name str) !tide.Zone {
+	let (data, err) = quarry.ReadFile("toolchain/tests/data/tzdata/" + name)
+	if err != nil {
+		fail err
+	}
+	return try tide.LoadZoneData(name, data)
+}
+
+// civil renders the fields of the instant ns in z.
+fn civil(ns i64, z tide.Zone) str {
+	let c = tide.In(ns, z)
+	return say.Fmt("%d %d %d %d %d %d %d %s", c.Year, c.Month, c.Day, c.Hour, c.Min, c.Sec, c.Offset, c.Zone)
+}
+
+// WallCase is a wall time in a gap or an overlap to feed DateIn.
+type WallCase struct {
+	zone str
+	y    i64
+	mo   i64
+	d    i64
+	h    i64
+	mi   i64
+}
+
+// pick returns the loaded zone of the given name.
+fn pick(zs []tide.Zone, name str) tide.Zone {
+	for _, z in zs {
+		if z.Name() == name {
+			return z
+		}
+	}
+	return tide.UTCZone()
+}
+
+// normCase checks that DateIn normalizes fields exactly as Date does in UTC.
+type NormCase struct {
+	y  i64
+	mo i64
+	d  i64
+	h  i64
+	mi i64
+	s  i64
+	ns i64
+}
+
+fn main() {
+	let names = []str{"Europe/Paris", "America/New_York", "Asia/Kathmandu", "Australia/Lord_Howe", "Pacific/Chatham", "America/Sao_Paulo", "Africa/Casablanca", "Etc/GMT+5"}
+	mut zones = make([]tide.Zone, 0, 8)
+	for _, name in names {
+		let z = zone(name) catch err {
+			say.Line("fixture fault", name, err)
+			return
+		}
+		zones = append(zones, z)
+		say.Line("name", name, z.Name())
+	}
+
+	// Instants (all at day starts divisible by three, so a Go twin checks the same ones) through
+	// In and back through DateIn with the fields In reported.
+	let secs = []i64{0, 1735603200, 1740787200, 1743379200, 1745971200, 1751414400, 1759190400, 1762041600, 2222121600}
+	for _, z in zones {
+		for _, sec in secs {
+			let ns = sec * 1000000000
+			say.Line("in", z.Name(), sec, civil(ns, z))
+			let c = tide.In(ns, z)
+			let back = tide.DateIn(c.Year, c.Month, c.Day, c.Hour, c.Min, c.Sec, c.Nano, z)
+			say.Line("roundtrip", z.Name(), sec, back, back == ns)
+		}
+	}
+
+	// Wall times in a spring-forward gap and a fall-back overlap: DateIn must pick the instant
+	// Go's time.Date picks, one hour (or half an hour) inside the transition.
+	let walls = []WallCase{
+		WallCase{zone: "America/New_York", y: 2025, mo: 3, d: 9, h: 2, mi: 30},
+		WallCase{zone: "America/New_York", y: 2025, mo: 11, d: 2, h: 1, mi: 30},
+		WallCase{zone: "Europe/Paris", y: 2025, mo: 3, d: 30, h: 2, mi: 30},
+		WallCase{zone: "Europe/Paris", y: 2025, mo: 10, d: 26, h: 2, mi: 30},
+		WallCase{zone: "Australia/Lord_Howe", y: 2025, mo: 10, d: 5, h: 2, mi: 15},
+		WallCase{zone: "Australia/Lord_Howe", y: 2025, mo: 4, d: 6, h: 1, mi: 45},
+	}
+	for _, w in walls {
+		let z = pick(zones, w.zone)
+		let ns = tide.DateIn(w.y, w.mo, w.d, w.h, w.mi, 0, 0, z)
+		say.Line("wall", w.zone, w.y, w.mo, w.d, w.h, w.mi, ns, civil(ns, z))
+	}
+
+	// Fixed and UTC zones, and DateIn's normalization against Date.
+	let f = tide.FixedZone("X", 3600)
+	say.Line("fixed", civil(0, f), civil(1759314125000000123, f))
+	let fs = tide.FixedZone("S", -1800)
+	say.Line("fixed date", tide.DateIn(2025, 10, 1, 11, 22, 5, 123, f) == 1759314125000000123, tide.DateIn(2025, 10, 1, 11, 22, 5, 123, fs) == 1759319525000000123)
+	let utc = tide.UTCZone()
+	say.Line("utc", utc.Name(), civil(0, utc), civil(-1, utc), civil(2222121600999999999, utc))
+	let norms = []NormCase{
+		NormCase{y: 2025, mo: 13, d: 1, h: 0, mi: 0, s: 0, ns: 0},
+		NormCase{y: 2025, mo: 0, d: 1, h: 0, mi: 0, s: 0, ns: 0},
+		NormCase{y: 2025, mo: 1, d: 32, h: 0, mi: 0, s: 0, ns: 0},
+		NormCase{y: 2025, mo: 2, d: 30, h: 25, mi: 61, s: 61, ns: 1500000000},
+		NormCase{y: 2024, mo: 2, d: 29, h: 0, mi: 0, s: 0, ns: 0},
+		NormCase{y: 1969, mo: 12, d: 31, h: 23, mi: 59, s: 59, ns: 999999999},
+	}
+	for _, n in norms {
+		say.Line("norm", n.y, n.mo, n.d, n.h, n.mi, n.s, n.ns, tide.DateIn(n.y, n.mo, n.d, n.h, n.mi, n.s, n.ns, utc) == tide.Date(n.y, n.mo, n.d, n.h, n.mi, n.s, n.ns))
+	}
+
+	// Unknown, invalid and malformed zones.
+	let (_, e1) = tide.LoadZone("No/Such_Zone")
+	say.Line("unknown", e1 != nil, fault.Is(e1, tide.ErrUnknownZone))
+	let (_, e2) = tide.LoadZone("../etc/passwd")
+	say.Line("dotdot", e2 != nil, fault.Is(e2, tide.ErrUnknownZone))
+	let (_, e3) = tide.LoadZone("/etc/passwd")
+	say.Line("absolute", e3 != nil, fault.Is(e3, tide.ErrUnknownZone))
+	let (_, e4) = tide.LoadZone("")
+	say.Line("empty", e4 != nil, fault.Is(e4, tide.ErrUnknownZone))
+	let (data, derr) = quarry.ReadFile("toolchain/tests/data/tzdata/Europe/Paris")
+	if derr != nil {
+		say.Line("fixture read fault", derr)
+		return
+	}
+	let (_, e5) = tide.LoadZoneData("Truncated", data[0:20])
+	say.Line("truncated", e5 != nil)
+	let (_, e6) = tide.LoadZoneData("Garbage", "not a zone file at all")
+	say.Line("garbage", e6 != nil)
+	let (_, e7) = tide.LoadZoneData("V0", "TZif\x31" + data[5:])
+	say.Line("version", e7 != nil)
+}

@@ -839,7 +839,7 @@ Package tide is clocks, durations and civil (calendar) time in UTC, like Go's ti
 - `Microseconds(d i64) i64`: Microseconds returns d as whole microseconds, truncated toward zero.
 - `FormatDuration(d i64) str`: FormatDuration renders d exactly like Go's Duration.String: "1.5s", "250ms", "1h2m3s", "0s", "-1.5µs".
 - `ParseDuration(s str) !i64`: ParseDuration parses "300ms", "-1.5h" or "2h45m" (units ns us µs ms s m h) exactly like Go's time.ParseDuration.
-- `type Civil struct`: Civil is a broken-down UTC instant: Month 1..12, Day 1..31, Weekday 0 (Sunday)..6, YearDay 1..366.
+- `type Civil struct`: Civil is a broken-down instant: Month 1..12, Day 1..31, Weekday 0 (Sunday)..6, YearDay 1..366, and, from In, the zone's Offset in seconds east of UTC and its abbreviation in Zone.
 - `IsLeap(year i64) bool`: IsLeap reports whether year is a leap year in the proleptic Gregorian calendar.
 - `DaysIn(year i64, month i64) i64`: DaysIn returns the number of days in month (1..12) of year, or 0 for a month out of range.
 - `DaysFromCivil(y i64, m i64, d i64) i64`: DaysFromCivil returns the days from 1970-01-01 to the date y-m-d (m 1..12; d may be out of range and carries).
@@ -855,6 +855,15 @@ Package tide is clocks, durations and civil (calendar) time in UTC, like Go's ti
 - `FormatRFC3339Nano(ns i64) str`: FormatRFC3339Nano is FormatRFC3339 with the fractional seconds, trailing zeros removed: "2026-10-01T11:22:05.5Z".
 - `ParseRFC3339(s str) !i64`: ParseRFC3339 parses "2026-10-01T11:22:05Z", optional fraction ".123" and offsets "+02:00", accepting what Go's time.Parse(RFC3339) accepts, into Unix nanoseconds.
 - `FormatHTTP(unixSec i64) str`: FormatHTTP renders Unix seconds in the HTTP date format "Thu, 01 Oct 2026 11:22:05 GMT".
+- `type Zone struct`: Zone is a time zone: the transitions of the IANA database with the local time in effect after each, plus the TZ string that extends the zone past its last transition. A Zone is a handle that can be stored in a global; LoadZone caches one per core.
+- `(z Zone) Name() str`: Name returns the zone's name, like "Europe/Paris".
+- `UTCZone() Zone`: UTCZone returns the UTC zone.
+- `FixedZone(name str, offset i64) Zone`: FixedZone returns a zone that is always offset seconds east of UTC, shown as name.
+- `LoadZoneData(name str, data str) !Zone`: LoadZoneData parses the bytes of a TZif file (RFC 8536) as the zone called name, like Go's time.LoadLocationFromTZData.
+- `LoadZone(name str) !Zone`: LoadZone returns the zone with an IANA name ("Europe/Paris", "Asia/Kathmandu", "UTC") from $ZONEINFO and the system directories, reading each name once per core. Unknown names fail with ErrUnknownZone (fault.Is). Loading reads files, and so needs the files capability.
+- `Local() Zone`: Local returns the local zone: $TZ ("" is UTC, a path after ':' or a leading '/' is a file, "UTC" and names are looked up like LoadZone) or /etc/localtime when $TZ is unset, falling back to UTC, as Go's time.Local does.
+- `In(ns i64, z Zone) Civil`: In returns the civil time of the instant ns in zone z, with Offset (seconds east of UTC) and Zone (the abbreviation, like "CET") set.
+- `DateIn(year0 i64, month0 i64, day0 i64, hour0 i64, min0 i64, sec0 i64, nano0 i64, z Zone) i64`: DateIn returns the Unix nanoseconds of the civil time in zone z. Fields out of range carry like Date. A wall time in a gap (the clocks going forward) or an overlap (going back) picks the instant Go's time.Date picks: the one whose zone offset is valid there.
 
 ## dice
 

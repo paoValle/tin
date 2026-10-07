@@ -358,7 +358,8 @@ fn ParseDuration(s str) !i64 {
 	return i64(d)
 }
 
-// Civil is a broken-down UTC instant: Month 1..12, Day 1..31, Weekday 0 (Sunday)..6, YearDay 1..366.
+// Civil is a broken-down instant: Month 1..12, Day 1..31, Weekday 0 (Sunday)..6, YearDay 1..366,
+// and, from In, the zone's Offset in seconds east of UTC and its abbreviation in Zone.
 type Civil struct {
 	Year    i64
 	Month   i64
@@ -369,6 +370,8 @@ type Civil struct {
 	Nano    i64
 	Weekday i64
 	YearDay i64
+	Offset  i64
+	Zone    str
 }
 
 // floorDiv is a / b rounded toward negative infinity (b > 0).

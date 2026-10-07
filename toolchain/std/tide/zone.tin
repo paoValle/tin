@@ -1,0 +1,604 @@
+package tide
+
+import "fault"
+import "quarry"
+import "say"
+
+// zone is one local time type of a Zone: its offset in seconds east of UTC and its abbreviation.
+type zone struct {
+	name   str
+	offset i64
+	isdst  bool
+}
+
+// Zone is a time zone: the transitions of the IANA database with the local time in effect after
+// each, plus the TZ string that extends the zone past its last transition. A Zone is a handle
+// that can be stored in a global; LoadZone caches one per core.
+type Zone struct {
+	name   str
+	zones  []zone
+	when   []i64
+	index  []i64
+	extend str
+}
+
+// ErrUnknownZone is the cause of LoadZone's fault for a name with no zone file:
+// fault.Is(err, tide.ErrUnknownZone).
+let ErrUnknownZone = fault("unknown time zone")
+
+// utcLoc is the built-in UTC zone.
+let utcLoc = Zone{name: "UTC", zones: []zone{zone{name: "UTC", offset: 0, isdst: false}}}
+
+// zoneDirs are the system zoneinfo directories, Go's list.
+let zoneDirs = []str{"/usr/share/zoneinfo/", "/usr/share/lib/zoneinfo/", "/usr/lib/locale/TZ/", "/etc/zoneinfo/"}
+
+// zoneCache is this core's cache of loaded zones, keyed by name.
+mut zoneCache map[str]Zone = map[str]Zone{}
+
+// Name returns the zone's name, like "Europe/Paris".
+fn (z Zone) Name() str {
+	return z.name
+}
+
+// UTCZone returns the UTC zone.
+fn UTCZone() Zone {
+	return utcLoc
+}
+
+// FixedZone returns a zone that is always offset seconds east of UTC, shown as name.
+fn FixedZone(name str, offset i64) Zone {
+	return Zone{name: name, zones: []zone{zone{name: name, offset: offset, isdst: false}}}
+}
+
+// LoadZoneData parses the bytes of a TZif file (RFC 8536) as the zone called name, like Go's
+// time.LoadLocationFromTZData.
+fn LoadZoneData(name str, data str) !Zone {
+	return try parseTZif(name, data)
+}
+
+// tryZoneFile reads and parses dir/name; nil when the file is missing or malformed.
+fn tryZoneFile(dir str, name str) ?Zone {
+	let (data, rerr) = quarry.ReadFile(dir + name)
+	if rerr != nil {
+		return nil
+	}
+	let (z, perr) = parseTZif(name, data)
+	if perr != nil {
+		return nil
+	}
+	return z
+}
+
+// LoadZone returns the zone with an IANA name ("Europe/Paris", "Asia/Kathmandu", "UTC") from
+// $ZONEINFO and the system directories, reading each name once per core. Unknown names fail
+// with ErrUnknownZone (fault.Is). Loading reads files, and so needs the files capability.
+fn LoadZone(name str) !Zone {
+	if len(name) == 0 || name[0] == '/' || containsDotDot(name) {
+		fail fault.Wrap(ErrUnknownZone, say.Fmt("tide: %s", name))
+	}
+	let (hit, found) = zoneCache[name]
+	if found {
+		return hit
+	}
+	let (info, haveInfo) = quarry.LookupEnv("ZONEINFO")
+	if haveInfo && len(info) > 0 {
+		mut infoDir = info
+		if infoDir[len(infoDir)-1] != '/' {
+			infoDir += "/"
+		}
+		if let z = tryZoneFile(infoDir, name) {
+			zoneCache[keep(name)] = keep(z)
+			return z
+		}
+	}
+	for _, dir in zoneDirs {
+		if let z = tryZoneFile(dir, name) {
+			zoneCache[keep(name)] = keep(z)
+			return z
+		}
+	}
+	fail fault.Wrap(ErrUnknownZone, say.Fmt("tide: %s", name))
+}
+
+// Local returns the local zone: $TZ ("" is UTC, a path after ':' or a leading '/' is a file,
+// "UTC" and names are looked up like LoadZone) or /etc/localtime when $TZ is unset, falling
+// back to UTC, as Go's time.Local does.
+fn Local() Zone {
+	once {
+		localZone = readLocal()
+	}
+	return localZone
+}
+
+// localZone is this core's Local(), loaded once by the once in Local.
+mut localZone = utcLoc
+
+// readLocal implements Local's lookup.
+fn readLocal() Zone {
+	let (tz, set) = quarry.LookupEnv("TZ")
+	if set {
+		mut nm = tz
+		if len(nm) > 0 && nm[0] == ':' {
+			nm = nm[1:len(nm)]
+		}
+		if len(nm) > 0 && nm[0] == '/' {
+			let (data, err) = quarry.ReadFile(nm)
+			if err == nil {
+				let (z, perr) = parseTZif("Local", data)
+				if perr == nil {
+					if nm == "/etc/localtime" {
+						z.name = "Local"
+					} else {
+						z.name = nm
+					}
+					return z
+				}
+			}
+		} else if len(nm) > 0 && nm != "UTC" {
+			let (z, err) = LoadZone(nm)
+			if err == nil {
+				return z
+			}
+		}
+	} else {
+		let (data, err) = quarry.ReadFile("/etc/localtime")
+		if err == nil {
+			let (z, perr) = parseTZif("Local", data)
+			if perr == nil {
+				return z
+			}
+		}
+	}
+	return utcLoc
+}
+
+// containsDotDot reports whether s holds "..".
+fn containsDotDot(s str) bool {
+	if len(s) < 2 {
+		return false
+	}
+	for i in 0..len(s)-1 {
+		if s[i] == '.' && s[i+1] == '.' {
+			return true
+		}
+	}
+	return false
+}
+
+// lookup returns the zone in effect at Unix seconds sec: its abbreviation, its offset in
+// seconds east of UTC, and the start and end of the interval around sec. The port follows Go's
+// Location.lookup, including the TZ string that extends the zone past its last transition.
+fn (z Zone) lookup(sec i64) (str, i64, i64, i64) {
+	let alpha = -9223372036854775807 - 1
+	let omega = 9223372036854775807
+	if len(z.zones) == 0 {
+		return "UTC", 0, alpha, omega
+	}
+	if len(z.when) == 0 || sec < z.when[0] {
+		let zi = z.lookupFirstZone()
+		mut end = omega
+		if len(z.when) > 0 {
+			end = z.when[0]
+		}
+		return z.zones[zi].name, z.zones[zi].offset, alpha, end
+	}
+	mut lo = 0
+	mut hi = len(z.when)
+	mut end = omega
+	for hi-lo > 1 {
+		let m = (lo + hi) / 2
+		let lim = z.when[m]
+		if sec < lim {
+			end = lim
+			hi = m
+		} else {
+			lo = m
+		}
+	}
+	let zi = z.index[lo]
+	let start = z.when[lo]
+	if lo == len(z.when)-1 && len(z.extend) > 0 {
+		let (ename, eoffset, estart, eend, edst, ok) = tzset(z.extend, start, sec)
+		if ok {
+			return ename, eoffset, estart, eend
+		}
+	}
+	return z.zones[zi].name, z.zones[zi].offset, start, end
+}
+
+// lookupFirstZone returns the index of the zone for times before the first transition (or when
+// there are none), by Go's port of localtime.c: an unused first zone, else the last non-DST
+// zone before the first transition zone, else the first non-DST zone, else the first.
+fn (z Zone) lookupFirstZone() i64 {
+	mut used0 = false
+	for _, ix in z.index {
+		if ix == 0 {
+			used0 = true
+		}
+	}
+	if !used0 {
+		return 0
+	}
+	if len(z.when) > 0 && z.zones[z.index[0]].isdst {
+		mut zi = z.index[0] - 1
+		for zi >= 0 {
+			if !z.zones[zi].isdst {
+				return zi
+			}
+			zi -= 1
+		}
+	}
+	for i, zn in z.zones {
+		if !zn.isdst {
+			return i
+		}
+	}
+	return 0
+}
+
+// tzrule is a daylight-saving rule from a TZ string: Jn (a Julian day), n (a day of the year),
+// or Mm.w.d (the d-th weekday of month m).
+type tzrule struct {
+	kind i64 // 0 Julian day, 1 day of year, 2 month/week/day
+	day  i64
+	week i64
+	mon  i64
+	time i64
+}
+
+// tzset interprets a TZ string like the footer of an extended TZif file or the TZ variable for
+// sec, whose previous transition was at lastTxSec: the abbreviation, the offset in seconds east
+// of UTC, the interval around sec, and ok (false for a string it cannot parse).
+fn tzset(s str, lastTxSec i64, sec i64) (str, i64, i64, i64, bool, bool) {
+	let (stdName0, rest0, ok0) = tzsetName(s)
+	if !ok0 {
+		return "", 0, 0, 0, false, false
+	}
+	let (stdOff0, rest1, ok1) = tzsetOffset(rest0)
+	if !ok1 {
+		return "", 0, 0, 0, false, false
+	}
+	// The numbers in a TZ string are added to local time to get UTC, so negate them.
+	mut stdName = stdName0
+	mut stdOffset = -stdOff0
+	mut dstName = ""
+	mut dstOffset i64 = 0
+	mut rest = rest1
+	if len(rest) == 0 || rest[0] == ',' {
+		return stdName, stdOffset, lastTxSec, 9223372036854775807, false, true
+	}
+	let (dstName0, rest2, ok2) = tzsetName(rest)
+	if !ok2 {
+		return "", 0, 0, 0, false, false
+	}
+	dstName = dstName0
+	rest = rest2
+	if len(rest) == 0 || rest[0] == ',' {
+		dstOffset = stdOffset + 3600
+	} else {
+		let (doff, rest3, ok3) = tzsetOffset(rest)
+		if !ok3 {
+			return "", 0, 0, 0, false, false
+		}
+		dstOffset = -doff
+		rest = rest3
+	}
+	if len(rest) == 0 {
+		rest = ",M3.2.0,M11.1.0" // tzcode's default DST rules
+	}
+	if rest[0] != ',' && rest[0] != ';' {
+		return "", 0, 0, 0, false, false
+	}
+	rest = rest[1:len(rest)]
+	let (startRule, rest4, ok4) = tzsetRule(rest)
+	if !ok4 || len(rest4) == 0 || rest4[0] != ',' {
+		return "", 0, 0, 0, false, false
+	}
+	rest = rest4[1:len(rest4)]
+	let (endRule, rest5, ok5) = tzsetRule(rest)
+	if !ok5 || len(rest5) > 0 {
+		return "", 0, 0, 0, false, false
+	}
+	let (year, yday) = yearYday(sec)
+	let ysec = (yday-1)*86400 + sec%86400
+	let ystart = sec - ysec
+	mut startSec = tzruleTime(year, startRule, stdOffset)
+	mut endSec = tzruleTime(year, endRule, dstOffset)
+	mut stdIsDst = false
+	mut dstIsDst = true
+	if endSec < startSec {
+		// The southern hemisphere: swap so that the earlier rule is the start.
+		let tSec = startSec
+		startSec = endSec
+		endSec = tSec
+		let tName = stdName
+		stdName = dstName
+		dstName = tName
+		let tOff = stdOffset
+		stdOffset = dstOffset
+		dstOffset = tOff
+		let tDst = stdIsDst
+		stdIsDst = dstIsDst
+		dstIsDst = tDst
+	}
+	if ysec < startSec {
+		return stdName, stdOffset, ystart, startSec + ystart, stdIsDst, true
+	}
+	if ysec >= endSec {
+		return stdName, stdOffset, endSec + ystart, ystart + 365*86400, stdIsDst, true
+	}
+	return dstName, dstOffset, startSec + ystart, endSec + ystart, dstIsDst, true
+}
+
+// tzsetName returns the zone name at the start of s (three or more letters, or <...>) and the rest.
+fn tzsetName(s str) (str, str, bool) {
+	if len(s) == 0 {
+		return "", "", false
+	}
+	if s[0] != '<' {
+		for i in 0..len(s) {
+			let c = s[i]
+			if c == '0' || c == '1' || c == '2' || c == '3' || c == '4' || c == '5' || c == '6' || c == '7' || c == '8' || c == '9' || c == ',' || c == '-' || c == '+' {
+				if i < 3 {
+					return "", "", false
+				}
+				return s[0:i], s[i:len(s)], true
+			}
+		}
+		if len(s) < 3 {
+			return "", "", false
+		}
+		return s, "", true
+	}
+	for i in 1..len(s) {
+		if s[i] == '>' {
+			return s[1:i], s[i+1:len(s)], true
+		}
+	}
+	return "", "", false
+}
+
+// tzsetOffset returns the offset at the start of s as seconds and the rest of s.
+fn tzsetOffset(s str) (i64, str, bool) {
+	if len(s) == 0 {
+		return 0, "", false
+	}
+	mut neg = false
+	mut rest = s
+	if rest[0] == '+' {
+		rest = rest[1:len(rest)]
+	} else if rest[0] == '-' {
+		rest = rest[1:len(rest)]
+		neg = true
+	}
+	// The tzdata code permits hours up to 24*7, although POSIX does not.
+	let (hours, r1, ok1) = tzsetNum(rest, 0, 24*7)
+	if !ok1 {
+		return 0, "", false
+	}
+	mut off = hours * 3600
+	rest = r1
+	if len(rest) == 0 || rest[0] != ':' {
+		if neg {
+			off = -off
+		}
+		return off, rest, true
+	}
+	let (mins, r2, ok2) = tzsetNum(rest[1:len(rest)], 0, 59)
+	if !ok2 {
+		return 0, "", false
+	}
+	off += mins * 60
+	rest = r2
+	if len(rest) == 0 || rest[0] != ':' {
+		if neg {
+			off = -off
+		}
+		return off, rest, true
+	}
+	let (secs, r3, ok3) = tzsetNum(rest[1:len(rest)], 0, 59)
+	if !ok3 {
+		return 0, "", false
+	}
+	off += secs
+	if neg {
+		off = -off
+	}
+	return off, r3, true
+}
+
+// tzsetRule parses a DST rule from the start of s and returns it with the rest of s.
+fn tzsetRule(s str) (tzrule, str, bool) {
+	if len(s) == 0 {
+		return tzrule{}, "", false
+	}
+	mut r = tzrule{}
+	mut rest = s
+	if s[0] == 'J' {
+		let (jday, r1, ok) = tzsetNum(s[1:len(s)], 1, 365)
+		if !ok {
+			return tzrule{}, "", false
+		}
+		r.kind = 0
+		r.day = jday
+		rest = r1
+	} else if s[0] == 'M' {
+		let (mon, r1, ok1) = tzsetNum(s[1:len(s)], 1, 12)
+		if !ok1 || len(r1) == 0 || r1[0] != '.' {
+			return tzrule{}, "", false
+		}
+		let (week, r2, ok2) = tzsetNum(r1[1:len(r1)], 1, 5)
+		if !ok2 || len(r2) == 0 || r2[0] != '.' {
+			return tzrule{}, "", false
+		}
+		let (day, r3, ok3) = tzsetNum(r2[1:len(r2)], 0, 6)
+		if !ok3 {
+			return tzrule{}, "", false
+		}
+		r.kind = 2
+		r.day = day
+		r.week = week
+		r.mon = mon
+		rest = r3
+	} else {
+		let (day, r1, ok) = tzsetNum(s, 0, 365)
+		if !ok {
+			return tzrule{}, "", false
+		}
+		r.kind = 1
+		r.day = day
+		rest = r1
+	}
+	if len(rest) == 0 || rest[0] != '/' {
+		r.time = 2 * 3600 // 2am is the default
+		return r, rest, true
+	}
+	let (offset, r4, ok4) = tzsetOffset(rest[1:len(rest)])
+	if !ok4 {
+		return tzrule{}, "", false
+	}
+	r.time = offset
+	return r, r4, true
+}
+
+// tzsetNum parses a number at the start of s that must be between lo and hi.
+fn tzsetNum(s str, lo i64, hi i64) (i64, str, bool) {
+	if len(s) == 0 {
+		return 0, "", false
+	}
+	mut num i64 = 0
+	for i in 0..len(s) {
+		let c = s[i]
+		if c < '0' || c > '9' {
+			if i == 0 || num < lo {
+				return 0, "", false
+			}
+			return num, s[i:len(s)], true
+		}
+		num = num*10 + i64(c) - '0'
+		if num > hi {
+			return 0, "", false
+		}
+	}
+	if num < lo {
+		return 0, "", false
+	}
+	return num, "", true
+}
+
+// tzruleTime returns the seconds from the start of year that rule r takes effect, given the
+// offset off in effect before it (Go's tzruleTime, Zeller's congruence included).
+fn tzruleTime(year i64, r tzrule, off i64) i64 {
+	mut s i64 = 0
+	if r.kind == 0 {
+		s = (r.day - 1) * 86400
+		if IsLeap(year) && r.day >= 60 {
+			s += 86400
+		}
+	} else if r.kind == 1 {
+		s = r.day * 86400
+	} else {
+		let m1 = (r.mon+9)%12 + 1
+		mut yy0 = year
+		if r.mon <= 2 {
+			yy0 -= 1
+		}
+		let yy1 = yy0 / 100
+		let yy2 = yy0 % 100
+		mut dow = ((26*m1-2)/10 + 1 + yy2 + yy2/4 + yy1/4 - 2*yy1) % 7
+		if dow < 0 {
+			dow += 7
+		}
+		mut d = r.day - dow
+		if d < 0 {
+			d += 7
+		}
+		{
+			mut i = 1
+			for i < r.week {
+				if d+7 >= DaysIn(year, r.mon) {
+					break
+				}
+				d += 7
+				i += 1
+			}
+		}
+		d += daysBefore(r.mon)
+		if IsLeap(year) && r.mon > 2 {
+			d += 1
+		}
+		s = d * 86400
+	}
+	return s + r.time - off
+}
+
+// yearYday returns the calendar year of Unix seconds sec and its 1-based day of the year.
+fn yearYday(sec i64) (i64, i64) {
+	let days = floorDiv(sec, 86400)
+	let (y, m, d) = CivilFromDays(days)
+	mut yday = daysBefore(m) + d
+	if m > 2 && IsLeap(y) {
+		yday += 1
+	}
+	return y, yday
+}
+
+// In returns the civil time of the instant ns in zone z, with Offset (seconds east of UTC) and
+// Zone (the abbreviation, like "CET") set.
+fn In(ns i64, z Zone) Civil {
+	let sec = floorDiv(ns, Second)
+	let nano = ns - sec*Second
+	let (name, offset, _, _) = z.lookup(sec)
+	mut c = UTCSec(sec + offset)
+	c.Nano = nano
+	c.Offset = offset
+	c.Zone = name
+	return c
+}
+
+// norm normalizes lo into [0, base), carrying into hi (Go's time.norm).
+fn norm(hi i64, lo i64, base i64) (i64, i64) {
+	mut h = hi
+	mut l = lo
+	if l < 0 {
+		let n = (0-lo-1)/base + 1
+		h -= n
+		l += n * base
+	}
+	if l >= base {
+		let n = l / base
+		h += n
+		l -= n * base
+	}
+	return h, l
+}
+
+// DateIn returns the Unix nanoseconds of the civil time in zone z. Fields out of range carry
+// like Date. A wall time in a gap (the clocks going forward) or an overlap (going back) picks
+// the instant Go's time.Date picks: the one whose zone offset is valid there.
+fn DateIn(year0 i64, month0 i64, day0 i64, hour0 i64, min0 i64, sec0 i64, nano0 i64, z Zone) i64 {
+	// Normalize the month into the year, then the fields that carry, as Go's Date does.
+	mut m = month0 - 1
+	let q = floorDiv(m, 12)
+	let year = year0 + q
+	m -= q * 12
+	let month = m + 1
+	let (sec1, nano) = norm(sec0, nano0, 1000000000)
+	let (min1, sec) = norm(min0, sec1, 60)
+	let (hour1, min) = norm(hour0, min1, 60)
+	let (day, hour) = norm(day0, hour1, 24)
+	mut unix = (DaysFromCivil(year, month, 1) + day - 1)*86400 + hour*3600 + min*60 + sec
+	// The lookup wants an instant: try the wall time as if it were UTC, then correct for the
+	// zone offset, looking up again when the guess falls on the other side of a transition.
+	let (_, offset, start, end) = z.lookup(unix)
+	mut off = offset
+	if off != 0 {
+		let utc = unix - off
+		if utc < start || utc >= end {
+			let (_, offset2, _, _) = z.lookup(utc)
+			off = offset2
+		}
+		unix -= off
+	}
+	return unix*Second + nano
+}

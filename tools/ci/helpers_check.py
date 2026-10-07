@@ -89,8 +89,23 @@ def main():
             subprocess.run([str(compiler),'-o',str(exe2),str(symbols)],check=True,env=dict(os.environ,TIN_ROOT=str(work)),timeout=60)
             got=subprocess.run([str(exe2)],capture_output=True,timeout=10)
             assert got.returncode==0 and got.stdout==b'symbols bounded\n',got
-        (out/'helpers.log').write_text('2010 calendar values matched Go and former C; errno table exact; hostname/PTY/pipe/file/CPU/symbol checks passed\n')
-        print('PASS UTC fields and exact Date headers (2010 Go/C values), all errno messages, hostname, PTY/pipe/file handles, Linux affinity/page size and symbol boundaries')
+        # IANA zones (#573): In and DateIn against Go's time in every covered zone, at every
+        # transition from 1970 to 2040 and the wall times around each, and after the last TZif
+        # transition through the zone's TZ string.
+        zonesdir=work/'zones';zonesdir.mkdir()
+        zexe=work/'tidezones'
+        subprocess.run([str(compiler),'-o',str(zexe),'tools/ci/fixtures/tide_zones.tin'],check=True,cwd=ROOT,env=dict(os.environ,TIN_ROOT=str(ROOT)),timeout=60)
+        subprocess.run(['go','run','./bench/ref/tide/zonegen',str(zonesdir)],check=True,cwd=ROOT,timeout=180)
+        got=subprocess.run([str(zexe),str(zonesdir/'zones.in')],capture_output=True,timeout=180,cwd=zonesdir)
+        want=(zonesdir/'expected.txt').read_bytes()
+        assert got.returncode==0,(got.returncode,got.stderr[-2000:])
+        if got.stdout!=want:
+            g=got.stdout.splitlines(keepends=True);w=want.splitlines(keepends=True)
+            for i,(a,b) in enumerate(zip(g,w)):
+                assert a==b,(i,a,b)
+            raise AssertionError(('zone corpus length',len(g),len(w)))
+        (out/'helpers.log').write_text('2010 calendar values matched Go and former C; errno table exact; hostname/PTY/pipe/file/CPU/symbol checks passed; IANA zones matched Go\n')
+        print('PASS UTC fields and exact Date headers (2010 Go/C values), all errno messages, hostname, PTY/pipe/file handles, Linux affinity/page size and symbol boundaries, %d IANA zone lines'%len(want.splitlines()))
 
 
 if __name__=='__main__':main()
