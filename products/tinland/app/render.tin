@@ -103,6 +103,10 @@ fn cellsOf(line str, raw bool) []cell {
 				n = len(line) - i
 			}
 			out = append(out, cell{text: line[i:i + n], kind: kinds[i]})
+			// a wide character takes the next cell as well
+			if textedit.RuneWidth(textedit.RuneAt(line, i)) == 2 {
+				out = append(out, cell{text: "", kind: kinds[i]})
+			}
 		} else {
 			out = append(out, cell{text: line[i:i + 1], kind: kinds[i]})
 		}
@@ -228,6 +232,8 @@ fn (ed mut Editor) render() {
 						m += 1
 					}
 					ed.draw(textX + f64(k - ed.HScroll) * ed.CharW, top, textOf(cells, k, m), r, g, bl)
+				} else if len(cells[k].text) == 0 {
+					m = k + 1
 				} else {
 					m = k + 1
 					ed.drawUnicode(textX + f64(k - ed.HScroll) * ed.CharW, top, cells[k].text, r, g, bl)

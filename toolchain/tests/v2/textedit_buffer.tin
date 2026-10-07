@@ -68,4 +68,10 @@ fn main() {
 	say.Line(w.Col)
 	w.WordLeft(false)
 	say.Line(w.Col)
+
+	// screen columns: a wide character takes two, an accent none, a tab goes to the next stop
+	let line = "日本a\tb\u0301c🙂d"
+	say.Line(textedit.DisplayCol(line, 0, 4), textedit.DisplayCol(line, 3, 4), textedit.DisplayCol(line, 6, 4), textedit.DisplayCol(line, 8, 4))
+	say.Line(textedit.DisplayCol(line, len(line), 4), textedit.RuneWidth(0x65e5), textedit.RuneWidth(0x301), textedit.RuneWidth(65))
+	say.Line(textedit.ColForDisplay(line, 1, 4), textedit.ColForDisplay(line, 2, 4), textedit.ColForDisplay(line, 4, 4), textedit.ColForDisplay(line, 99, 4) == len(line))
 }

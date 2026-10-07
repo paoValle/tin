@@ -96,6 +96,58 @@ fn nextBoundary(s str, col i64) i64 {
 	return i
 }
 
+// RuneAt is the code point of the character that starts at byte i of s (0xfffd for bytes that are not UTF-8).
+fn RuneAt(s str, i i64) i64 {
+	let c = i64(s[i])
+	if c < 0x80 {
+		return c
+	}
+	mut n = 0
+	mut r = 0
+	if c >= 0xf0 {
+		n = 3
+		r = c & 0x07
+	} else if c >= 0xe0 {
+		n = 2
+		r = c & 0x0f
+	} else if c >= 0xc0 {
+		n = 1
+		r = c & 0x1f
+	} else {
+		return 0xfffd
+	}
+	if i + n >= len(s) {
+		return 0xfffd
+	}
+	mut k = 1
+	for k <= n {
+		r = (r << 6) | (i64(s[i + k]) & 0x3f)
+		k += 1
+	}
+	return r
+}
+
+// RuneWidth is how many screen columns a code point takes: 2 for the East Asian wide and fullwidth characters
+// and emoji, 0 for combining marks, 1 for everything else.
+fn RuneWidth(r i64) i64 {
+	if r >= 0x300 && r <= 0x36f || r == 0x200d || r >= 0xfe00 && r <= 0xfe0f {
+		return 0
+	}
+	if r < 0x1100 {
+		return 1
+	}
+	if r <= 0x115f || r >= 0x2e80 && r <= 0xa4cf || r >= 0xac00 && r <= 0xd7a3 || r >= 0xf900 && r <= 0xfaff {
+		return 2
+	}
+	if r >= 0xfe30 && r <= 0xfe6f || r >= 0xff00 && r <= 0xff60 || r >= 0xffe0 && r <= 0xffe6 {
+		return 2
+	}
+	if r >= 0x1f300 && r <= 0x1f64f || r >= 0x1f900 && r <= 0x1f9ff || r >= 0x20000 && r <= 0x3fffd {
+		return 2
+	}
+	return 1
+}
+
 // DisplayCol is the screen column of byte offset col in line: runes are one column, a tab goes to the next
 // multiple of tabWidth.
 fn DisplayCol(line str, col i64, tabWidth i64) i64 {
@@ -105,7 +157,7 @@ fn DisplayCol(line str, col i64, tabWidth i64) i64 {
 		if line[i] == '\t' {
 			d = (d / tabWidth + 1) * tabWidth
 		} else if (i64(line[i]) & 0xc0) != 0x80 {
-			d += 1
+			d += RuneWidth(RuneAt(line, i))
 		}
 		i += 1
 	}
@@ -120,6 +172,8 @@ fn colForDisplay(line str, dcol i64, tabWidth i64) i64 {
 		mut w = 1
 		if line[i] == '\t' {
 			w = (d / tabWidth + 1) * tabWidth - d
+		} else {
+			w = RuneWidth(RuneAt(line, i))
 		}
 		if d + w > dcol {
 			return i

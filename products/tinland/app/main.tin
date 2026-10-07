@@ -82,10 +82,6 @@ fn (ed mut Editor) handleEvent(e i64) {
 				ed.Buf.MoveTo(ed.Buf.Row, len(ed.Buf.Lines[ed.Buf.Row]), true)
 			}
 			ed.dragging = true
-		} else if t == 1 && x < 22.0 && ed.Buf.Dirty {
-			// the close button: unsaved changes are asked about first
-			ed.quit()
-			return
 		}
 	} else if t == 2 {
 		ed.dragging = false
@@ -115,6 +111,7 @@ fn run(ed mut Editor) {
 	ed.Win = win
 	ed.Scale = appkit.Scale(win)
 	ed.fontFor()
+	let menu = buildMenus(win)
 	let smoke = quarry.Getenv("TINLAND_SMOKE")
 	mut ticks = 0
 	mut limitTicks = -1
@@ -136,6 +133,11 @@ fn run(ed mut Editor) {
 		for e != 0 {
 			ed.handleEvent(e)
 			e = appkit.WaitEvent(win, 0.0)
+		}
+		mut cmd = appkit.NextCommand(menu)
+		for cmd >= 0 {
+			ed.perform(cmd)
+			cmd = appkit.NextCommand(menu)
 		}
 		let (w, h) = appkit.ContentSize(win)
 		if w > 0.0 && (w != ed.PtW || h != ed.PtH) {

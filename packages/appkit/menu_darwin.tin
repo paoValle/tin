@@ -1,0 +1,84 @@
+package appkit
+
+// Menus without callbacks. A menu item sends its action to its target when it is chosen; here every target is one
+// NSMutableArray and every action is addObject:, so choosing an item appends the item itself to the array, and the
+// application polls the array (NextCommand) between events and reads the item's tag to know which one it was.
+
+const ModCmd = 1 << 20
+const ModShift = 1 << 17
+const ModAlt = 1 << 19
+
+// Menu is the menu bar being built and the queue of chosen items.
+type Menu struct {
+	Bar   i64
+	Queue i64
+}
+
+// NewMenuBar makes an empty menu bar for the window's application and installs it.
+fn NewMenuBar(win Window) Menu {
+	let m = Menu{}
+	m.Bar = Send(Send(Class("NSMenu"), "alloc"), "init")
+	m.Queue = Send(Class("NSMutableArray"), "array")
+	Send(m.Queue, "retain")
+	Send1(win.App, "setMainMenu:", m.Bar)
+	return m
+}
+
+// AddMenu adds a menu with a title to the bar and returns it.
+fn AddMenu(m Menu, title str) i64 {
+	let top = Send3(Send(Class("NSMenuItem"), "alloc"), "initWithTitle:action:keyEquivalent:", NewString(title), 0, NewString(""))
+	let menu = Send1(Send(Class("NSMenu"), "alloc"), "initWithTitle:", NewString(title))
+	Send1(top, "setSubmenu:", menu)
+	Send1(m.Bar, "addItem:", top)
+	return menu
+}
+
+// AddItem adds an item that, when chosen, puts tag in the queue; key is the key shown beside it (with the
+// modifiers in mods, ModCmd and so on).
+fn AddItem(m Menu, menu i64, title str, key str, mods i64, tag i64) {
+	let item = Send3(Send(Class("NSMenuItem"), "alloc"), "initWithTitle:action:keyEquivalent:", NewString(title), Sel("addObject:"), NewString(key))
+	Send1(item, "setKeyEquivalentModifierMask:", mods)
+	Send1(item, "setTarget:", m.Queue)
+	Send1(item, "setTag:", tag)
+	Send1(menu, "addItem:", item)
+}
+
+// AddSystemItem adds an item AppKit itself handles (hide:, performMiniaturize:, ...).
+fn AddSystemItem(menu i64, title str, action str, key str, mods i64) {
+	let item = Send3(Send(Class("NSMenuItem"), "alloc"), "initWithTitle:action:keyEquivalent:", NewString(title), Sel(action), NewString(key))
+	Send1(item, "setKeyEquivalentModifierMask:", mods)
+	Send1(menu, "addItem:", item)
+}
+
+// AddSeparator adds a dividing line.
+fn AddSeparator(menu i64) {
+	Send1(menu, "addItem:", Send(Class("NSMenuItem"), "separatorItem"))
+}
+
+// NextCommand takes the oldest chosen item's tag off the queue (-1 when nothing was chosen).
+fn NextCommand(m Menu) i64 {
+	if Send(m.Queue, "count") == 0 {
+		return -1
+	}
+	let item = Send1(m.Queue, "objectAtIndex:", 0)
+	let tag = Send(item, "tag")
+	Send1(m.Queue, "removeObjectAtIndex:", 0)
+	return tag
+}
+
+// HookCloseButton makes the window's red button put tag in the queue instead of closing the window.
+fn HookCloseButton(win Window, m Menu, tag i64) {
+	// NSWindowCloseButton is 0
+	let button = Send1(win.Win, "standardWindowButton:", 0)
+	if button == 0 {
+		return
+	}
+	Send1(button, "setTarget:", m.Queue)
+	Send1(button, "setAction:", Sel("addObject:"))
+	Send1(button, "setTag:", tag)
+}
+
+// SetWindowsMenu makes menu the one that lists the application's windows.
+fn SetWindowsMenu(win Window, menu i64) {
+	Send1(win.App, "setWindowsMenu:", menu)
+}

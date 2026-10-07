@@ -1,0 +1,154 @@
+package main
+
+import "appkit"
+
+// The menu commands, each the same action as a key: perform turns one into the key press that does it.
+const cmdNew = 1
+const cmdOpen = 2
+const cmdSave = 3
+const cmdSaveAs = 4
+const cmdClose = 5
+const cmdQuit = 6
+const cmdUndo = 7
+const cmdRedo = 8
+const cmdCut = 9
+const cmdCopy = 10
+const cmdPaste = 11
+const cmdSelectAll = 12
+const cmdFind = 13
+const cmdFindNext = 14
+const cmdFindPrev = 15
+const cmdGoto = 16
+const cmdComment = 17
+const cmdDuplicate = 18
+const cmdDeleteLine = 19
+const cmdIndent = 20
+const cmdUnindent = 21
+const cmdRun = 22
+
+// item adds a menu item: its title, the key shown beside it (with Shift when shift is set) and its command.
+fn item(m appkit.Menu, menu i64, title str, key str, shift bool, cmd i64) {
+	mut mods = appkit.ModCmd
+	if shift {
+		mods = mods | appkit.ModShift
+	}
+	appkit.AddItem(m, menu, title, key, mods, cmd)
+}
+
+// buildMenus installs the menu bar: the application, File, Edit, Find and Window menus.
+fn buildMenus(win appkit.Window) appkit.Menu {
+	let m = appkit.NewMenuBar(win)
+	let app = appkit.AddMenu(m, "Tinland")
+	appkit.AddSystemItem(app, "About Tinland", "orderFrontStandardAboutPanel:", "", 0)
+	appkit.AddSeparator(app)
+	appkit.AddSystemItem(app, "Hide Tinland", "hide:", "h", appkit.ModCmd)
+	appkit.AddSystemItem(app, "Hide Others", "hideOtherApplications:", "h", appkit.ModCmd | appkit.ModAlt)
+	appkit.AddSystemItem(app, "Show All", "unhideAllApplications:", "", 0)
+	appkit.AddSeparator(app)
+	item(m, app, "Quit Tinland", "q", false, cmdQuit)
+
+	let file = appkit.AddMenu(m, "File")
+	item(m, file, "New", "n", false, cmdNew)
+	item(m, file, "Open...", "o", false, cmdOpen)
+	appkit.AddSeparator(file)
+	item(m, file, "Save", "s", false, cmdSave)
+	item(m, file, "Save As...", "s", true, cmdSaveAs)
+	appkit.AddSeparator(file)
+	item(m, file, "Close Tab", "w", false, cmdClose)
+	item(m, file, "Run", "r", false, cmdRun)
+
+	let edit = appkit.AddMenu(m, "Edit")
+	item(m, edit, "Undo", "z", false, cmdUndo)
+	item(m, edit, "Redo", "z", true, cmdRedo)
+	appkit.AddSeparator(edit)
+	item(m, edit, "Cut", "x", false, cmdCut)
+	item(m, edit, "Copy", "c", false, cmdCopy)
+	item(m, edit, "Paste", "v", false, cmdPaste)
+	item(m, edit, "Select All", "a", false, cmdSelectAll)
+	appkit.AddSeparator(edit)
+	item(m, edit, "Toggle Comment", "/", false, cmdComment)
+	item(m, edit, "Duplicate Line", "d", false, cmdDuplicate)
+	item(m, edit, "Delete Line", "k", true, cmdDeleteLine)
+	item(m, edit, "Indent", "]", false, cmdIndent)
+	item(m, edit, "Unindent", "[", false, cmdUnindent)
+
+	let find = appkit.AddMenu(m, "Find")
+	item(m, find, "Find and Replace...", "f", false, cmdFind)
+	item(m, find, "Find Next", "g", false, cmdFindNext)
+	item(m, find, "Find Previous", "g", true, cmdFindPrev)
+	item(m, find, "Go to Line...", "l", false, cmdGoto)
+
+	let window = appkit.AddMenu(m, "Window")
+	appkit.AddSystemItem(window, "Minimize", "performMiniaturize:", "m", appkit.ModCmd)
+	appkit.AddSystemItem(window, "Zoom", "performZoom:", "", 0)
+	appkit.SetWindowsMenu(win, window)
+	appkit.HookCloseButton(win, m, cmdQuit)
+	return m
+}
+
+// perform does a menu command by pressing the key that does the same.
+fn (ed mut Editor) perform(cmd i64) {
+	mut chars = ""
+	mut shift = false
+	if cmd == cmdNew {
+		chars = "n"
+	} else if cmd == cmdOpen {
+		chars = "o"
+	} else if cmd == cmdSave {
+		chars = "s"
+	} else if cmd == cmdSaveAs {
+		chars = "s"
+		shift = true
+	} else if cmd == cmdClose {
+		chars = "w"
+	} else if cmd == cmdQuit {
+		chars = "q"
+	} else if cmd == cmdUndo {
+		chars = "z"
+	} else if cmd == cmdRedo {
+		chars = "z"
+		shift = true
+	} else if cmd == cmdCut {
+		chars = "x"
+	} else if cmd == cmdCopy {
+		chars = "c"
+	} else if cmd == cmdPaste {
+		chars = "v"
+	} else if cmd == cmdSelectAll {
+		chars = "a"
+	} else if cmd == cmdFind {
+		chars = "f"
+	} else if cmd == cmdFindNext {
+		chars = "g"
+	} else if cmd == cmdFindPrev {
+		chars = "g"
+		shift = true
+	} else if cmd == cmdGoto {
+		chars = "l"
+	} else if cmd == cmdComment {
+		chars = "/"
+	} else if cmd == cmdDuplicate {
+		chars = "d"
+	} else if cmd == cmdDeleteLine {
+		chars = "k"
+		shift = true
+	} else if cmd == cmdIndent {
+		chars = "]"
+	} else if cmd == cmdUnindent {
+		chars = "["
+	} else if cmd == cmdRun {
+		chars = "r"
+	}
+	if len(chars) == 0 {
+		return
+	}
+	mut flags = flagCmd
+	if shift {
+		flags = flags | flagShift
+	}
+	if ed.Mode != modeEdit {
+		// leave a prompt first so the command acts on the text
+		ed.Mode = modeEdit
+	}
+	ed.handleKey(Key{Code: -1, Flags: flags, Chars: chars})
+}

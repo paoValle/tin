@@ -2,7 +2,8 @@
 
 A text editor written entirely in Tin: the editing engine (`packages/textedit`), the window and drawing
 (`packages/appkit`, which reaches AppKit and CoreGraphics through `@framework` externs, with no C and no
-callbacks), and the application (`app/`). It runs on macOS; Linux is next.
+callbacks: events are polled, and a menu item or the close button appends itself to an `NSMutableArray` the
+loop reads), and the application (`app/`). It runs on macOS; Linux is next.
 
 ```
 bin/tinc -o tinland products/tinland/app/*.tin
@@ -25,7 +26,7 @@ bin/tinc -o tinland products/tinland/app/*.tin
 | Alt+Left/Right, Cmd+Left/Right/Up/Down | by word, line start/end, document start/end |
 | Cmd+R | compile and run the file with `tinc` (output in a panel; click a compiler message to jump to it) |
 
-Double click selects a word, triple click a line; the wheel scrolls; Escape closes the output panel.
+Every key command is also in the menu bar. Double click selects a word, triple click a line; the wheel scrolls; Escape closes the output panel.
 
 ## Without a window
 
