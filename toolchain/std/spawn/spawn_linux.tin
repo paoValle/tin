@@ -39,27 +39,29 @@ fn spawnStart(c Cmd) !Process {
 	rt_spawn_set(rec, 1, cenvp)
 	rt_spawn_set(rec, 2, rt_cstr(prog))
 	rt_spawn_set(rec, 3, dirp)
-	let in = try openStdio(c.Stdin, true)
-	let out = try openStdio(c.Stdout, false)
-	let err = try openStdio(c.Stderr, false)
-	if in >= 0 {
-		rt_spawn_set(rec, 4, in)
+	let (pin, cin) = try stdioOpen(c.Stdin, true)
+	let (pout, cout) = try stdioOpen(c.Stdout, false)
+	let (perr, cerr) = try stdioOpen(c.Stderr, false)
+	if cin >= 0 {
+		rt_spawn_set(rec, 4, cin)
 	}
-	if out >= 0 {
-		rt_spawn_set(rec, 5, out)
+	if cout >= 0 {
+		rt_spawn_set(rec, 5, cout)
 	}
-	if err >= 0 {
-		rt_spawn_set(rec, 6, err)
+	if cerr >= 0 {
+		rt_spawn_set(rec, 6, cerr)
 	}
 	let (pid, e) = rt_sys_posix_spawn(rec)
-	if in >= 0 {
-		rt_sys_close(in)
+	// The child has execd or failed (vfork): its descriptors are the parent's to close now, and
+	// the pipe ends the parent keeps stay open.
+	if cin >= 0 {
+		rt_sys_close(cin)
 	}
-	if out >= 0 {
-		rt_sys_close(out)
+	if cout >= 0 {
+		rt_sys_close(cout)
 	}
-	if err >= 0 {
-		rt_sys_close(err)
+	if cerr >= 0 {
+		rt_sys_close(cerr)
 	}
 	rt_spawn_free(rec)
 	free(cargv)
@@ -67,13 +69,15 @@ fn spawnStart(c Cmd) !Process {
 		free(cenvp)
 	}
 	if e != 0 {
+		closeAll(pin, pout, perr)
 		fail say.Fault("spawn: %s: %s", prog, errnoText(e))
 	}
 	let pidfd = rt_spawn_pidfd(pid)
 	if pidfd < 0 {
+		closeAll(pin, pout, perr)
 		fail say.Fault("spawn: %s: pidfd_open: %s", prog, errnoText(rt_errno()))
 	}
-	return Process{pid: pid, pidfd: pidfd, done: false}
+	return Process{pid: pid, pidfd: pidfd, in: pin, out: pout, err: perr, done: false}
 }
 
 // resolveProgram is the program to exec: a name with a slash is used as it is, so execve
@@ -92,6 +96,10 @@ fn spawnWait(p mut Process) !i64 {
 		fail cast(fault, rt_wait_fault())
 	}
 	rt_sys_close(p.pidfd)
+	closeAll(p.in, p.out, p.err)
+	p.in = -1
+	p.out = -1
+	p.err = -1
 	if sig != 0 {
 		return -1
 	}
@@ -116,18 +124,49 @@ fn spawnPathVar() str {
 	return quarry.Getenv("PATH")
 }
 
-// openStdio opens the descriptor a Stdio asks for, or -1 for Inherit.
-fn openStdio(s Stdio, input bool) !i64 {
+// stdioOpen returns a Stdio's two ends: the parent's (-1 for anything but Pipe) and the child's.
+// For a pipe the parent writes to a child's stdin and reads a child's stdout or stderr.
+fn stdioOpen(s Stdio, input bool) !(i64, i64) {
 	match s {
 		Inherit => {
-			return -1
+			return -1, -1
 		}
 		Null => {
-			return try openPath("/dev/null", input)
+			let fd = try openPath("/dev/null", input)
+			return -1, fd
+		}
+		Pipe => {
+			let fds = calloc(2, 4)
+			let r = rt_sys_pipe(fds)
+			if r < 0 {
+				free(fds)
+				fail say.Fault("spawn: pipe: %s", errnoText(rt_errno()))
+			}
+			let a = i64(i32(__ld(fds, 4)))
+			let b = i64(i32(__ld(fds+4, 4)))
+			free(fds)
+			if input {
+				return b, a // the parent writes, the child reads
+			}
+			return a, b // the parent reads, the child writes
 		}
 		File(path) => {
-			return try openPath(path, input)
+			let fd = try openPath(path, input)
+			return -1, fd
 		}
+	}
+}
+
+// closeAll closes every descriptor that is open (-1 is not).
+fn closeAll(a i64, b i64, c i64) {
+	if a >= 0 {
+		rt_sys_close(a)
+	}
+	if b >= 0 {
+		rt_sys_close(b)
+	}
+	if c >= 0 {
+		rt_sys_close(c)
 	}
 }
 

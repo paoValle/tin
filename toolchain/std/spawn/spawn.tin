@@ -1,48 +1,64 @@
-// Package spawn starts child processes, like Go's os/exec: Start a program with inherited, null
-// or file standard descriptors, wait for it, signal it or kill it. A program is never run through
-// a shell: write []str{"sh", "-c", script} for one. Linux is the target; macOS is the last part
-// of #576, and pipes, Run and maxOutput are the next one.
+// Package spawn starts child processes, like Go's os/exec: Run a program and collect its output,
+// or Start it, talk to it through pipes, signal it or kill it. A program is never run through a
+// shell: write []str{"sh", "-c", script} for one. Linux is the target; macOS is the last part
+// of #576.
 package spawn
 
+import "fault"
 import "say"
 
 // Stdio says where a child's standard descriptor points.
 type Stdio enum {
 	Inherit   // the parent's own descriptor
 	Null      // /dev/null
+	Pipe      // a pipe: the parent writes (stdin) or reads (stdout, stderr)
 	File(str) // the named file, opened in the descriptor's direction
 }
 
 // Env says which environment a child gets. A Tin slice has no nil, so where Go's exec.Cmd says
 // "nil inherits and an empty list is empty", this package says so with a variant.
 type Env enum {
-	Inherit  // the parent's environment
-	Empty    // no variables at all
+	Inherit    // the parent's environment
+	Empty      // no variables at all
 	Set([]str) // exactly these "NAME=value" entries
 }
 
 // Cmd describes a program to start. Argv[0] is the program: a name without a slash is looked up
 // in PATH.
 type Cmd struct {
-	Argv   []str
-	Env    Env
-	Dir    str
-	Stdin  Stdio
-	Stdout Stdio
-	Stderr Stdio
+	Argv      []str
+	Env       Env
+	Dir       str
+	Stdin     Stdio
+	Stdout    Stdio
+	Stderr    Stdio
+	MaxOutput i64 // Run only: the stdout and stderr cap, 0 for DefaultMaxOutput
 }
 
 // Process is a running child. Wait reaps it; a Process that is never waited for leaves a zombie.
 type Process struct {
 	pid   i64
 	pidfd i64
+	in    i64 // the parent's write end of the child's stdin, or -1
+	out   i64 // the parent's read end of the child's stdout, or -1
+	err   i64 // the parent's read end of the child's stderr, or -1
 	done  bool
+}
+
+// Result is a finished Run.
+type Result struct {
+	Code   i64
+	Stdout str
+	Stderr str
 }
 
 // SIGKILL and SIGTERM are the signals Signal and Kill send.
 const SIGKILL = 9
 
 const SIGTERM = 15
+
+// DefaultMaxOutput is Run's cap on the stdout and stderr it collects: 64 MiB.
+const DefaultMaxOutput = 64 * 1024 * 1024
 
 // Start starts c and returns the running child. A start error names the program, like Go's
 // exec.Error.
@@ -51,6 +67,31 @@ fn Start(c Cmd) !Process {
 		fail say.Fault("spawn: empty argv")
 	}
 	return try spawnStart(c)
+}
+
+// Run starts c, collects its output and waits for it. Stdout and Stderr are captured unless they
+// are File or Null; more than MaxOutput (DefaultMaxOutput when 0) bytes of the two together fail
+// with fault.LimitExceeded and the child is killed. A non-zero exit is not a fault, and a task
+// deadline (within) kills the child, reaps it and fails with fault.DeadlineExceeded.
+fn Run(c Cmd) !Result {
+	mut cc = c
+	if cc.Stdout == Stdio.Inherit {
+		cc.Stdout = Stdio.Pipe
+	}
+	if cc.Stderr == Stdio.Inherit {
+		cc.Stderr = Stdio.Pipe
+	}
+	mut max = cc.MaxOutput
+	if max == 0 {
+		max = DefaultMaxOutput
+	}
+	mut p = try Start(cc)
+	let (out, err) = p.collect(max) catch e {
+		p.reapKilled()
+		fail e
+	}
+	let code = try p.Wait()
+	return Result{Code: code, Stdout: out, Stderr: err}
 }
 
 // Wait waits for the child, reaps it and returns its exit code, or -1 when a signal killed it.
@@ -72,6 +113,132 @@ fn (p Process) Signal(sig i64) ! {
 // Kill sends SIGKILL to the child.
 fn (p Process) Kill() ! {
 	try p.Signal(SIGKILL)
+}
+
+// Write writes data to the child's standard input (Stdio.Pipe on Cmd.Stdin) and returns how many
+// bytes went out. A task deadline interrupts the write with fault.DeadlineExceeded.
+fn (p mut Process) Write(data str) !i64 {
+	if p.in < 0 {
+		fail say.Fault("spawn: stdin is not a pipe")
+	}
+	mut off = 0
+	for off < len(data) {
+		let r = rt_task_wait(p.in, 2, 0) // writable
+		if r == waitDeadline {
+			fail cast(fault, rt_wait_fault())
+		}
+		let n = rt_sys_write(p.in, rt_cstr(data)+off, len(data)-off)
+		if n < 0 {
+			fail say.Fault("spawn: write: %s", errnoText(rt_errno()))
+		}
+		off += n
+	}
+	return i64(off)
+}
+
+// CloseStdin closes the child's standard input, so a reader sees EOF.
+fn (p mut Process) CloseStdin() ! {
+	if p.in >= 0 {
+		rt_sys_close(p.in)
+		p.in = -1
+	}
+}
+
+// Read reads the child's standard output (Stdio.Pipe on Cmd.Stdout) into buf, up to its length,
+// and returns how many bytes came; 0 is end of file.
+fn (p Process) Read(buf mut []u8) !i64 {
+	if p.out < 0 {
+		fail say.Fault("spawn: stdout is not a pipe")
+	}
+	return try readSome(p.out, mut buf, 0)
+}
+
+// ReadStderr is Read for the child's standard error.
+fn (p Process) ReadStderr(buf mut []u8) !i64 {
+	if p.err < 0 {
+		fail say.Fault("spawn: stderr is not a pipe")
+	}
+	return try readSome(p.err, mut buf, 0)
+}
+
+// collect reads both pipes until end of file, keeping the total under max.
+fn (p mut Process) collect(max i64) !(str, str) {
+	let chunk = make([]u8, 65536)
+	mut out = []u8{}
+	mut err = []u8{}
+	mut openOut = p.out >= 0
+	mut openErr = p.err >= 0
+	mut total = i64(0)
+	mut lastErr = false
+	for openOut || openErr {
+		mut progressed = false
+		// The pipe that had data last is tried first, so the 20 ms poll only happens when
+		// neither has anything yet.
+		if openOut && (!lastErr || !openErr) {
+			let n = try readSome(p.out, mut chunk, 20000000)
+			if n == 0 {
+				openOut = false
+			} else if n > 0 {
+				total += n
+				if total > max {
+					fail limitFault(max)
+				}
+				out = append(out, chunk[0:n]...)
+				progressed = true
+			}
+		}
+		if openErr && (!progressed || !openOut) {
+			let n = try readSome(p.err, mut chunk, 20000000)
+			if n == 0 {
+				openErr = false
+			} else if n > 0 {
+				total += n
+				if total > max {
+					fail limitFault(max)
+				}
+				err = append(err, chunk[0:n]...)
+				progressed = true
+			}
+		}
+		if openOut && openErr && !progressed {
+			lastErr = !lastErr
+		}
+	}
+	return rt_str_from_raw(cast(i64, out)[2], len(out)), rt_str_from_raw(cast(i64, err)[2], len(err))
+}
+
+// readSome waits up to timeout ns for fd, reads once into buf and returns the count: 0 is end of
+// file and -1 is "nothing yet".
+fn readSome(fd i64, buf mut []u8, timeout i64) !i64 {
+	let r = rt_task_wait(fd, 1, timeout)
+	if r == waitDeadline {
+		fail cast(fault, rt_wait_fault())
+	}
+	if r != waitReady {
+		return -1
+	}
+	let n = rt_sys_read(fd, cast(i64, buf)[2], len(buf))
+	if n < 0 {
+		fail say.Fault("spawn: read: %s", errnoText(rt_errno()))
+	}
+	return n
+}
+
+// reapKilled kills the child and reaps it, for the paths that give up on it (a deadline or an
+// exceeded output cap).
+fn (p mut Process) reapKilled() {
+	if p.done {
+		return
+	}
+	rt_sys_kill(p.pid, SIGKILL)
+	rt_spawn_wait(p.pid, p.pidfd, 0)
+	rt_sys_close(p.pidfd)
+	p.done = true
+}
+
+// limitFault is fault.LimitExceeded with the cap in its message.
+fn limitFault(max i64) ! {
+	fail fault.Wrap(fault.LimitExceeded, say.Fmt("spawn: output over %d bytes", max))
 }
 
 // LookPath finds name like Go's exec.LookPath: a name with a slash is used as it is, otherwise

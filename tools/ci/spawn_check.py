@@ -4,6 +4,9 @@
 The tests start real processes, so they cannot run in the empty-root image; debian:bookworm-slim
 provides the programs. The fixture is built for the host's architecture and run in that
 architecture's container, so the check works on a Linux runner and on a Mac's Docker VM alike.
+It covers start and wait, exit codes, a missing program, PATH lookup, signals, a deadline that
+kills and reaps, a 1 MiB stdin pipe round trip, streaming reads, Run's separate stdout and
+stderr, and the maxOutput cap.
 """
 import os
 import platform
@@ -14,15 +17,21 @@ from pathlib import Path
 from suite import ROOT
 
 EXPECTED = [
+    'cat true 0 1048576 true',
     'deadline result -1',
     'deadline true',
     'echo 0',
     'hello',
     'killed -1',
+    'limit true',
     'lookpath true',
     'loop fds equal true',
     'missing spawn: /no/such/tin-program: no such file or directory',
+    'run 4 true true',
+    'run deadline result false',
+    'run deadline true',
     'sh exit 3',
+    'stream true 0',
 ]
 
 

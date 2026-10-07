@@ -4,10 +4,27 @@ import "say"
 import "spawn"
 import "fault"
 import "quarry"
+import "ore"
 
 // The #576 Linux tests: start and wait, exit codes, a missing program, stdin from a file, a
 // separate stderr, a working directory, signals, and a task deadline killing the child. They run
 // in the Linux containers (tools/ci/spawn_check.py); /bin/sh and cat need debian:bookworm-slim.
+
+// runSh runs sh and returns (code, stdout is "out", stderr is "err").
+fn runSh() !(i64, bool, bool) {
+	let r = try spawn.Run(spawn.Cmd{Argv: []str{"/bin/sh", "-c", "echo out; echo err >&2; exit 4"},
+		Env: spawn.Env.Inherit, Dir: "", Stdin: spawn.Stdio.Inherit, Stdout: spawn.Stdio.Inherit,
+		Stderr: spawn.Stdio.Inherit, MaxOutput: 0})
+	return r.Code, r.Stdout == "out\n", r.Stderr == "err\n"
+}
+
+// runSleep runs a sleeping child through Run, for the deadline test.
+fn runSleep() !bool {
+	let r = try spawn.Run(spawn.Cmd{Argv: []str{"/bin/sleep", "10"}, Env: spawn.Env.Inherit, Dir: "",
+		Stdin: spawn.Stdio.Inherit, Stdout: spawn.Stdio.Inherit, Stderr: spawn.Stdio.Inherit,
+		MaxOutput: 0})
+	return r.Code == 0
+}
 
 fn cmd(argv []str) spawn.Cmd {
 	return spawn.Cmd{Argv: argv, Env: spawn.Env.Inherit, Dir: "", Stdin: spawn.Stdio.Inherit, Stdout: spawn.Stdio.Inherit, Stderr: spawn.Stdio.Inherit}
@@ -83,6 +100,90 @@ fn main() {
 		[]str{}
 	}
 	say.Line("loop fds equal", fdsBefore == len(dirsAfter))
+
+	// stdin piped to cat: 1 MiB round trips through the pipe into a file.
+	let outPath = "/tmp/tin-spawn-cat.txt"
+	mut cp = spawn.Start(spawn.Cmd{Argv: []str{"/bin/cat"}, Env: spawn.Env.Inherit, Dir: "",
+		Stdin: spawn.Stdio.Pipe, Stdout: spawn.Stdio.File(outPath), Stderr: spawn.Stdio.Inherit,
+		MaxOutput: 0}) catch err {
+		say.Line("cat start failed", err)
+		return
+	}
+	let chunk = make([]u8, 65536)
+	for i in 0..len(chunk) {
+		chunk[i] = u8(65 + i % 26)
+	}
+	mut written = i64(0)
+	mut catErr = false
+	for i in 0..16 {
+		let n = cp.Write(ore.ToStr(chunk)) catch err {
+			say.Line("cat write failed", err)
+			catErr = true
+			-1
+		}
+		written += n
+	}
+	cp.CloseStdin() catch err {
+		say.Line("cat close failed", err)
+		catErr = true
+	}
+	let ccode = cp.Wait() catch err {
+		say.Line("cat wait failed", err)
+		catErr = true
+		i64(-1)
+	}
+	let back = quarry.ReadFile(outPath) catch _ {
+		""
+	}
+	say.Line("cat", !catErr, ccode, written, len(back) == 16*65536)
+
+	// Streaming: read the child's stdout as it writes, 0 at end of file.
+	mut ep = spawn.Start(spawn.Cmd{Argv: []str{"/bin/echo", "streamed"}, Env: spawn.Env.Inherit, Dir: "",
+		Stdin: spawn.Stdio.Inherit, Stdout: spawn.Stdio.Pipe, Stderr: spawn.Stdio.Inherit,
+		MaxOutput: 0}) catch err {
+		say.Line("stream start failed", err)
+		return
+	}
+	let rbuf = make([]u8, 64)
+	mut got = ""
+	for {
+		let n = ep.Read(mut rbuf) catch err {
+			say.Line("stream read failed", err)
+			-1
+		}
+		if n <= 0 {
+			break
+		}
+		got += ore.ToStr(rbuf[0:n])
+	}
+	let ecode = ep.Wait() catch err {
+		say.Line("stream wait failed", err)
+		i64(-1)
+	}
+	say.Line("stream", got == "streamed\n", ecode)
+
+	// Run collects stdout and stderr separately; a non-zero exit is not a fault.
+	let (rc, rout, rerr) = runSh() catch err {
+		say.Line("run failed", err)
+		return
+	}
+	say.Line("run", rc, rout, rerr)
+
+	// More output than maxOutput fails with fault.LimitExceeded and the child is killed.
+	spawn.Run(spawn.Cmd{Argv: []str{"/bin/sh", "-c", "cat /dev/zero"}, Env: spawn.Env.Inherit, Dir: "",
+		Stdin: spawn.Stdio.Inherit, Stdout: spawn.Stdio.Inherit, Stderr: spawn.Stdio.Inherit,
+		MaxOutput: 1000}) catch err {
+		say.Line("limit", fault.Is(err, fault.LimitExceeded))
+	}
+
+	// A deadline inside Run kills the child, reaps it and reports the deadline.
+	let dr = within 100ms {
+		try runSleep()
+	} catch err {
+		say.Line("run deadline", fault.Is(err, fault.DeadlineExceeded))
+		false
+	}
+	say.Line("run deadline result", dr)
 
 	// Signal: a sleeping child is killed and Wait reports -1.
 	mut s = spawn.Start(cmd([]str{"/bin/sleep", "10"})) catch err {
