@@ -93,7 +93,7 @@ fn (ws Workspace) gitPanel(t mut ui.Tree) {
 		if code == "M" {
 			color = th.Warning
 		} else if code == "A" || code == "??" {
-			color = ui.Hex(0x73c991)
+			color = ui.Hex(0x8fd1b0)
 		} else if code == "D" {
 			color = th.Error
 		}

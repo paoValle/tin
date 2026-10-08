@@ -248,9 +248,9 @@ fn (ed mut Editor) Paint(th theme.Theme, x f64, y f64, w f64, h f64, scene mut m
 		// what git says about this line: a bar in the gutter's edge
 		let mark = ed.markAt(row)
 		if mark == 1 {
-			render.Fill(mut scene, x + 2.0, top, 3.0, lh, ui.Hex(0x2ea043))
+			render.Fill(mut scene, x + 2.0, top, 3.0, lh, ui.Hex(0x8fd1b0))
 		} else if mark == 2 {
-			render.Fill(mut scene, x + 2.0, top, 3.0, lh, ui.Hex(0x0078d4))
+			render.Fill(mut scene, x + 2.0, top, 3.0, lh, ui.Hex(0x7cc4f0))
 		} else if mark == 3 {
 			render.Fill(mut scene, x + 2.0, top, 6.0, 2.0, th.Error)
 		}
