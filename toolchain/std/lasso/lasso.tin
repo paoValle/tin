@@ -360,7 +360,7 @@ fn expand(re Regexp, tmpl str, s str, m []i64) str {
 			let start = i
 			mut j = i
 			for j < len(tmpl) && (tmpl[j] == '_' || tmpl[j] >= 'a' && tmpl[j] <= 'z' ||
-				tmpl[j] >= 'A' && tmpl[j] <= 'Z' || tmpl[j] >= '0' && tmpl[j] <= '9') {
+					tmpl[j] >= 'A' && tmpl[j] <= 'Z' || tmpl[j] >= '0' && tmpl[j] <= '9') {
 				j += 1
 			}
 			if j == start {

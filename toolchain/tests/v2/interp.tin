@@ -39,6 +39,6 @@ fn main() {
 	let (_, err) = port("8a0")
 	say.Line(err)
 	let p = port("") catch e { say.Line("caught: {e}")
- 0 }
+		0 }
 	say.Line("p={p}")
 }

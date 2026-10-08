@@ -2,34 +2,34 @@ package main
 import "hearth"
 import "say"
 type Entry struct { Name str
- Tags []str }
+	Tags []str }
 mut saved []Entry
 fn retain() {
-    let e = Entry{Name: say.Fmt("saved-%d", 42), Tags: []str{say.Fmt("tag-%d", 7)}}
-    saved = keep([]Entry{e})
+	let e = Entry{Name: say.Fmt("saved-%d", 42), Tags: []str{say.Fmt("tag-%d", 7)}}
+	saved = keep([]Entry{e})
 }
 fn churn() {
-    let b = make([]u8, 1048576)
-    for i in 0..len(b) {
-        if b[i] != 0 { panic("pool was not zeroed") }
-        b[i] = 255
-    }
-    // Exercise large-block allocation/free as well as the reusable base chunk.
-    let big = make([]u8, 5242880)
-    for i in (0..len(big)).step(4096) {
-        if big[i] != 0 { panic("large block was not zeroed") }
-        big[i] = 127
-    }
-    let xs = make([]str, 1024)
-    for _, x in xs { if x != "" { panic("string zero value") } }
-    let rows = make([][]i64, 8)
-    rows[0] = append(rows[0], 1)
-    if len(rows[1]) != 0 { panic("nested slice headers alias") }
+	let b = make([]u8, 1048576)
+	for i in 0..len(b) {
+		if b[i] != 0 { panic("pool was not zeroed") }
+		b[i] = 255
+	}
+	// Exercise large-block allocation/free as well as the reusable base chunk.
+	let big = make([]u8, 5242880)
+	for i in (0..len(big)).step(4096) {
+		if big[i] != 0 { panic("large block was not zeroed") }
+		big[i] = 127
+	}
+	let xs = make([]str, 1024)
+	for _, x in xs { if x != "" { panic("string zero value") } }
+	let rows = make([][]i64, 8)
+	rows[0] = append(rows[0], 1)
+	if len(rows[1]) != 0 { panic("nested slice headers alias") }
 }
 fn main() {
-    retain()
-    hearth.Reset()
-    for i in 0..200 { churn()
- hearth.Reset() }
-    println(saved[0].Name, saved[0].Tags[0])
+	retain()
+	hearth.Reset()
+	for i in 0..200 { churn()
+		hearth.Reset() }
+	println(saved[0].Name, saved[0].Tags[0])
 }

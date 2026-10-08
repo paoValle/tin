@@ -1,3 +1,3 @@
 package main
 fn main() { let hi = -1
- println("abc"[:hi]) }
+	println("abc"[:hi]) }

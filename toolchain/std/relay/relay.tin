@@ -11,7 +11,6 @@ package relay
 
 import "hearth"
 
-
 const maxCores = 256
 
 // Box words: 0 head (producers swap in here), 1 tail (owner only), 2 waiting (owner is
@@ -162,7 +161,6 @@ fn drain_pipe(fd i64) {
 	}
 	free(word)
 }
-
 
 fn wait_readable(fd i64) {
 	let p = calloc(1, 8)

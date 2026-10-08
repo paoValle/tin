@@ -1,8 +1,8 @@
 package main
 mut calls i64
 fn n() i64 { calls += 1
- return 1 }
+	return 1 }
 fn main() { let a = make([]str, n())
- let b = make([][]i64, n())
- let c = make([]u8, n(), n()+1)
- println(calls, len(a), len(b), len(c)) }
+	let b = make([][]i64, n())
+	let c = make([]u8, n(), n()+1)
+	println(calls, len(a), len(b), len(c)) }

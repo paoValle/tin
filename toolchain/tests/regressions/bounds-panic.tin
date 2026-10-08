@@ -1,4 +1,4 @@
 package main
 fn at(s []i64, i i64) i64 { return s[i] }
 fn main() { let f = at
- println(f([]i64{1,2}, -1)) }
+	println(f([]i64{1, 2}, -1)) }

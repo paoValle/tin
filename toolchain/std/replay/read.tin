@@ -75,12 +75,12 @@ fn Unseal(data str, key str) !str {
 		for i*32 < len(ct) {
 			let ks = seal.HmacSha256(ke, nonce+word(i))
 			{
-			mut j = 0
-			for j < 32 && i*32+j < len(ct) {
+				mut j = 0
+				for j < 32 && i*32+j < len(ct) {
 					out[i*32+j] = ct[i*32+j] ^ ks[j]
 					j += 1
+				}
 			}
-		}
 			i += 1
 		}
 	}

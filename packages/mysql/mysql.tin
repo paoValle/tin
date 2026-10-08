@@ -33,7 +33,6 @@ import "seal"
 import "tls"
 import "wire"
 
-
 // Value is one column of a row.
 type Value enum {
 	Null
@@ -1838,8 +1837,8 @@ fn untape(v str) !(Rows, Result) {
 			mut row = make([]Value, 0, 8)
 			let n = k.word()
 			{
-			mut j = 0
-			for j < n && !k.bad {
+				mut j = 0
+				for j < n && !k.bad {
 					let t = k.word()
 					if t == 0 {
 						row = append(row, Value.Null)
@@ -1853,8 +1852,8 @@ fn untape(v str) !(Rows, Result) {
 						k.bad = true
 					}
 					j += 1
+				}
 			}
-		}
 			all = append(all, row)
 			i += 1
 		}

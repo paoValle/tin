@@ -4,4 +4,4 @@ type Box struct { Items []str }
 let box Box = Box{}
 fn put(b mut Box, s str) { b.Items = append(b.Items, s) }
 fn main() { let f = put
- f(mut box, say.Fmt("%d", 1)) }
+	f(mut box, say.Fmt("%d", 1)) }

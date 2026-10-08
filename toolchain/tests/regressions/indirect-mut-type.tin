@@ -2,6 +2,6 @@ package main
 type Box struct { X i64 }
 fn put(b mut Box) { b.X = 2 }
 fn main() { let f fn(Box) = put
- let b = Box{X: 1}
- f(b)
- println(b.X) }
+	let b = Box{X: 1}
+	f(b)
+	println(b.X) }

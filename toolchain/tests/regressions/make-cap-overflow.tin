@@ -1,5 +1,5 @@
 package main
 fn main() { let c = i64(4611686018427387904)
- let s = make([]i64, 1, c)
- s[0] = 5
- println(s[0]) }
+	let s = make([]i64, 1, c)
+	s[0] = 5
+	println(s[0]) }

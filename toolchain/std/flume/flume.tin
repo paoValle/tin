@@ -4,7 +4,6 @@ package flume
 
 import "say"
 
-
 const bufSize = 65536
 
 // Reader buffers reads from a file descriptor. Inside a task it waits on a pipe, socket or

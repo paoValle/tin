@@ -8,21 +8,21 @@ import "say"
 // core. Main sends core 0 the value it sees before the cores start (a global assigned in main
 // would reach core 0 only, #343); the other cores send what they see, and core 0 compares.
 fn core(id i64) {
-    if id != 0 {
-        relay.Send(0, say.Str(hearth.Cores()))
-        return
-    }
-    let (_, want) = relay.Recv()
-    let n = mint.Atoi(want) catch _ { 0 }
-    mut same = want == say.Str(hearth.Cores())
-    for i in 1..n {
-        let (_, got) = relay.Recv()
-        if got != want { same = false }
-    }
-    println("same", same)
+	if id != 0 {
+		relay.Send(0, say.Str(hearth.Cores()))
+		return
+	}
+	let (_, want) = relay.Recv()
+	let n = mint.Atoi(want) catch _ { 0 }
+	mut same = want == say.Str(hearth.Cores())
+	for i in 1..n {
+		let (_, got) = relay.Recv()
+		if got != want { same = false }
+	}
+	println("same", same)
 }
 fn main() {
-    let outer = hearth.Cores()
-    relay.Send(0, say.Str(outer))
-    hearth.Run(outer, core)
+	let outer = hearth.Cores()
+	relay.Send(0, say.Str(outer))
+	hearth.Run(outer, core)
 }

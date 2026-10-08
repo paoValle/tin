@@ -6,7 +6,6 @@ import "say"
 // Shapes (#141, compiler step 2: the grammar). Every declaration form parses, and the
 // words `shape` and `dyn` stay usable as ordinary names.
 
-
 // A method set: a name, parameters with their mut marks, and results. !T is the fault.
 shape Reader {
 	Read(buf mut []u8) !i64

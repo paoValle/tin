@@ -62,19 +62,19 @@ fn shouldEscape(c u8, mode i64) bool {
 				encodePath => {
 					return c == '?'
 				}
-			encodePathSegment => {
+				encodePathSegment => {
 					return c == '/' || c == ';' || c == ',' || c == '?'
 				}
-			encodeUserPassword => {
+				encodeUserPassword => {
 					return c == '@' || c == '/' || c == '?' || c == ':'
 				}
-			encodeQueryComponent => {
+				encodeQueryComponent => {
 					return true
 				}
-			encodeFragment => {
+				encodeFragment => {
 					return false
 				}
-		}
+			}
 		}
 	}
 	if mode == encodeFragment {
@@ -135,17 +135,17 @@ fn unescape(s str, mode i64) !str {
 					}
 					i += 3
 				}
-			'+' => {
+				'+' => {
 					hasPlus = mode == encodeQueryComponent
 					i += 1
 				}
-			_ => {
+				_ => {
 					if (mode == encodeHost || mode == encodeZone) && s[i] < 0x80 && shouldEscape(s[i], mode) {
 						try invalidHostFault(s[i : i+1])
 					}
 					i += 1
 				}
-		}
+			}
 		}
 	}
 	if n == 0 && !hasPlus {
@@ -164,13 +164,13 @@ fn unescape(s str, mode i64) !str {
 					t = append(t, unhex(s[i+1])<<4|unhex(s[i+2]))
 					i += 2
 				}
-			'+' => {
+				'+' => {
 					t = append(t, plus)
 				}
-			_ => {
+				_ => {
 					t = append(t, s[i])
 				}
-		}
+			}
 			i += 1
 		}
 	}

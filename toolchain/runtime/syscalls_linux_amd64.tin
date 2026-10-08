@@ -135,7 +135,6 @@ fn linux_nr_close_range() i64 {
 	return 436
 }
 
-
 fn linux_nr_connect() i64 {
 	return 42
 }

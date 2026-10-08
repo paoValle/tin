@@ -9,95 +9,95 @@ shared mut memoryCached i64 // of those, the large mappings heaps keep for reuse
 mut memoryHeap i64
 
 fn mem_failpoint(n i64) {
-    if memoryFailAfter >= 0 && __atomic_add(&memoryAllocCount,1) >= memoryFailAfter {
-        mem_oom(n)
-    }
+	if memoryFailAfter >= 0 && __atomic_add(&memoryAllocCount, 1) >= memoryFailAfter {
+		mem_oom(n)
+	}
 }
 
 // mem_mapped counts n bytes heap mapped (negative: unmapped) in its total and the process's;
 // a large block may be unmapped by another core, so both are atomic.
 fn mem_mapped(heap i64, n i64) {
-    __atomic_add(heap+176,n)
-    __atomic_add(&memoryMapped,n)
+	__atomic_add(heap+176, n)
+	__atomic_add(&memoryMapped, n)
 }
 
 // rt_memory_mapped is the bytes block p maps of its own (a large block, page-rounded), else 0.
 fn rt_memory_mapped(p i64) i64 {
-    if p == 0 { return 0 }
-    let heap = (p-16)[0]
-    let n = ((p-8)[0]&140737488355327)+16
-    let k = mem_class(n)
-    if k >= 16 { return mem_class_size(k) }
-    if k >= 0 { return 0 }
-    return mem_map_size(heap[1], n)
+	if p == 0 { return 0 }
+	let heap = (p-16)[0]
+	let n = ((p-8)[0]&140737488355327)+16
+	let k = mem_class(n)
+	if k >= 16 { return mem_class_size(k) }
+	if k >= 0 { return 0 }
+	return mem_map_size(heap[1], n)
 }
 
 // rt_heap_stats is what this core's heap has from the system (#345): the bytes of its slabs, the
 // bytes of its large blocks (live ones and the mappings it keeps for reuse) and how many mappings
 // that is in all.
 fn rt_heap_stats() (i64, i64, i64) {
-    if memoryHeap == 0 { return 0, 0, 0 }
-    let slabs = __atomic_load(memoryHeap+184)
-    return slabs, __atomic_load(memoryHeap+176) - slabs, __atomic_load(memoryHeap+192)
+	if memoryHeap == 0 { return 0, 0, 0 }
+	let slabs = __atomic_load(memoryHeap+184)
+	return slabs, __atomic_load(memoryHeap+176) - slabs, __atomic_load(memoryHeap+192)
 }
 
 // rt_memory_heap_mapped is the bytes this core's heap has mapped (#356).
 fn rt_memory_heap_mapped() i64 {
-    if memoryHeap == 0 { return 0 }
-    return __atomic_load(memoryHeap+176) - memoryHeap[25]
+	if memoryHeap == 0 { return 0 }
+	return __atomic_load(memoryHeap+176) - memoryHeap[25]
 }
 
 fn rt_memory_test_setup() {
-    let enabled = rt_getenv(cast(i64,"TIN_ALLOC_TEST")+8)
-    if enabled == 0 || load8(enabled) != '1' { return }
-    let scalar = rt_getenv(cast(i64,"TIN_MEMORY_SCALAR")+8)
-    if scalar != 0 && load8(scalar) == '1' { memoryVectorScalar = 1 }
-    let limit_ = rt_getenv(cast(i64,"TIN_FAIL_ALLOC_AFTER")+8)
-    if limit_ != 0 { memoryFailAfter = rt_decimal_integer(limit_) }
+	let enabled = rt_getenv(cast(i64, "TIN_ALLOC_TEST")+8)
+	if enabled == 0 || load8(enabled) != '1' { return }
+	let scalar = rt_getenv(cast(i64, "TIN_MEMORY_SCALAR")+8)
+	if scalar != 0 && load8(scalar) == '1' { memoryVectorScalar = 1 }
+	let limit_ = rt_getenv(cast(i64, "TIN_FAIL_ALLOC_AFTER")+8)
+	if limit_ != 0 { memoryFailAfter = rt_decimal_integer(limit_) }
 }
 
 fn rt_memory_heap() i64 {
-    if memoryHeap == 0 { memoryHeap = mem_heap_new(MAP_STACK,rt_page_size()) }
-    return memoryHeap
+	if memoryHeap == 0 { memoryHeap = mem_heap_new(MAP_STACK, rt_page_size()) }
+	return memoryHeap
 }
 
 fn rt_memory_alloc(n i64, zero i64) i64 {
-    if __ctx() != 0 { return mem_alloc(rt_memory_heap(),n,zero) }
-    mem_lock(&memoryBootLock)
-    if memoryBootHeap == 0 { memoryBootHeap = mem_heap_new(MAP_STACK,rt_page_size()) }
-    let p = mem_alloc(memoryBootHeap,n,zero)
-    mem_unlock(&memoryBootLock)
-    return p
+	if __ctx() != 0 { return mem_alloc(rt_memory_heap(), n, zero) }
+	mem_lock(&memoryBootLock)
+	if memoryBootHeap == 0 { memoryBootHeap = mem_heap_new(MAP_STACK, rt_page_size()) }
+	let p = mem_alloc(memoryBootHeap, n, zero)
+	mem_unlock(&memoryBootLock)
+	return p
 }
 
 fn calloc(n i64, size i64) i64 {
-    if n < 0 || size < 0 || (size != 0 && n > maxAlloc/size) { mem_oom(maxAlloc) }
-    let bytes = n*size
-    return rt_memory_alloc(bytes,1)
+	if n < 0 || size < 0 || (size != 0 && n > maxAlloc/size) { mem_oom(maxAlloc) }
+	let bytes = n*size
+	return rt_memory_alloc(bytes, 1)
 }
 
 fn free(p i64) {
-    if __ctx() == 0 { mem_free(p,0) } else { mem_free(p,memoryHeap) }
+	if __ctx() == 0 { mem_free(p, 0) } else { mem_free(p, memoryHeap) }
 }
 
 fn realloc(p i64, n i64) i64 {
-    return mem_realloc(rt_memory_heap(),p,n)
+	return mem_realloc(rt_memory_heap(), p, n)
 }
 
-fn malloc(n i64) i64 { return rt_memory_alloc(n,0) }
+fn malloc(n i64) i64 { return rt_memory_alloc(n, 0) }
 
 // Discard complete payload pages while keeping the header and boundary pages intact.
 fn rt_memory_discard(p i64) {
-    if p == 0 { return }
-    let heap = (p-16)[0]
-    let page = heap[1]
-    let start = (p+page-1)&-page
-    let end = (p+((p-8)[0]&140737488355327))&-page
-    if end > start { rt_sys_madvise(start,end-start,MEM_DONTNEED) }
+	if p == 0 { return }
+	let heap = (p-16)[0]
+	let page = heap[1]
+	let start = (p+page-1)&-page
+	let end = (p+((p-8)[0]&140737488355327))&-page
+	if end > start { rt_sys_madvise(start, end-start, MEM_DONTNEED) }
 }
 
 // Cache CPU/OS vector capability in each strict core context; test builds can force SSE2.
 fn rt_memory_vector_mode() i64 {
-    if memoryVectorScalar != 0 { return 0 }
-    return mem_avx2_supported()
+	if memoryVectorScalar != 0 { return 0 }
+	return mem_avx2_supported()
 }

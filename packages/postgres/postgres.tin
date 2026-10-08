@@ -30,7 +30,6 @@ import "seal"
 import "tls"
 import "wire"
 
-
 // Value is one column of a row.
 type Value enum {
 	Null
@@ -334,7 +333,7 @@ fn read_packet(c i64) !(i64, i64) {
 			if c[cS]+n+1 > c[cCap] {
 				memmove(c[cBuf], p, avail)
 				c[cS] = 0
- c[cE] = avail
+				c[cE] = avail
 				if n+1 > c[cCap] {
 					c[cCap] = n+1+16384
 					c[cBuf] = realloc(c[cBuf], c[cCap])
@@ -343,7 +342,7 @@ fn read_packet(c i64) !(i64, i64) {
 		} else if c[cS] > 0 && (c[cS] == c[cE] || c[cE] == c[cCap]) {
 			memmove(c[cBuf], c[cBuf]+c[cS], avail)
 			c[cS] = 0
- c[cE] = avail
+			c[cE] = avail
 		}
 		let tc = tlsConns[c]
 		if tc != nil {
@@ -362,7 +361,7 @@ fn read_packet(c i64) !(i64, i64) {
 		}
 		let k = rt_sys_read(c[cFd], c[cBuf]+c[cE], c[cCap]-c[cE])
 		if k > 0 { c[cE] += k
- continue }
+			continue }
 		if k == 0 { fail "postgres: the server closed the connection" }
 		let e = rt_errno()
 		if e == EINTR { continue }
@@ -395,7 +394,7 @@ fn put_raw(c i64, p i64, n i64) {
 
 fn put_str(c i64, s str) { put_raw(c, cast(i64, s)+8, len(s)) }
 fn put_cstr(c i64, s str) { put_str(c, s)
- put_be(c, 0, 1) }
+	put_be(c, 0, 1) }
 
 // kind 0 is the untyped startup frame; otherwise a one-byte tag precedes the length.
 fn begin_packet(c i64, kind i64) {
@@ -425,7 +424,7 @@ fn flush(c i64) ! {
 		_ = try remaining(c[cUntil])
 		let k = rt_sys_write(c[cFd], c[cOut]+at, c[cOutN]-at)
 		if k > 0 { at += k
- continue }
+			continue }
 		let e = rt_errno()
 		if e == EINTR { continue }
 		if e != EAGAIN { fail os_msg("write", e) }
@@ -437,8 +436,8 @@ fn flush(c i64) ! {
 }
 
 type cur struct { p i64
- at i64
- end i64 }
+	at i64
+	end i64 }
 fn (k mut cur) fixed(n i64) !i64 {
 	if n < 0 || n > k.end-k.at { fail "postgres: truncated message" }
 	let v = be(k.p+k.at, n)
@@ -496,17 +495,17 @@ fn ready(c i64, k mut cur) ! {
 
 fn status_message(c i64, k mut cur) ! {
 	if c[cKind] == 'S' { _ = try k.cstr()
- _ = try k.cstr()
- try k.done()
- return }
+		_ = try k.cstr()
+		try k.done()
+		return }
 	if c[cKind] == 'K' {
 		c[cPID] = try k.fixed(4)
- c[cKey] = try k.fixed(4)
- try k.done()
- return
+		c[cKey] = try k.fixed(4)
+		try k.done()
+		return
 	}
 	if c[cKind] == 'N' { _ = try error_text(mut k)
- return }
+		return }
 	fail "postgres: unexpected server message"
 }
 
@@ -521,7 +520,7 @@ fn password_message(c i64, text str, terminated bool) ! {
 	put_str(c, text)
 	if terminated { put_be(c, 0, 1) }
 	try end_packet(c)
- try flush(c)
+	try flush(c)
 }
 
 fn attrs(s str) ![]str {
@@ -546,19 +545,19 @@ fn handshake(c i64, rec i64) ! {
 	let pass = rec_str(rec, rPass)
 	let db = rec_str(rec, rDB)
 	try no_nul(user)
- try no_nul(db)
+	try no_nul(db)
 	if len(user)+len(db) > 16700000 || len(pass) > 16700000 { fail "postgres: login data too large" }
 	begin_packet(c, 0)
 	put_be(c, 196608, 4)
 	put_cstr(c, "user")
- put_cstr(c, user)
+	put_cstr(c, user)
 	if db != "" { put_cstr(c, "database")
- put_cstr(c, db) }
+		put_cstr(c, db) }
 	put_cstr(c, "client_encoding")
- put_cstr(c, "UTF8")
+	put_cstr(c, "UTF8")
 	put_be(c, 0, 1)
 	try end_packet(c)
- try flush(c)
+	try flush(c)
 	mut phase = 0
 	mut nonce = ""
 	mut bare = ""
@@ -573,23 +572,23 @@ fn handshake(c i64, rec i64) ! {
 				try k.done()
 				if phase != 0 && phase != 4 { fail "postgres: unverified authentication" }
 				authed = true
- phase = 5
- continue
+				phase = 5
+				continue
 			}
 			if method == 3 && phase == 0 {
 				try k.done()
- try no_nul(pass)
+				try no_nul(pass)
 				try password_message(c, pass, true)
- phase = 4
- continue
+				phase = 4
+				continue
 			}
 			if method == 5 && phase == 0 {
 				let salt = try k.bytes(4)
- try k.done()
+				try k.done()
 				let inner = seal.Hex(md5.Sum(pass+user))
 				try password_message(c, "md5"+seal.Hex(md5.Sum(inner+salt)), true)
 				phase = 4
- continue
+				continue
 			}
 			if method == 10 && phase == 0 {
 				mut found = false
@@ -604,13 +603,13 @@ fn handshake(c i64, rec i64) ! {
 				bare = "n=,r={nonce}"
 				let first = "n,,{bare}"
 				begin_packet(c, 'p')
- put_cstr(c, "SCRAM-SHA-256")
- put_be(c, len(first), 4)
- put_str(c, first)
+				put_cstr(c, "SCRAM-SHA-256")
+				put_be(c, len(first), 4)
+				put_str(c, first)
 				try end_packet(c)
- try flush(c)
- phase = 1
- continue
+				try flush(c)
+				phase = 1
+				continue
 			}
 			if method == 11 && phase == 1 {
 				let first = try k.bytes(k.end-k.at)
@@ -647,7 +646,7 @@ fn handshake(c i64, rec i64) ! {
 				serverSig = seal.HmacSha256(str(seal.HmacSha256(str(salted), "Server Key")), message)
 				try password_message(c, "{final},p={seal.B64(proof)}", false)
 				phase = 2
- continue
+				continue
 			}
 			if method == 12 && phase == 2 {
 				let last = try k.bytes(k.end-k.at)
@@ -658,7 +657,7 @@ fn handshake(c i64, rec i64) ! {
 				let v = try seal.B64Decode(a['v'])
 				if !seal.ConstantTimeEq(v, serverSig) { fail "postgres: invalid SCRAM server verifier" }
 				phase = 4
- continue
+				continue
 			}
 			fail "postgres: unsupported or out-of-order authentication method {method}"
 		}
@@ -672,7 +671,7 @@ fn handshake(c i64, rec i64) ! {
 		if c[cKind] == 'Z' {
 			if !authed { fail "postgres: ReadyForQuery before authentication" }
 			try ready(c, mut k)
- return
+			return
 		}
 		try status_message(c, mut k)
 	}
@@ -681,9 +680,9 @@ fn handshake(c i64, rec i64) ! {
 fn contains(s str, part str) bool {
 	{
 		mut i = 0
-		for i+len(part) <= len(s) { if s[i:i+len(part)] == part { return true } 
-		i += 1
-	}
+		for i+len(part) <= len(s) { if s[i:i+len(part)] == part { return true }
+			i += 1
+		}
 	}
 	return false
 }
@@ -945,10 +944,10 @@ fn start_tls(c i64, rec i64, w wire.Conn, until i64) ! {
 		if k < 0 && e == EINTR { continue }
 		if k < 0 && e == EAGAIN {
 			let left = remaining(until) catch err { free(b)
- fail err }
+				fail err }
 			let r = rt_task_wait(c[cFd], 1, left)
 			if r != waitReady { free(b)
- fail wait_msg(r) }
+				fail wait_msg(r) }
 			continue
 		}
 		free(b)
@@ -1131,11 +1130,10 @@ fn (c Client) release(conn i64, ok bool) {
 	}
 }
 
-
 fn wake_retry(p i64) {
 	let w = next_waiter(p)
 	if w != 0 { w[wDone] = 1
- rt_task_wake(w[wTask]) }
+		rt_task_wake(w[wTask]) }
 }
 
 // ---- statement execution ----
@@ -1205,22 +1203,22 @@ fn read_result(c i64) !(Rows, Result) {
 			let count = try k.fixed(2)
 			if count > (n-2)/19 { fail "postgres: invalid column count" }
 			oids = make([]i64, count)
- formats = make([]i64, count)
+			formats = make([]i64, count)
 			let columns = make([]str, count)
 			for i in 0..count {
 				columns[i] = try k.cstr()
 				_ = try k.fixed(4)
- _ = try k.fixed(2)
+				_ = try k.fixed(2)
 				oids[i] = try k.fixed(4)
 				_ = try k.fixed(2)
- _ = try k.fixed(4)
+				_ = try k.fixed(4)
 				formats[i] = try k.fixed(2)
 				if formats[i] != 0 { fail "postgres: unexpected binary result format" }
 			}
 			try k.done()
 			first = !haveRows
 			if first { rows.Columns = columns
- haveRows = true }
+				haveRows = true }
 			continue
 		}
 		if kind == 'D' {
@@ -1231,7 +1229,7 @@ fn read_result(c i64) !(Rows, Result) {
 				let rawLength = try k.fixed(4)
 				let length = i64(i32(rawLength))
 				if length == -1 { row = append(row, Value.Null)
- continue }
+					continue }
 				let text = try k.bytes(length)
 				if oids[i] == 20 || oids[i] == 21 || oids[i] == 23 {
 					let number = try mint.Atoi(text)
@@ -1249,7 +1247,7 @@ fn read_result(c i64) !(Rows, Result) {
 		}
 		if kind == 'C' {
 			let tag = try k.cstr()
- try k.done()
+			try k.done()
 			mut at = len(tag)
 			for at > 0 && tag[at-1] >= '0' && tag[at-1] <= '9' { at -= 1 }
 			res.Affected = 0
@@ -1257,10 +1255,10 @@ fn read_result(c i64) !(Rows, Result) {
 			continue
 		}
 		if kind == '1' { try k.done()
- c[cParsed] = 1
- continue }
+			c[cParsed] = 1
+			continue }
 		if kind == '2' || kind == '3' || kind == 'n' || kind == 'I' { try k.done()
- continue }
+			continue }
 		try status_message(c, mut k)
 	}
 }
@@ -1270,18 +1268,18 @@ fn clear_statements(c i64) ! {
 	for i in 0..c[cNStmts] {
 		let e = st+8*stmtWords*i
 		begin_packet(c, 'C')
- put_be(c, 'S', 1)
- put_cstr(c, name(e[4]))
- try end_packet(c)
+		put_be(c, 'S', 1)
+		put_cstr(c, name(e[4]))
+		try end_packet(c)
 	}
 	begin_packet(c, 'S')
- try end_packet(c)
- try flush(c)
+	try end_packet(c)
+	try flush(c)
 	let (_, _, err) = read_result(c)
 	if err != nil { c[cSynced] = 0
- fail err }
+		fail err }
 	for i in 0..c[cNStmts] { free(st[i*stmtWords])
- free(st[i*stmtWords+2]) }
+		free(st[i*stmtWords+2]) }
 	c[cNStmts] = 0
 	c[cSynced] = 0
 }
@@ -1289,19 +1287,19 @@ fn clear_statements(c i64) ! {
 fn bind_param(c i64, v qarg) {
 	match v {
 		Int(n) => { put_be(c, 8, 4)
- put_be(c, n, 8)
+			put_be(c, n, 8)
 		}
 		Float(f) => { put_be(c, 8, 4)
- put_be(c, i64(gauge.F64bits(f)), 8)
+			put_be(c, i64(gauge.F64bits(f)), 8)
 		}
 		Str(s) => { put_be(c, len(s), 4)
- put_str(c, s)
+			put_str(c, s)
 		}
 		Bool(b) => { put_be(c, 1, 4)
- if b { put_be(c, 1, 1) } else { put_be(c, 0, 1) }
+			if b { put_be(c, 1, 1) } else { put_be(c, 0, 1) }
 		}
 		Bytes(b) => { put_be(c, len(b), 4)
- put_raw(c, cast(i64, b)[2], len(b))
+			put_raw(c, cast(i64, b)[2], len(b))
 		}
 	}
 }
@@ -1329,9 +1327,9 @@ fn run(c i64, q query) !(Rows, Result) {
 	c[cSynced] = 0
 	if len(q.Args) == 0 {
 		begin_packet(c, 'Q')
- put_cstr(c, text)
- try end_packet(c)
- try flush(c)
+		put_cstr(c, text)
+		try end_packet(c)
+		try flush(c)
 		return try read_result(c)
 	}
 	mut signature = make([]u8, 0, len(q.Args)*4)
@@ -1345,7 +1343,7 @@ fn run(c i64, q query) !(Rows, Result) {
 	for i in 0..c[cNStmts] {
 		let e = st+8*stmtWords*i
 		if e[1] == len(text) && e[3] == len(sig) && eq_raw(e[0], text) && eq_raw(e[2], sig) { entry = e
- break }
+			break }
 	}
 	if entry == 0 {
 		if c[cNStmts] == maxStmts { try clear_statements(c) }
@@ -1354,46 +1352,46 @@ fn run(c i64, q query) !(Rows, Result) {
 		// Prepare separately: record only a confirmed Parse, even if a later Bind fails.
 		c[cParsed] = 0
 		begin_packet(c, 'P')
- put_cstr(c, name(id))
- put_cstr(c, text)
- put_be(c, len(q.Args), 2)
+		put_cstr(c, name(id))
+		put_cstr(c, text)
+		put_be(c, len(q.Args), 2)
 		for _, v in q.Args { put_be(c, param_oid(v), 4) }
 		try end_packet(c)
- begin_packet(c, 'S')
- try end_packet(c)
- try flush(c)
+		begin_packet(c, 'S')
+		try end_packet(c)
+		try flush(c)
 		_, _ = try read_result(c)
 		if c[cParsed] == 0 { c[cSynced] = 0
- fail "postgres: missing ParseComplete" }
+			fail "postgres: missing ParseComplete" }
 		entry = st+8*stmtWords*c[cNStmts]
 		entry[0] = keep_raw(text)
- entry[1] = len(text)
+		entry[1] = len(text)
 		entry[2] = keep_raw(sig)
- entry[3] = len(sig)
- entry[4] = id
+		entry[3] = len(sig)
+		entry[4] = id
 		c[cNStmts] += 1
 		c[cSynced] = 0
 	}
 	begin_packet(c, 'B')
- put_cstr(c, "")
- put_cstr(c, name(entry[4]))
+	put_cstr(c, "")
+	put_cstr(c, name(entry[4]))
 	put_be(c, 1, 2)
- put_be(c, 1, 2) // one binary format for all parameters
+	put_be(c, 1, 2) // one binary format for all parameters
 	put_be(c, len(q.Args), 2)
 	for _, v in q.Args { bind_param(c, v) }
 	put_be(c, 0, 2) // text results, decoded by OID
 	try end_packet(c)
 	begin_packet(c, 'D')
- put_be(c, 'P', 1)
- put_cstr(c, "")
- try end_packet(c)
+	put_be(c, 'P', 1)
+	put_cstr(c, "")
+	try end_packet(c)
 	begin_packet(c, 'E')
- put_cstr(c, "")
- put_be(c, 0, 4)
- try end_packet(c)
+	put_cstr(c, "")
+	put_be(c, 0, 4)
+	try end_packet(c)
 	begin_packet(c, 'S')
- try end_packet(c)
- try flush(c)
+	try end_packet(c)
+	try flush(c)
 	return try read_result(c)
 }
 
@@ -1459,8 +1457,8 @@ fn (c Client) Begin() !Tx {
 	}
 	let state = rt_alloc(24)
 	state[0] = conn
- state[1] = c.rec
- state[2] = 1
+	state[1] = c.rec
+	state[2] = 1
 	rt_task_cleanup(abandon_tx, state)
 	return Tx{state: state}
 }
@@ -1480,12 +1478,12 @@ fn (t mut Tx) run(q query) !(Rows, Result) {
 	let (rows, res, err) = run(conn, q)
 	if err != nil {
 		if conn[cSynced] == 0 { abandon_tx(t.state) } else if conn[cStatus] == 'I' { c.release(conn, true)
- t.state[2] = 0 }
+			t.state[2] = 0 }
 		fail err
 	}
 	// Explicit transaction-control SQL also ends ownership of this connection.
 	if conn[cStatus] == 'I' { c.release(conn, true)
- t.state[2] = 0 }
+		t.state[2] = 0 }
 	return rows, res
 }
 
@@ -1609,8 +1607,8 @@ fn untape(v str) !(Rows, Result) {
 			mut row = make([]Value, 0, 8)
 			let n = k.word()
 			{
-			mut j = 0
-			for j < n && !k.bad {
+				mut j = 0
+				for j < n && !k.bad {
 					let t = k.word()
 					if t == 0 {
 						row = append(row, Value.Null)
@@ -1624,8 +1622,8 @@ fn untape(v str) !(Rows, Result) {
 						k.bad = true
 					}
 					j += 1
+				}
 			}
-		}
 			all = append(all, row)
 			i += 1
 		}

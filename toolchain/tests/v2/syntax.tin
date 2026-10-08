@@ -21,7 +21,7 @@ fn main() {
 			true if (y > 3) => {
 				say.Line("tagless")
 			}
-	}
+		}
 	}
 	mut n = 0
 	for i in 0..3 {

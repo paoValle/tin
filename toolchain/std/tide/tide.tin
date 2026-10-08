@@ -6,7 +6,6 @@ package tide
 
 import "say"
 
-
 // Durations are i64 nanoseconds; these constants are the units, like Go's time.Duration.
 const Nanosecond = 1
 const Microsecond = 1000

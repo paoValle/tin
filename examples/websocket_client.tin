@@ -16,7 +16,7 @@ fn main() {
 	}
 	c.WriteText("hi from tin") catch err { say.Line(err) }
 	let m = c.Read() catch err { say.Line(err)
- return }
+		return }
 	say.Line(m.Text, m.Data)
 	let big = make([]u8, 100000)
 	for i in 0..len(big) {
@@ -24,7 +24,7 @@ fn main() {
 	}
 	c.WriteBinary(big) catch err { say.Line(err) }
 	let m2 = c.Read() catch err { say.Line(err)
- return }
+		return }
 	mut same = len(m2.Data) == len(big)
 	{
 		mut i = 0
@@ -36,7 +36,7 @@ fn main() {
 	say.Line(m2.Text, len(m2.Data), same)
 	c.Close()
 	let t = websocket.Dial(base + "/ticks") catch err { say.Line(err)
- return }
+		return }
 	mut n = 0
 	for {
 		let x = t.Read() catch err {
@@ -50,5 +50,5 @@ fn main() {
 	}
 	say.Line("ticks", n)
 	_ = websocket.Dial(base + "/") catch err { say.Line(err)
- t }
+		t }
 }

@@ -441,7 +441,7 @@ fn lex_number(pos i64) i64 {
 			lx_advance()
 		}
 	}
-		mut n = lx_i - start
+	mut n = lx_i - start
 	if len(unit_) != 0 {
 		n = number_end - start
 	}

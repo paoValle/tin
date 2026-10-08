@@ -2,7 +2,6 @@
 // the slice as mut and grow it in place.
 package ore
 
-
 fn data(b []u8) i64 {
 	return cast(i64, b)[2]
 }

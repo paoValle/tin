@@ -21,7 +21,6 @@ import "tls"
 import "twine"
 import "wire"
 
-
 // Message is one complete message.
 type Message struct {
 	Text bool // a text message (valid UTF-8); otherwise binary

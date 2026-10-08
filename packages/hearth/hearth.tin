@@ -2,7 +2,6 @@
 // globals, request pool and ingot heap. Cores share nothing; relay carries messages.
 package hearth
 
-
 // Cores is the number of CPUs this program may use: the CPUs online, capped on Linux by the
 // affinity mask (cpuset) and the cgroup CPU quota (ceil of cpu.max quota/period); never 0.
 // It is how many cores to start (hearth.Run(hearth.Cores(), entry)), not how many run:

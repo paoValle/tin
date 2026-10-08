@@ -117,7 +117,7 @@ fn library() {
 			return r - 32
 		}
 		return r
-	}, "abcdefg")
+		}, "abcdefg")
 	say.Line("map", out, seen)
 	let sep i32 = 0x2c
 	let parts = twine.FieldsFunc("a,b;;c,d", fn(r i32) bool {

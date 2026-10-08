@@ -2,7 +2,7 @@ package main
 type Box struct { X i64 }
 fn put(b mut Box) { b.X = 2 }
 fn readonly(b Box) { let f = put
- f(mut b) }
+	f(mut b) }
 fn main() { let b = Box{X: 1}
- readonly(b)
- println(b.X) }
+	readonly(b)
+	println(b.X) }

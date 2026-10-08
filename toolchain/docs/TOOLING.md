@@ -149,10 +149,10 @@ tests and the examples) and formatting twice changes nothing. The rules:
 - **Left as written**: the spaces inside a line (so aligned fields and aligned trailing comments stay aligned), strings, raw
   strings (every line of one, including its indentation), rune literals, the order and line breaks of the code.
 
-The tree is converted directory by directory: `tools/ci/test_fmt_gate.py` fails when `tin fmt -l` lists a file of the
-directories it names (the Tinland editor and its packages, `tin lsp`, `tin fmt`, the new tests), and a directory joins
-that list when the change that converts it is announced, like #226. Today about one file in eight of the rest differs
-(`tin fmt -l toolchain packages` lists them).
+The tree is formatted, and `tools/ci/test_fmt_gate.py` fails when `tin fmt -l` lists a tracked `.tin` file, except the ones it
+names: the hot files of AGENTS.md rule 6 (so work in flight there is not disturbed; they join when their owners take the one
+reformatting), the `_bad` tests and the other files whose position in the source is part of what a test checks (expected error
+positions, recorded effect sites, a hash in a `tin.lock`, edition 0 syntax), and the VS Code fixtures.
 
 ## 4. Make targets
 

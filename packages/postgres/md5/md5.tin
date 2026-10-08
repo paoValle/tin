@@ -28,9 +28,9 @@ let shifts = []u32{7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5
 			mut f = u32(0)
 			mut g = i
 			if i < 16 { f = (bb & c) | (^bb & d) } else if i < 32 { f = (d & bb) | (^d & c)
- g = (5*i+1)%16 } else if i < 48 { f = bb ^ c ^ d
- g = (3*i+5)%16 } else { f = c ^ (bb | ^d)
- g = (7*i)%16 }
+				g = (5*i+1)%16 } else if i < 48 { f = bb ^ c ^ d
+				g = (3*i+5)%16 } else { f = c ^ (bb | ^d)
+				g = (7*i)%16 }
 			let x = a+f+constants[i]+m[g]
 			let r = shifts[i]
 			a = d
@@ -39,9 +39,9 @@ let shifts = []u32{7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5
 			bb += (x<<r) | (x>>(32-r))
 		}
 		h[0] += a
- h[1] += bb
- h[2] += c
- h[3] += d
+		h[1] += bb
+		h[2] += c
+		h[3] += d
 	}
 	let out = make([]u8, 16)
 	for i in 0..4 {

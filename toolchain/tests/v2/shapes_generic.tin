@@ -9,7 +9,6 @@ import "say"
 // generic type's instance satisfying one, and the library's composed io.ReadWriteCloser
 // satisfied by a type here.
 
-
 shape Seq[T constraints.Any] { Next() ?T }
 
 type Ints struct { n i64 }

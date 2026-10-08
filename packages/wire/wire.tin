@@ -11,7 +11,6 @@ import "say"
 import "seal"
 import "tls"
 
-
 // Conn is a TCP connection.
 type Conn struct {
 	open    bool // false for the zero Conn (a failed Dial or Accept): it owns no descriptor
@@ -154,7 +153,7 @@ fn DialTimeout(addr str, timeout i64) !Conn {
 		if until > 0 {
 			left = until-rt_mono_ns()
 			if left <= 0 { rt_sys_close(fd)
- fail "wire: connect {addr} timed out" }
+				fail "wire: connect {addr} timed out" }
 		}
 		let werr = wait_io(fd, 2, left, "connect " + addr)
 		if werr != nil {
@@ -513,8 +512,8 @@ fn DoWith(method str, url str, headers []str, body str, opt Options) !Resp {
 	mut hasport = false
 	mut brackets = len(hostport) > 0 && hostport[0] == '['
 	for i in 0..len(hostport) {
-		if hostport[i] == ']' { brackets=false }
-		if hostport[i] == ':' && !brackets { hasport=true }
+		if hostport[i] == ']' { brackets = false }
+		if hostport[i] == ':' && !brackets { hasport = true }
 	}
 	if !hasport {
 		addr = hostport + ":80"

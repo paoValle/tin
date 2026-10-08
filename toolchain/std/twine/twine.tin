@@ -4,7 +4,6 @@ package twine
 
 import "glyph"
 
-
 // IndexByte returns the byte offset of the first c in s, or -1.
 fn IndexByte(s str, c u8) i64 {
 	let n = len(s)

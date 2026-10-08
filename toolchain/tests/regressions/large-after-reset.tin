@@ -2,11 +2,11 @@ package main
 import "hearth"
 import "twine"
 fn main() {
-    let a = twine.Repeat("b", 100)
-    let big = twine.Repeat("a", 5000000)
-    println(len(a), len(big))
-    hearth.Reset()
-    let again = twine.Repeat("c", 6000000)
-    let small = twine.Repeat("d", 10)
-    println(len(again), len(small), again[5999999:], small[9:])
+	let a = twine.Repeat("b", 100)
+	let big = twine.Repeat("a", 5000000)
+	println(len(a), len(big))
+	hearth.Reset()
+	let again = twine.Repeat("c", 6000000)
+	let small = twine.Repeat("d", 10)
+	println(len(again), len(small), again[5999999:], small[9:])
 }

@@ -12,7 +12,6 @@ import "sift"
 //
 // The same program is the Go twin bench/ref/shapes/main.go, written with interfaces.
 
-
 shape Reader { Read(buf mut []u8) !i64 }
 
 shape Writer { Write(data []u8) !i64 }

@@ -141,9 +141,9 @@ fn main() {
 	say.Line(walk(a, 5), add(add(a, a), add(b, b)).x, add(a, b) == P{x: 12, y: 24})
 	say.Line(twice(fn(p P) P {
 		return p.swapped()
-	}, a), twice(fn(p P) P {
-		return add(p, p)
-	}, a))
+		}, a), twice(fn(p P) P {
+			return add(p, p)
+			}, a))
 	let k = 100
 	let shift = fn(p P) P {
 		return P{x: p.x + k, y: p.y + k}

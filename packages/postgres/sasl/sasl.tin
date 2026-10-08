@@ -1576,7 +1576,7 @@ let compositions = []i64{
 // find returns a record index for key in a sorted flat table, or -1.
 fn find(table []i64, width i64, key i64) i64 {
 	mut lo = 0
- mut hi = len(table)/width
+	mut hi = len(table)/width
 	for lo < hi {
 		let mid = (lo+hi)/2
 		if table[mid*width] < key { lo = mid+1 } else { hi = mid }
@@ -1587,7 +1587,7 @@ fn find(table []i64, width i64, key i64) i64 {
 
 fn within_(table []i64, cp i64) bool {
 	mut lo = 0
- mut hi = len(table)/2
+	mut hi = len(table)/2
 	for lo < hi {
 		let mid = (lo+hi)/2
 		if table[mid*2+1] < cp { lo = mid+1 } else { hi = mid }
@@ -1619,7 +1619,7 @@ fn compose(a i64, b i64) i64 {
 fn Prep(s str) str {
 	mut ascii = true
 	for i in 0..len(s) { if s[i] >= 128 { ascii = false
- break } }
+		break } }
 	if ascii { return s }
 	mut runes = make([]i64, 0, len(s))
 	{
@@ -1646,29 +1646,29 @@ fn Prep(s str) str {
 	// Stable canonical ordering within each starter's combining sequence.
 	for i in 1..len(runes) {
 		let cc = ccc(runes[i])
- mut j = i
+		mut j = i
 		for cc != 0 && j > 0 && ccc(runes[j-1]) > cc {
 			let x = runes[j-1]
- runes[j-1] = runes[j]
- runes[j] = x
- j -= 1
+			runes[j-1] = runes[j]
+			runes[j] = x
+			j -= 1
 		}
 	}
 	mut norm = make([]i64, 0, len(runes))
 	mut starter = -1
- mut lastCC = 0
+	mut lastCC = 0
 	for _, cp in runes {
 		let cc = ccc(cp)
- mut combined = -1
+		mut combined = -1
 		if starter >= 0 && (lastCC == 0 || lastCC < cc) { combined = compose(norm[starter], cp) }
 		if combined >= 0 { norm[starter] = combined } else {
 			if cc == 0 { starter = len(norm) }
 			norm = append(norm, cp)
- lastCC = cc
+			lastCC = cc
 		}
 	}
 	mut hasR = false
- mut hasL = false
+	mut hasL = false
 	for _, cp in norm {
 		if within_(prohibited, cp) { return s }
 		if within_(randal, cp) { hasR = true }

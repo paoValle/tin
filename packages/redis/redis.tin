@@ -19,7 +19,6 @@ import "say"
 import "tls"
 import "wire"
 
-
 // Reply is one Redis reply.
 type Reply enum {
 	Str(v str)           // a simple, bulk or verbatim string, or a big number's digits

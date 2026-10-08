@@ -9,7 +9,6 @@ import "constraints"
 import "lasso"
 import "say"
 
-
 mut checks i64
 mut failures []str
 

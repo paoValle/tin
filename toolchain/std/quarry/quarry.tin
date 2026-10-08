@@ -3,7 +3,6 @@ package quarry
 
 import "say"
 
-
 const oRdonly = 0
 const oWrite = O_WRITE_CREATE
 const oAppend = O_APPEND_CREATE

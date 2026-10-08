@@ -1,4 +1,4 @@
 package main
 fn main() { let n = -1
- let s = make([]i64, n)
- println(s[0]) }
+	let s = make([]i64, n)
+	println(s[0]) }

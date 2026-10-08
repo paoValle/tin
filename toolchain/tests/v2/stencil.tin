@@ -240,7 +240,6 @@ fn main() {
 		return
 	}
 	say.Line("deep ok", len(deepOut))
-
 }
 
 // execCheck renders text with data and prints whether the output is Go's expected output.

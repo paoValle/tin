@@ -1,274 +1,274 @@
 // Stable linux errno messages, captured from the supported native ABI.
 fn rt_os_error(e i64) str {
-    match e {
-	    0 => { return "Success"
-	    }
-    	1 => { return "Operation not permitted"
-	    }
-    	2 => { return "No such file or directory"
-	    }
-    	3 => { return "No such process"
-	    }
-    	4 => { return "Interrupted system call"
-	    }
-    	5 => { return "Input/output error"
-	    }
-    	6 => { return "No such device or address"
-	    }
-    	7 => { return "Argument list too long"
-	    }
-    	8 => { return "Exec format error"
-	    }
-    	9 => { return "Bad file descriptor"
-	    }
-    	10 => { return "No child processes"
-	    }
-    	11 => { return "Resource temporarily unavailable"
-	    }
-    	12 => { return "Cannot allocate memory"
-	    }
-    	13 => { return "Permission denied"
-	    }
-    	14 => { return "Bad address"
-	    }
-    	15 => { return "Block device required"
-	    }
-    	16 => { return "Device or resource busy"
-	    }
-    	17 => { return "File exists"
-	    }
-    	18 => { return "Invalid cross-device link"
-	    }
-    	19 => { return "No such device"
-	    }
-    	20 => { return "Not a directory"
-	    }
-    	21 => { return "Is a directory"
-	    }
-    	22 => { return "Invalid argument"
-	    }
-    	23 => { return "Too many open files in system"
-	    }
-    	24 => { return "Too many open files"
-	    }
-    	25 => { return "Inappropriate ioctl for device"
-	    }
-    	26 => { return "Text file busy"
-	    }
-    	27 => { return "File too large"
-	    }
-    	28 => { return "No space left on device"
-	    }
-    	29 => { return "Illegal seek"
-	    }
-    	30 => { return "Read-only file system"
-	    }
-    	31 => { return "Too many links"
-	    }
-    	32 => { return "Broken pipe"
-	    }
-    	33 => { return "Numerical argument out of domain"
-	    }
-    	34 => { return "Numerical result out of range"
-	    }
-    	35 => { return "Resource deadlock avoided"
-	    }
-    	36 => { return "File name too long"
-	    }
-    	37 => { return "No locks available"
-	    }
-    	38 => { return "Function not implemented"
-	    }
-    	39 => { return "Directory not empty"
-	    }
-    	40 => { return "Too many levels of symbolic links"
-	    }
-    	41 => { return "Unknown error 41"
-	    }
-    	42 => { return "No message of desired type"
-	    }
-    	43 => { return "Identifier removed"
-	    }
-    	44 => { return "Channel number out of range"
-	    }
-    	45 => { return "Level 2 not synchronized"
-	    }
-    	46 => { return "Level 3 halted"
-	    }
-    	47 => { return "Level 3 reset"
-	    }
-    	48 => { return "Link number out of range"
-	    }
-    	49 => { return "Protocol driver not attached"
-	    }
-    	50 => { return "No CSI structure available"
-	    }
-    	51 => { return "Level 2 halted"
-	    }
-    	52 => { return "Invalid exchange"
-	    }
-    	53 => { return "Invalid request descriptor"
-	    }
-    	54 => { return "Exchange full"
-	    }
-    	55 => { return "No anode"
-	    }
-    	56 => { return "Invalid request code"
-	    }
-    	57 => { return "Invalid slot"
-	    }
-    	58 => { return "Unknown error 58"
-	    }
-    	59 => { return "Bad font file format"
-	    }
-    	60 => { return "Device not a stream"
-	    }
-    	61 => { return "No data available"
-	    }
-    	62 => { return "Timer expired"
-	    }
-    	63 => { return "Out of streams resources"
-	    }
-    	64 => { return "Machine is not on the network"
-	    }
-    	65 => { return "Package not installed"
-	    }
-    	66 => { return "Object is remote"
-	    }
-    	67 => { return "Link has been severed"
-	    }
-    	68 => { return "Advertise error"
-	    }
-    	69 => { return "Srmount error"
-	    }
-    	70 => { return "Communication error on send"
-	    }
-    	71 => { return "Protocol error"
-	    }
-    	72 => { return "Multihop attempted"
-	    }
-    	73 => { return "RFS specific error"
-	    }
-    	74 => { return "Bad message"
-	    }
-    	75 => { return "Value too large for defined data type"
-	    }
-    	76 => { return "Name not unique on network"
-	    }
-    	77 => { return "File descriptor in bad state"
-	    }
-    	78 => { return "Remote address changed"
-	    }
-    	79 => { return "Can not access a needed shared library"
-	    }
-    	80 => { return "Accessing a corrupted shared library"
-	    }
-    	81 => { return ".lib section in a.out corrupted"
-	    }
-    	82 => { return "Attempting to link in too many shared libraries"
-	    }
-    	83 => { return "Cannot exec a shared library directly"
-	    }
-    	84 => { return "Invalid or incomplete multibyte or wide character"
-	    }
-    	85 => { return "Interrupted system call should be restarted"
-	    }
-    	86 => { return "Streams pipe error"
-	    }
-    	87 => { return "Too many users"
-	    }
-    	88 => { return "Socket operation on non-socket"
-	    }
-    	89 => { return "Destination address required"
-	    }
-    	90 => { return "Message too long"
-	    }
-    	91 => { return "Protocol wrong type for socket"
-	    }
-    	92 => { return "Protocol not available"
-	    }
-    	93 => { return "Protocol not supported"
-	    }
-    	94 => { return "Socket type not supported"
-	    }
-    	95 => { return "Operation not supported"
-	    }
-    	96 => { return "Protocol family not supported"
-	    }
-    	97 => { return "Address family not supported by protocol"
-	    }
-    	98 => { return "Address already in use"
-	    }
-    	99 => { return "Cannot assign requested address"
-	    }
-    	100 => { return "Network is down"
-	    }
-    	101 => { return "Network is unreachable"
-	    }
-    	102 => { return "Network dropped connection on reset"
-	    }
-    	103 => { return "Software caused connection abort"
-	    }
-    	104 => { return "Connection reset by peer"
-	    }
-    	105 => { return "No buffer space available"
-	    }
-    	106 => { return "Transport endpoint is already connected"
-	    }
-    	107 => { return "Transport endpoint is not connected"
-	    }
-    	108 => { return "Cannot send after transport endpoint shutdown"
-	    }
-    	109 => { return "Too many references: cannot splice"
-	    }
-    	110 => { return "Connection timed out"
-	    }
-    	111 => { return "Connection refused"
-	    }
-    	112 => { return "Host is down"
-	    }
-    	113 => { return "No route to host"
-	    }
-    	114 => { return "Operation already in progress"
-	    }
-    	115 => { return "Operation now in progress"
-	    }
-    	116 => { return "Stale file handle"
-	    }
-    	117 => { return "Structure needs cleaning"
-	    }
-    	118 => { return "Not a XENIX named type file"
-	    }
-    	119 => { return "No XENIX semaphores available"
-	    }
-    	120 => { return "Is a named type file"
-	    }
-    	121 => { return "Remote I/O error"
-	    }
-    	122 => { return "Disk quota exceeded"
-	    }
-    	123 => { return "No medium found"
-	    }
-    	124 => { return "Wrong medium type"
-	    }
-    	125 => { return "Operation canceled"
-	    }
-    	126 => { return "Required key not available"
-	    }
-    	127 => { return "Key has expired"
-	    }
-    	128 => { return "Key has been revoked"
-	    }
-    	129 => { return "Key was rejected by service"
-	    }
-    	130 => { return "Owner died"
-	    }
-    	131 => { return "State not recoverable"
-	    }
-    	132 => { return "Operation not possible due to RF-kill"
-	    }
-    	133 => { return "Memory page has hardware error"
-    	}
-    }
-    return "Unknown error "+rt_i64str(e)
+	match e {
+		0 => { return "Success"
+		}
+		1 => { return "Operation not permitted"
+		}
+		2 => { return "No such file or directory"
+		}
+		3 => { return "No such process"
+		}
+		4 => { return "Interrupted system call"
+		}
+		5 => { return "Input/output error"
+		}
+		6 => { return "No such device or address"
+		}
+		7 => { return "Argument list too long"
+		}
+		8 => { return "Exec format error"
+		}
+		9 => { return "Bad file descriptor"
+		}
+		10 => { return "No child processes"
+		}
+		11 => { return "Resource temporarily unavailable"
+		}
+		12 => { return "Cannot allocate memory"
+		}
+		13 => { return "Permission denied"
+		}
+		14 => { return "Bad address"
+		}
+		15 => { return "Block device required"
+		}
+		16 => { return "Device or resource busy"
+		}
+		17 => { return "File exists"
+		}
+		18 => { return "Invalid cross-device link"
+		}
+		19 => { return "No such device"
+		}
+		20 => { return "Not a directory"
+		}
+		21 => { return "Is a directory"
+		}
+		22 => { return "Invalid argument"
+		}
+		23 => { return "Too many open files in system"
+		}
+		24 => { return "Too many open files"
+		}
+		25 => { return "Inappropriate ioctl for device"
+		}
+		26 => { return "Text file busy"
+		}
+		27 => { return "File too large"
+		}
+		28 => { return "No space left on device"
+		}
+		29 => { return "Illegal seek"
+		}
+		30 => { return "Read-only file system"
+		}
+		31 => { return "Too many links"
+		}
+		32 => { return "Broken pipe"
+		}
+		33 => { return "Numerical argument out of domain"
+		}
+		34 => { return "Numerical result out of range"
+		}
+		35 => { return "Resource deadlock avoided"
+		}
+		36 => { return "File name too long"
+		}
+		37 => { return "No locks available"
+		}
+		38 => { return "Function not implemented"
+		}
+		39 => { return "Directory not empty"
+		}
+		40 => { return "Too many levels of symbolic links"
+		}
+		41 => { return "Unknown error 41"
+		}
+		42 => { return "No message of desired type"
+		}
+		43 => { return "Identifier removed"
+		}
+		44 => { return "Channel number out of range"
+		}
+		45 => { return "Level 2 not synchronized"
+		}
+		46 => { return "Level 3 halted"
+		}
+		47 => { return "Level 3 reset"
+		}
+		48 => { return "Link number out of range"
+		}
+		49 => { return "Protocol driver not attached"
+		}
+		50 => { return "No CSI structure available"
+		}
+		51 => { return "Level 2 halted"
+		}
+		52 => { return "Invalid exchange"
+		}
+		53 => { return "Invalid request descriptor"
+		}
+		54 => { return "Exchange full"
+		}
+		55 => { return "No anode"
+		}
+		56 => { return "Invalid request code"
+		}
+		57 => { return "Invalid slot"
+		}
+		58 => { return "Unknown error 58"
+		}
+		59 => { return "Bad font file format"
+		}
+		60 => { return "Device not a stream"
+		}
+		61 => { return "No data available"
+		}
+		62 => { return "Timer expired"
+		}
+		63 => { return "Out of streams resources"
+		}
+		64 => { return "Machine is not on the network"
+		}
+		65 => { return "Package not installed"
+		}
+		66 => { return "Object is remote"
+		}
+		67 => { return "Link has been severed"
+		}
+		68 => { return "Advertise error"
+		}
+		69 => { return "Srmount error"
+		}
+		70 => { return "Communication error on send"
+		}
+		71 => { return "Protocol error"
+		}
+		72 => { return "Multihop attempted"
+		}
+		73 => { return "RFS specific error"
+		}
+		74 => { return "Bad message"
+		}
+		75 => { return "Value too large for defined data type"
+		}
+		76 => { return "Name not unique on network"
+		}
+		77 => { return "File descriptor in bad state"
+		}
+		78 => { return "Remote address changed"
+		}
+		79 => { return "Can not access a needed shared library"
+		}
+		80 => { return "Accessing a corrupted shared library"
+		}
+		81 => { return ".lib section in a.out corrupted"
+		}
+		82 => { return "Attempting to link in too many shared libraries"
+		}
+		83 => { return "Cannot exec a shared library directly"
+		}
+		84 => { return "Invalid or incomplete multibyte or wide character"
+		}
+		85 => { return "Interrupted system call should be restarted"
+		}
+		86 => { return "Streams pipe error"
+		}
+		87 => { return "Too many users"
+		}
+		88 => { return "Socket operation on non-socket"
+		}
+		89 => { return "Destination address required"
+		}
+		90 => { return "Message too long"
+		}
+		91 => { return "Protocol wrong type for socket"
+		}
+		92 => { return "Protocol not available"
+		}
+		93 => { return "Protocol not supported"
+		}
+		94 => { return "Socket type not supported"
+		}
+		95 => { return "Operation not supported"
+		}
+		96 => { return "Protocol family not supported"
+		}
+		97 => { return "Address family not supported by protocol"
+		}
+		98 => { return "Address already in use"
+		}
+		99 => { return "Cannot assign requested address"
+		}
+		100 => { return "Network is down"
+		}
+		101 => { return "Network is unreachable"
+		}
+		102 => { return "Network dropped connection on reset"
+		}
+		103 => { return "Software caused connection abort"
+		}
+		104 => { return "Connection reset by peer"
+		}
+		105 => { return "No buffer space available"
+		}
+		106 => { return "Transport endpoint is already connected"
+		}
+		107 => { return "Transport endpoint is not connected"
+		}
+		108 => { return "Cannot send after transport endpoint shutdown"
+		}
+		109 => { return "Too many references: cannot splice"
+		}
+		110 => { return "Connection timed out"
+		}
+		111 => { return "Connection refused"
+		}
+		112 => { return "Host is down"
+		}
+		113 => { return "No route to host"
+		}
+		114 => { return "Operation already in progress"
+		}
+		115 => { return "Operation now in progress"
+		}
+		116 => { return "Stale file handle"
+		}
+		117 => { return "Structure needs cleaning"
+		}
+		118 => { return "Not a XENIX named type file"
+		}
+		119 => { return "No XENIX semaphores available"
+		}
+		120 => { return "Is a named type file"
+		}
+		121 => { return "Remote I/O error"
+		}
+		122 => { return "Disk quota exceeded"
+		}
+		123 => { return "No medium found"
+		}
+		124 => { return "Wrong medium type"
+		}
+		125 => { return "Operation canceled"
+		}
+		126 => { return "Required key not available"
+		}
+		127 => { return "Key has expired"
+		}
+		128 => { return "Key has been revoked"
+		}
+		129 => { return "Key was rejected by service"
+		}
+		130 => { return "Owner died"
+		}
+		131 => { return "State not recoverable"
+		}
+		132 => { return "Operation not possible due to RF-kill"
+		}
+		133 => { return "Memory page has hardware error"
+		}
+	}
+	return "Unknown error "+rt_i64str(e)
 }

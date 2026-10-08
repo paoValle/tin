@@ -1,6 +1,6 @@
 package main
 mut calls i64
 fn n() i64 { calls += 1
- return calls }
+	return calls }
 fn main() { let s = make([]i64, n())
- println(calls, len(s), cap(s)) }
+	println(calls, len(s), cap(s)) }

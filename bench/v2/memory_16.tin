@@ -4,19 +4,19 @@ import "say"
 const n = 16
 
 fn main() {
-    let source = make([]u8,n)
-    let dest = make([]u8,n)
-    for i, _ in source { source[i] = 7 }
-    source[n-1] = 33
-    let text = str(source)
-    mut buf = make([]u8,0,n)
-    mut total = i64(0)
-    for i in 0..8388608 {
-        buf = buf[:0]
-        buf = append(buf,text...)
-        copy(dest,buf)
-        if !ore.Equal(source,dest) { panic("memory mismatch") }
-        total += ore.IndexByte(dest,33)
-    }
-    say.Line(n,total,dest[n-1])
+	let source = make([]u8, n)
+	let dest = make([]u8, n)
+	for i, _ in source { source[i] = 7 }
+	source[n-1] = 33
+	let text = str(source)
+	mut buf = make([]u8, 0, n)
+	mut total = i64(0)
+	for i in 0..8388608 {
+		buf = buf[:0]
+		buf = append(buf, text...)
+		copy(dest, buf)
+		if !ore.Equal(source, dest) { panic("memory mismatch") }
+		total += ore.IndexByte(dest, 33)
+	}
+	say.Line(n, total, dest[n-1])
 }

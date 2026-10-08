@@ -213,12 +213,12 @@ fn Seal(body str) str {
 		for i*32 < len(body) {
 			let ks = seal.HmacSha256(gKe, nonce + str(put_word(make([]u8, 0, 8), i)))
 			{
-			mut j = 0
-			for j < 32 && i*32+j < len(body) {
+				mut j = 0
+				for j < 32 && i*32+j < len(body) {
 					out = append(out, body[i*32+j]^ks[j])
 					j += 1
+				}
 			}
-		}
 			i += 1
 		}
 	}
