@@ -236,14 +236,14 @@ class DebugLines(unittest.TestCase):
             addrs = [r[0] for r in rows]
             self.assertEqual(addrs, sorted(addrs), target)
             mine = [r[2] for r in rows if r[1] == 1 and not r[4]]
-            for line in (6, 7, 11, 12, 14):
+            for line in (9, 10, 14, 15, 17):
                 self.assertIn(line, mine, f'{target}: line {line}')
             subs = {name: (lo, hi) for name, lo, hi in subprograms(secs['.debug_info'], secs['.debug_abbrev'])}
             for name in ('add', 'pick', 'main.main'):
                 self.assertIn(name, subs, target)
             lo, hi = subs['add']
             body = [r for r in rows if lo <= r[0] < hi and r[1] == 1]
-            self.assertEqual([r[2] for r in body][:2], [6, 7], f'{target}: the lines of add')
+            self.assertEqual([r[2] for r in body][:2], [9, 10], f'{target}: the lines of add')
             self.assertTrue(all(lo <= r[0] < hi for r in body))
             # parameters and locals with types and places
             tree = dies(secs['.debug_info'], secs['.debug_abbrev'])
@@ -260,6 +260,14 @@ class DebugLines(unittest.TestCase):
             self.assertEqual(members['Point'], [('X', 0), ('Y', 8), ('name', 16)], target)
             self.assertEqual(members['str'], [('len', 0), ('data', 8)], target)
             self.assertEqual([m for m, _ in members['[]i64']], ['len', 'cap', 'data', 'region'], target)
+            # globals: a per-core one is addressed from the context register, a shared one has its address
+            globals_ = {v[0x03]: (type_text(tree, v[0x49]), v[0x02]) for at, (tag, v, parent) in tree.items()
+                        if tag == 0x34 and 0x3f in v}
+            self.assertEqual(sorted(globals_), ['hits', 'total'], target)
+            self.assertEqual(globals_['hits'][0], 'i64', target)
+            ctx = 0x7f if 'amd64' in target else 0x8c
+            self.assertEqual(globals_['hits'][1][0], ctx, f'{target}: hits is a word of the context block')
+            self.assertEqual((globals_['total'][1][0], len(globals_['total'][1])), (0x03, 9), f'{target}: total has an address')
             # the function ranges do not overlap and lie inside the line table's range
             spans = sorted(subs.values())
             for (a, b), (c, e) in zip(spans, spans[1:]):

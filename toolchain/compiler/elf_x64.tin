@@ -127,7 +127,6 @@ fn write_elf_x64(path str) {
 	lk_stubs = pc // the end of the code: there are no import stubs
 	if debug_lines != 0 {
 		dwarf_collect_x64(code_addr, cast([]Fn, cast([]i64, own)), lk_stubs)
-		dwarf_build()
 	}
 	lk_strs = []i64{}
 	i = 0
@@ -154,6 +153,10 @@ fn write_elf_x64(path str) {
 	lk_data = data_addr
 	lk_fndescs = lk_data + 8 * nvars
 	let data_end = lk_fndescs + 16 * len(prog_fns) + 8
+	if debug_lines != 0 {
+		// the globals' addresses are known now
+		dwarf_build()
+	}
 	let extra = el_extra(data_end, len(cast([]i64, own)))
 	let file_size = data_end + extra
 	let img = calloc(file_size, 1)

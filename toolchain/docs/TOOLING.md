@@ -369,6 +369,8 @@ lldb prog -o "breakpoint set -f prog.tin -l 12" -o run -o bt     # stops at the 
 perf annotate -s main.main                                       # Linux: the source beside the machine code
 ```
 
+The unit also lists the program's own globals: a per-core global is a word of the core's context block, addressed from the
+context register (`x28`, `r15`), a shared one has its address (`target variable` in lldb, `info variables` in gdb).
 Each subprogram lists its parameters and local variables with their types and where they live: a register (a
 callee-saved register, or a float register) or a slot of the frame, addressed from the frame pointer (`x29`, `rbp`). The
 types follow the layouts of RUNTIME.md section 1: integers, `bool` and floats are base types; a `str` is a pointer to
@@ -389,7 +391,7 @@ number. A debugger shows them as it does a C program's:
 
 Limits: a variable's place is the one the backend gave it for the whole function, and a register or slot shared by
 variables whose lifetimes do not overlap shows the other's value outside its own; a variable captured by a closure (it lives in
-a heap cell), a `dyn` value and a `?T` over a number have no place yet; there is no unwinding information (frame pointers
+a heap cell), a `dyn` value, a `?T` over a number and a value struct global have no place yet; there is no unwinding information (frame pointers
 are followed), no lexical blocks and no inlined calls; `lldb` shows `str` as a pointer to its length and first byte
 (`p label->len`, `memory read`). The language of the unit is C, which is what debuggers need to print values.
 

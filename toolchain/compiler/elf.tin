@@ -218,7 +218,6 @@ fn write_elf(path str) {
 	relax_branches()
 	if debug_lines != 0 {
 		dwarf_extract(pc)
-		dwarf_build()
 	}
 	lk_labels = slice_filled(g_labels + 1, 0)
 	i = 0
@@ -259,6 +258,10 @@ fn write_elf(path str) {
 	lk_data = data_addr
 	lk_fndescs = lk_data + 8 * nvars
 	let data_end = lk_fndescs + 16 * len(prog_fns) + 8
+	if debug_lines != 0 {
+		// the globals' addresses are known now
+		dwarf_build()
+	}
 	let extra = el_extra(data_end, len(cast([]i64, own)))
 	let file_size = data_end + extra
 	let img = calloc(file_size, 1)

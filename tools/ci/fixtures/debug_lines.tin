@@ -2,6 +2,9 @@ package main
 
 import "say"
 
+mut hits i64 = 7
+shared mut total i64 = 11
+
 fn add(a i64, b i64) i64 {
 	let c = a + b
 	return c * 2

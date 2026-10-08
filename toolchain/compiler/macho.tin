@@ -258,7 +258,6 @@ fn write_executable(path str) {
 	relax_branches()
 	if debug_lines != 0 {
 		dwarf_extract(text_addr)
-		dwarf_build()
 	}
 	lk_labels = slice_filled(g_labels + 1, 0)
 	mut pc = text_addr
@@ -307,6 +306,8 @@ fn write_executable(path str) {
 	let dwarf_off = text_size + data_size
 	mut dwarf_bytes = 0
 	if debug_lines != 0 {
+		// the globals' addresses are known now
+		dwarf_build()
 		dwarf_bytes = dwarf_size()
 	}
 	mut dwarf_vmsize = 0

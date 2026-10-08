@@ -194,7 +194,8 @@ fn dw_line() []u8 {
 	return b
 }
 
-// The abbreviations: 1 compile unit, 2 subprogram, 3 parameter, 4 variable, 5 base type, 6 pointer, 7 structure, 8 member.
+// The abbreviations: 1 compile unit, 2 subprogram, 3 parameter, 4 variable, 5 base type, 6 pointer, 7 structure, 8 member,
+// 9 global variable.
 fn dw_abbrev_entry(b []u8, code i64, tag i64, children i64, attrs []i64) {
 	dw_uleb(b, code)
 	dw_uleb(b, tag)
@@ -217,6 +218,7 @@ fn dw_abbrev() []u8 {
 	dw_abbrev_entry(b, 6, 0x0f, 0, []i64{0x0b, 0x0b, 0x49, 0x13})
 	dw_abbrev_entry(b, 7, 0x13, 1, []i64{0x03, 0x08, 0x0b, 0x06})
 	dw_abbrev_entry(b, 8, 0x0d, 0, []i64{0x03, 0x08, 0x49, 0x13, 0x38, 0x06})
+	dw_abbrev_entry(b, 9, 0x34, 0, []i64{0x03, 0x08, 0x49, 0x13, 0x02, 0x18, 0x3f, 0x19})
 	buf_byte(b, 0)
 	return b
 }
@@ -497,6 +499,32 @@ fn dw_location(s Sym) str {
 	return str(b)
 }
 
+// dw_global_location is the location expression of global i ("" when it has no place to show): a per-core global is a word
+// of the core's context block, addressed from the context register (x28, r15), a shared one has its own address.
+fn dw_global_location(d Decl, i i64) str {
+	if d.sym < 65536 {
+		return ""
+	}
+	let s = cast(Sym, d.sym)
+	let t = cast(Ty, s.type_)
+	if s.type_ < 65536 || is_dyn_value(t) != 0 || is_value_struct(t) != 0 {
+		return ""
+	}
+	let b = buf_new()
+	if s.tls != 0 {
+		if tgt_x64 != 0 {
+			buf_byte(b, 0x70 + 15)
+		} else {
+			buf_byte(b, 0x70 + 28)
+		}
+		dw_sleb(b, tls_off(s))
+	} else {
+		buf_byte(b, 0x03)
+		dw_u64(b, lk_data + 8 * i)
+	}
+	return str(b)
+}
+
 // dw_vars writes the parameter and variable DIEs of function f.
 fn dw_vars(body []u8, f Fn) {
 	mut i = 0
@@ -566,6 +594,14 @@ fn dw_info() []u8 {
 		}
 		i = i + 1
 	}
+	i = 0
+	for i < len(prog_vars) {
+		let d = prog_vars[i]
+		if d.file < symbols_user_files && len(d.name) > 0 && len(dw_global_location(d, i)) > 0 {
+			dwt_reg(cast(Sym, d.sym).type_)
+		}
+		i = i + 1
+	}
 	dwt_layout(11 + len(cu))
 	let body = buf_new()
 	for u in dwt_units {
@@ -585,6 +621,22 @@ fn dw_info() []u8 {
 			dw_vars(body, dw_fns[i])
 		}
 		buf_byte(body, 0)
+		i = i + 1
+	}
+	i = 0
+	for i < len(prog_vars) {
+		let d = prog_vars[i]
+		if d.file < symbols_user_files && len(d.name) > 0 {
+			let loc = dw_global_location(d, i)
+			let ty = dwt_reg(cast(Sym, d.sym).type_)
+			if len(loc) > 0 && ty >= 0 {
+				dw_uleb(body, 9)
+				dw_cstr(body, d.name)
+				dw_u32(body, dwt_off[ty])
+				dw_uleb(body, len(loc))
+				buf_str(body, loc)
+			}
+		}
 		i = i + 1
 	}
 	buf_byte(body, 0)
