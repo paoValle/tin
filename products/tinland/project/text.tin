@@ -1,0 +1,17 @@
+package project
+
+import "twine"
+
+// Lower folds ASCII capitals to lower case (names are compared this way in the panel and in searches).
+fn Lower(s str) str {
+	mut b = twine.NewBuilder(len(s))
+	for i in 0..len(s) {
+		let c = s[i]
+		if c >= 'A' && c <= 'Z' {
+			b.Byte(c + 32)
+		} else {
+			b.Byte(c)
+		}
+	}
+	return b.String()
+}

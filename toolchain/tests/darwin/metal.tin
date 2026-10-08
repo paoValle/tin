@@ -1,0 +1,36 @@
+package main
+
+import "metal"
+import "say"
+
+// The GPU without a window: draw rectangles and a character into an offscreen texture and read pixels back (blue, green,
+// red, alpha).
+fn main() {
+	let g = metal.Open()
+	if g.Device == 0 {
+		say.Line("no gpu:", g.Error)
+		return
+	}
+	let t = metal.NewTarget(g, 64, 32)
+	mut atlas = metal.NewAtlas(g, 512)
+	let font = atlas.AddFont("Menlo-Regular", 24.0)
+	mut s = metal.Scene{}
+	s.Rect(0.0, 0.0, 4.0, 4.0, 1.0, 0.0, 0.0, 1.0, 0.0)
+	s.Rect(4.0, 4.0, 4.0, 4.0, 0.0, 1.0, 0.0, 0.5, 0.0)
+	let end = atlas.Text(mut s, font, 16.0, 24.0, "Hi", 0.0, 1.0, 1.0, 1.0, 1.0)
+	atlas.Upload()
+	metal.Draw(g, t.Texture, 64, 32, s, atlas, 0.0, 0.0, 1.0, 1.0)
+	let p = metal.Pixels(t)
+	say.Line("red:", metal.Pixel(p, 0), metal.Pixel(p, 1), metal.Pixel(p, 2), metal.Pixel(p, 3))
+	say.Line("blue:", metal.Pixel(p, 8 * 64 * 4), metal.Pixel(p, 8 * 64 * 4 + 1), metal.Pixel(p, 8 * 64 * 4 + 2), metal.Pixel(p, 8 * 64 * 4 + 3))
+	let k = (5 * 64 + 5) * 4
+	say.Line("green over blue:", metal.Pixel(p, k), metal.Pixel(p, k + 1), metal.Pixel(p, k + 2), metal.Pixel(p, k + 3))
+	// the text turned some of the blue to white: count the lit pixels, and the pen moved two cells
+	mut lit = 0
+	for i in 0..64 * 32 {
+		if metal.Pixel(p, i * 4 + 1) > 128 && i > 64 * 8 {
+			lit += 1
+		}
+	}
+	say.Line("text pixels:", lit > 40, "pen:", end > 16.0 + 2.0 * 14.0)
+}

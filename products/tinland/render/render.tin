@@ -1,0 +1,139 @@
+// The GPU backend of the UI framework: turns the drawing commands of a laid out tree into a metal scene, measures text with the
+// glyph atlas and keeps the fonts and icons. The framework (../ui) works in points; everything here multiplies by the scale of the
+// screen (2 on a Retina display) to get device pixels.
+package render
+
+import "../ui"
+import "glyph"
+import "metal"
+
+// Font numbers: the tree's text nodes use these.
+const FontUI = 0
+const FontUIBold = 1
+const FontSmall = 2
+const FontCode = 3
+
+// Icon numbers, in the order Init registers them.
+const IconFolder = 0
+const IconFolderOpen = 1
+const IconFile = 2
+const IconCode = 3
+const IconChevronRight = 4
+const IconChevronDown = 5
+const IconPanel = 6
+const IconGit = 7
+const IconOutline = 8
+const IconSearch = 9
+const IconWarning = 10
+const IconTerminal = 11
+const IconDebug = 12
+const IconClose = 13
+const IconPlus = 14
+const IconGear = 15
+const IconText = 16
+const IconImage = 17
+
+// Canvas is the GPU, the glyph atlas and the screen scale.
+type Canvas struct {
+	Gpu metal.Gpu
+	Atlas metal.Atlas
+	Scale f64
+	Code f64
+}
+
+mut cv = Canvas{Gpu: metal.Gpu{}, Atlas: metal.EmptyAtlas(), Scale: 1.0}
+
+// Init prepares the canvas for a screen scale: the fonts (a UI font and a monospaced one, with the code font size in points) and
+// the icons. Call it once the GPU is open, and again if the window moves to a screen of another scale.
+fn Init(gpu metal.Gpu, scale f64, codePoints f64) {
+	cv = keep(Canvas{Gpu: gpu, Atlas: metal.NewAtlas(gpu, 2048), Scale: scale, Code: codePoints})
+	cv.Atlas.AddFont(".AppleSystemUIFont", 13.0 * scale)
+	cv.Atlas.AddFont(".AppleSystemUIFont-Bold", 13.0 * scale)
+	cv.Atlas.AddFont(".AppleSystemUIFont", 11.0 * scale)
+	cv.Atlas.AddFont("Menlo-Regular", codePoints * scale)
+	for name in []str{"folder", "folder.fill", "doc", "chevron.left.forwardslash.chevron.right", "chevron.right", "chevron.down", "sidebar.left", "arrow.triangle.branch", "list.bullet.indent", "magnifyingglass", "exclamationmark.triangle", "terminal", "ladybug", "xmark", "plus", "gearshape", "doc.text", "photo"} {
+		cv.Atlas.AddIcon(name)
+	}
+}
+
+// Scale is the scale Init was given.
+fn Scale() f64 {
+	return cv.Scale
+}
+
+// Width is how wide the text is in the font, in points: the sum of its characters' advances.
+fn Width(font i64, text str) f64 {
+	let f = cv.Atlas.Fonts[font]
+	if font == FontCode {
+		// a monospaced font: every character is one cell wide
+		return f64(glyph.RuneCount(text)) * f.Advance / cv.Scale
+	}
+	mut w = 0.0
+	mut i = 0
+	for i < len(text) {
+		let (r, n) = glyph.DecodeRune(text, i)
+		i += n
+		w += cv.Atlas.Lookup(font, r).Advance
+	}
+	return w / cv.Scale
+}
+
+// LineHeight is the height of a line of the font, in points.
+fn LineHeight(font i64) f64 {
+	let f = cv.Atlas.Fonts[font]
+	return f.Line / cv.Scale
+}
+
+// CodeCell is the width of one character of the code font, in points.
+fn CodeCell() f64 {
+	return cv.Atlas.Fonts[FontCode].Advance / cv.Scale
+}
+
+// Pen draws the text in the font at (x, y), where y is the top of its line (points), and returns where the pen ended.
+fn Pen(scene mut metal.Scene, font i64, x f64, y f64, text str, c ui.Color) f64 {
+	let f = cv.Atlas.Fonts[font]
+	let s = cv.Scale
+	mut cell = 0.0
+	if font == FontCode {
+		cell = f.Advance
+	}
+	let end = cv.Atlas.Text(mut scene, font, x * s, y * s + f.Ascent, text, cell, ui.R(c), ui.G(c), ui.B(c), ui.A(c))
+	return end / s
+}
+
+// Draw paints the commands into the scene. A custom area is handed to custom with its id and rectangle (points) to paint
+// itself; commands that clip are applied to everything after them until the matching unclip.
+fn Draw(cmds []ui.Cmd, texts []str, scene mut metal.Scene, custom fn(i64, f64, f64, f64, f64, mut metal.Scene)) {
+	let s = cv.Scale
+	for c in cmds {
+		if c.Kind == ui.CmdRect {
+			scene.Rect(c.X * s, c.Y * s, c.W * s, c.H * s, ui.R(c.Col), ui.G(c.Col), ui.B(c.Col), ui.A(c.Col), c.Radius * s)
+		} else if c.Kind == ui.CmdBorder {
+			scene.Outline(c.X * s, c.Y * s, c.W * s, c.H * s, ui.R(c.Col), ui.G(c.Col), ui.B(c.Col), ui.A(c.Col), c.Radius * s, c.Border * s)
+		} else if c.Kind == ui.CmdText {
+			let f = cv.Atlas.Fonts[c.Font]
+			let top = c.Y + (c.H - f.Line / s) / 2.0
+			Pen(mut scene, c.Font, c.X, top, texts[c.Arg], c.Col)
+		} else if c.Kind == ui.CmdIcon {
+			let px = i64(c.W * s + 0.5)
+			let g = cv.Atlas.Icon(c.Arg, px)
+			scene.Sprite(f64(i64(c.X * s + 0.5)) - 1.0, f64(i64(c.Y * s + 0.5)) - 1.0, f64(g.W), f64(g.H), f64(g.X), f64(g.Y), ui.R(c.Col), ui.G(c.Col), ui.B(c.Col), ui.A(c.Col))
+		} else if c.Kind == ui.CmdClip {
+			scene.PushClip(c.X * s, c.Y * s, c.W * s, c.H * s)
+		} else if c.Kind == ui.CmdUnclip {
+			scene.PopClip()
+		} else if c.Kind == ui.CmdCustom {
+			custom(c.Arg, c.X, c.Y, c.W, c.H, mut scene)
+		}
+	}
+}
+
+// Upload sends the glyphs drawn since the last frame to the GPU.
+fn Upload() {
+	cv.Atlas.Upload()
+}
+
+// Present draws the scene into the layer, w by h pixels, over the color.
+fn Present(layer i64, w i64, h i64, scene metal.Scene, bg ui.Color) {
+	metal.DrawLayer(cv.Gpu, layer, w, h, scene, cv.Atlas, ui.R(bg), ui.G(bg), ui.B(bg), ui.A(bg))
+}

@@ -1,0 +1,84 @@
+package main
+
+import "../../ui"
+import "say"
+
+// A fixed-width font: 8 points per character, lines 16 points tall.
+fn width(font i64, text str) f64 {
+	return f64(len(text)) * 8.0
+}
+
+fn height(font i64) f64 {
+	return 16.0
+}
+
+fn show(t ui.Tree, name str, id i64) {
+	let (x, y, w, h) = t.Rect(id)
+	say.Line(name, x, y, w, h)
+}
+
+fn scrolled(scrolls mut ui.Scrolls) ui.Tree {
+	mut u = ui.NewTree(width, height)
+	u.Open(ui.VBox(), 0)
+	u.Open(ui.VBox().High(100.0).Scrolls(), 3)
+	for i in 0..20 {
+		u.Text("file", 0, ui.Hex(0xcccccc), ui.Box().High(20.0))
+	}
+	u.Close()
+	u.Close()
+	u.Layout(800.0, 600.0, mut scrolls)
+	return u
+}
+
+fn main() {
+	mut scrolls = ui.NewScrolls(8)
+	mut t = ui.NewTree(width, height)
+	// a window: title bar, then a side panel and the main area, then a status bar
+	t.Open(ui.VBox(), 0)
+	t.Open(ui.HBox().High(30.0).Items(ui.Center).PadXY(8.0, 0.0).Fill(ui.Hex(0x333333)), 1)
+	t.Text("Tinland", 0, ui.Hex(0xffffff), ui.Box())
+	t.Close()
+	t.Open(ui.HBox().Flex(1.0), 2)
+	t.Open(ui.VBox().Wide(120.0).Fill(ui.Hex(0x222222)).Scrolls(), 3)
+	for i in 0..20 {
+		t.Text("file", 0, ui.Hex(0xcccccc), ui.Box().High(20.0))
+	}
+	t.Close()
+	t.Open(ui.VBox().Flex(1.0), 4)
+	t.Custom(ui.Box().Flex(1.0), 5)
+	t.Close()
+	t.Close()
+	t.Open(ui.HBox().High(22.0).Items(ui.Center).Content(ui.SpaceBetween).PadXY(6.0, 0.0), 6)
+	t.Text("left", 0, ui.Hex(0xffffff), ui.Box())
+	t.Text("right", 0, ui.Hex(0xffffff), ui.Box())
+	t.Close()
+	t.Close()
+	t.Layout(800.0, 600.0, mut scrolls)
+	show(t, "title", 1)
+	show(t, "body", 2)
+	show(t, "panel", 3)
+	show(t, "editor", 4)
+	show(t, "custom", 5)
+	show(t, "status", 6)
+	say.Line("panel content", t.Nodes[t.Find(3)].ContentH, "max", scrolls.Max[3])
+	say.Line("hit", t.HitTest(10.0, 10.0), t.HitTest(10.0, 100.0), t.HitTest(500.0, 300.0), t.HitTest(300.0, 590.0), t.HitTest(10.0, 700.0))
+	say.Line("scroll at", t.ScrollAt(10.0, 100.0), t.ScrollAt(500.0, 300.0))
+	// scrolling a box moves what it holds and clamps at the end: 20 rows of 20 points in a box 100 high can move 300
+	let u = scrolled(mut scrolls)
+	say.Line("max", scrolls.Max[3], "offset", u.Nodes[1].Offset)
+	scrolls.Scroll(3, 100.0)
+	let v = scrolled(mut scrolls)
+	say.Line("after 100", v.Nodes[1].Offset, v.Nodes[2].Y, v.Nodes[21].Y)
+	scrolls.Scroll(3, 1000.0)
+	let w = scrolled(mut scrolls)
+	say.Line("after 1100", w.Nodes[1].Offset, w.Nodes[2].Y, w.Nodes[21].Y)
+	scrolls.Scroll(3, -5000.0)
+	say.Line("back", scrolls.Offset[3])
+	let cmds = t.Paint()
+	mut kinds = []i64{0, 0, 0, 0, 0, 0, 0}
+	for c in cmds {
+		kinds[c.Kind] += 1
+	}
+	say.Line("commands", len(cmds), kinds)
+	say.Line("first", cmds[0].Kind, cmds[0].W, ui.R(cmds[0].Col), ui.G(cmds[0].Col), ui.A(cmds[0].Col), "text", cmds[1].Kind, ui.R(cmds[1].Col))
+}

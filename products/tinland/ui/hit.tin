@@ -1,0 +1,77 @@
+package ui
+
+// HitTest is the Id of the innermost element with an Id that holds the point (x, y), looking at the elements drawn last
+// first, and not past the edge of a box that clips; 0 when there is none.
+fn (t Tree) HitTest(x f64, y f64) i64 {
+	if len(t.Nodes) == 0 {
+		return 0
+	}
+	return t.hit(0, x, y)
+}
+
+fn (t Tree) hit(i i64, x f64, y f64) i64 {
+	let n = t.Nodes[i]
+	let inside = x >= n.X && x < n.X + n.W && y >= n.Y && y < n.Y + n.H
+	if n.Style.Clip && !inside {
+		return 0
+	}
+	// children in drawing order; the last one that holds the point is on top
+	mut found = 0
+	mut c = n.First
+	for c >= 0 {
+		let r = t.hit(c, x, y)
+		if r != 0 {
+			found = r
+		}
+		c = t.Nodes[c].Next
+	}
+	if found != 0 {
+		return found
+	}
+	if n.Id != 0 && inside {
+		return n.Id
+	}
+	return 0
+}
+
+// ScrollAt is the Id of the innermost scrolling box that holds the point (0 when there is none): the one a wheel event moves.
+fn (t Tree) ScrollAt(x f64, y f64) i64 {
+	if len(t.Nodes) == 0 {
+		return 0
+	}
+	return t.scrollHit(0, x, y)
+}
+
+fn (t Tree) scrollHit(i i64, x f64, y f64) i64 {
+	let n = t.Nodes[i]
+	let inside = x >= n.X && x < n.X + n.W && y >= n.Y && y < n.Y + n.H
+	if n.Style.Clip && !inside {
+		return 0
+	}
+	mut found = 0
+	mut c = n.First
+	for c >= 0 {
+		let r = t.scrollHit(c, x, y)
+		if r != 0 {
+			found = r
+		}
+		c = t.Nodes[c].Next
+	}
+	if found != 0 {
+		return found
+	}
+	if n.Style.Scroll && inside {
+		return n.Id
+	}
+	return 0
+}
+
+// Rect is the rectangle of the element with the id, as the last Layout placed it.
+fn (t Tree) Rect(id i64) (f64, f64, f64, f64) {
+	let i = t.Find(id)
+	if i < 0 {
+		return 0.0, 0.0, 0.0, 0.0
+	}
+	let n = t.Nodes[i]
+	return n.X, n.Y, n.W, n.H
+}

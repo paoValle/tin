@@ -6,7 +6,7 @@ SKIP = {"runtime", "std", "fmt", "say"}
 ORDER = ["say", "fault", "argo", "io", "anvil", "hearth", "relay", "task", "wire", "tls", "hpack", "twine", "glyph", "mint", "gauge", "bits",
          "link", "ore", "flume", "quarry", "spawn", "trail", "lever", "tide", "dice", "sift", "atlas", "cairn", "stamp", "squash", "ledger", "abacus",
          "seal", "herald", "crucible", "constraints", "policy", "redis", "mysql", "postgres", "kafka", "websocket", "atomic",
-         "lane", "replay", "stencil", "scroll", "lasso", "appkit", "textedit"]
+         "lane", "replay", "stencil", "scroll", "lasso", "appkit", "metal", "gpuwin", "textedit", "tinjson", "tinsym", "tinfmt"]
 ROLE = {"say": "formatting and printing (fmt)", "fault": "fault chains and standard sentinels (errors)", "argo": "JSON (encoding/json)", "anvil": "HTTP/1.1 and HTTP/2 server, HTTPS with ServeTLS (net/http)",
         "hearth": "cores and threads (runtime)", "relay": "messages between cores (channels)", "task": "deadline and cancellation of the running code (context)", "wire": "TCP and HTTP/1.1 and HTTP/2 client (net, net/http)", "tls": "TLS 1.3 client and server (crypto/tls)",
         "hpack": "HTTP/2 header compression (golang.org/x/net/http2/hpack)",
@@ -30,7 +30,12 @@ ROLE = {"say": "formatting and printing (fmt)", "fault": "fault chains and stand
         "scroll": "XML tokenizer and writer (encoding/xml)",
         "lasso": "regular expressions with linear-time matching (regexp)",
         "appkit": "macOS frameworks for the Tinland editor (Cocoa, WebKit)",
-        "textedit": "the editing model behind Tinland (buffer, cursor, undo, highlighting)"}
+        "metal": "Metal: a GPU scene of rectangles and text with a glyph atlas, for the Tinland editor",
+        "gpuwin": "a window AppKit calls into (Objective-C classes defined in Tin), drawn on the GPU",
+        "textedit": "the editing model behind Tinland (buffer, cursor, undo, highlighting)",
+        "tinjson": "a JSON reader and writer for the developer tools",
+        "tinsym": "the compiler's declarations and errors, name resolution and completion (tin lsp, Tinland)",
+        "tinfmt": "the whitespace formatter (tin fmt, Tinland)"}
 
 def package_files(name):
     """The files of the package directory <name> that document the package: every .tin file except tests and the

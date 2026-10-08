@@ -152,3 +152,60 @@ fn DrawUnicode(b Bitmap, x f64, y f64, text str) {
 fn EventClicks(e i64) i64 {
 	return Send(e, "clickCount")
 }
+
+// FontNamed is the CoreText font with a PostScript name ("Menlo-Regular") at a size in pixels.
+fn FontNamed(name str, size f64) i64 {
+	return CTFontCreateWithName(NewString(name), size, 0)
+}
+
+// TextAdvance is how far the pen moves when text is drawn in the font (a FontNamed result): the width of the text.
+fn TextAdvance(font i64, text str) f64 {
+	let attrs = Send(Send(Class("NSMutableDictionary"), "alloc"), "init")
+	Send2(attrs, "setObject:forKey:", font, NewString("NSFont"))
+	let astr = Send2(Send(Class("NSAttributedString"), "alloc"), "initWithString:attributes:", NewString(text), attrs)
+	let line = CTLineCreateWithAttributedString(astr)
+	let w = CTLineGetTypographicBounds(line, 0, 0, 0)
+	CFRelease(line)
+	Send(astr, "release")
+	Send(attrs, "release")
+	return w
+}
+
+// DrawSymbol draws the SF Symbol called name (such as "folder" or "chevron.right") into the bitmap, as large as fits in the
+// square of size pixels whose bottom left corner is (x, y), centered in it, in black (only its alpha matters when it is a
+// template). It reports whether the system has the symbol.
+fn DrawSymbol(b Bitmap, name str, x f64, y f64, size f64) bool {
+	let base = Send2(Class("NSImage"), "imageWithSystemSymbolName:accessibilityDescription:", NewString(name), 0)
+	if base == 0 {
+		return false
+	}
+	// a symbol is drawn at the weight and point size its configuration says: ask for the size, regular weight
+	let config = msgD2(Class("NSImageSymbolConfiguration"), Sel("configurationWithPointSize:weight:"), size * 0.8, 0.0)
+	let image = Send1(base, "imageWithSymbolConfiguration:", config)
+	// the image's size as text: "NSSize: {17, 14}" (a two-double result is not available to Tin)
+	let nums = ParseNumbers(StringOf(Send(Send1(image, "valueForKey:", NewString("size")), "description")))
+	mut w = size
+	mut h = size
+	if len(nums) >= 2 && nums[0] > 0.0 && nums[1] > 0.0 {
+		w = nums[0]
+		h = nums[1]
+		let fit = size / maxFloat(w, h)
+		if fit < 1.0 {
+			w = w * fit
+			h = h * fit
+		}
+	}
+	let gc = Send2(Class("NSGraphicsContext"), "graphicsContextWithCGContext:flipped:", b.Ctx, 0)
+	Send(Class("NSGraphicsContext"), "saveGraphicsState")
+	Send1(Class("NSGraphicsContext"), "setCurrentContext:", gc)
+	msgD4(image, Sel("drawInRect:"), x + (size - w) / 2.0, y + (size - h) / 2.0, w, h)
+	Send(Class("NSGraphicsContext"), "restoreGraphicsState")
+	return true
+}
+
+fn maxFloat(a f64, b f64) f64 {
+	if a > b {
+		return a
+	}
+	return b
+}

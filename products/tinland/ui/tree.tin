@@ -1,0 +1,160 @@
+package ui
+
+// The element tree. Every frame the program describes what it shows by opening boxes and adding text, icons and custom areas
+// to a Tree (the way Zed's render functions return elements); Layout gives each node its rectangle and Paint turns the tree
+// into a list of drawing commands. Nodes live in one slice and refer to each other by index, so building a frame allocates a
+// few blocks rather than an object per element.
+
+const KindBox = 0
+const KindText = 1
+const KindIcon = 2
+const KindCustom = 3
+
+// Node is one element.
+type Node value struct {
+	Style Style
+	Kind i64
+	// Id names an element the program wants to hear about (a click, a hover, a scroll position); 0 for the rest.
+	Id i64
+	Parent i64
+	First i64
+	Last i64
+	Next i64
+	// Text is the index of the node's string in Tree.Texts, for a text node, and Font its font.
+	Text i64
+	Font i64
+	// Color is the color of text and icons; Icon is the icon's number in the program's icon table, Size its size in points.
+	Col i64
+	Icon i64
+	Size f64
+	// What Layout works out: the size the content asks for, and the rectangle the node gets.
+	NW f64
+	NH f64
+	X f64
+	Y f64
+	W f64
+	H f64
+	// ContentH is the height of a scrolling box's children together; Offset how far they are moved up.
+	ContentH f64
+	Offset f64
+}
+
+// Scrolls is what scrolling boxes remember between frames, by the box's Id (which must be below the length): where the user
+// moved them to, and how far they can go (Layout writes that for the next wheel event to clamp against).
+type Scrolls struct {
+	Offset []f64
+	Max []f64
+}
+
+// NewScrolls makes room for boxes with ids from 1 to n - 1.
+fn NewScrolls(n i64) Scrolls {
+	return Scrolls{Offset: make([]f64, n), Max: make([]f64, n)}
+}
+
+// Scroll moves the box with the id by dy points (positive is down), within what the last layout allowed.
+fn (s mut Scrolls) Scroll(id i64, dy f64) {
+	if id <= 0 || id >= len(s.Offset) {
+		return
+	}
+	mut v = s.Offset[id] + dy
+	if v > s.Max[id] {
+		v = s.Max[id]
+	}
+	if v < 0.0 {
+		v = 0.0
+	}
+	s.Offset[id] = v
+}
+
+// ScrollTo puts the box at an exact offset.
+fn (s mut Scrolls) ScrollTo(id i64, y f64) {
+	if id <= 0 || id >= len(s.Offset) {
+		return
+	}
+	s.Offset[id] = 0.0
+	s.Scroll(id, y)
+}
+
+// Tree is the elements of one frame.
+type Tree struct {
+	Nodes []Node
+	Texts []str
+	open []i64
+	// Width is how wide a string is in a font, and LineHeight how tall a line is (points); the program supplies them, as only
+	// the font engine knows.
+	Width fn(i64, str) f64
+	LineHeight fn(i64) f64
+	// Hover is the Id under the mouse, set before Paint so a box can show its HoverBg.
+	Hover i64
+}
+
+// NewTree starts an empty tree.
+fn NewTree(width fn(i64, str) f64, lineHeight fn(i64) f64) Tree {
+	return Tree{Width: width, LineHeight: lineHeight}
+}
+
+// add appends a node as the last child of the box being built (or as the root).
+fn (t mut Tree) add(node Node) i64 {
+	mut n = node
+	let i = len(t.Nodes)
+	n.First = -1
+	n.Last = -1
+	n.Next = -1
+	n.Parent = -1
+	if len(t.open) > 0 {
+		let p = t.open[len(t.open) - 1]
+		n.Parent = p
+		if t.Nodes[p].Last >= 0 {
+			t.Nodes[t.Nodes[p].Last].Next = i
+		} else {
+			t.Nodes[p].First = i
+		}
+		t.Nodes[p].Last = i
+	}
+	t.Nodes = append(t.Nodes, n)
+	return i
+}
+
+// Open starts a box with the style and id; what is added until the matching Close is inside it. It returns the node's index.
+fn (t mut Tree) Open(style Style, id i64) i64 {
+	let i = t.add(Node{Style: style, Kind: KindBox, Id: id})
+	t.open = append(t.open, i)
+	return i
+}
+
+// Close ends the box Open started.
+fn (t mut Tree) Close() {
+	t.open = t.open[0:len(t.open) - 1]
+}
+
+// Leaf adds a box with no children.
+fn (t mut Tree) Leaf(style Style, id i64) i64 {
+	return t.add(Node{Style: style, Kind: KindBox, Id: id})
+}
+
+// Custom adds an area the program paints itself (the editor's text, a terminal): Paint reports it as a CmdCustom command with
+// the node's rectangle.
+fn (t mut Tree) Custom(style Style, id i64) i64 {
+	return t.add(Node{Style: style, Kind: KindCustom, Id: id})
+}
+
+// Text adds one line of text.
+fn (t mut Tree) Text(text str, font i64, color Color, style Style) i64 {
+	t.Texts = append(t.Texts, text)
+	return t.add(Node{Style: style, Kind: KindText, Text: len(t.Texts) - 1, Font: font, Col: color})
+}
+
+// Icon adds an icon (a number in the program's icon table) size points square.
+fn (t mut Tree) Icon(icon i64, size f64, color Color, style Style) i64 {
+	return t.add(Node{Style: style, Kind: KindIcon, Icon: icon, Size: size, Col: color})
+}
+
+// Find is the index of the node with the id (-1 when there is none).
+fn (t Tree) Find(id i64) i64 {
+	for i in 0..len(t.Nodes) {
+		if t.Nodes[i].Id == id {
+			return i
+		}
+	}
+	return -1
+}

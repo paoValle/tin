@@ -1,0 +1,92 @@
+package project
+
+import "quarry"
+import "trail"
+import "twine"
+
+// loadIgnore reads the root's .gitignore: one pattern per line, blank lines and # comments left out.
+fn loadIgnore(root str) []str {
+	let text = quarry.ReadFile(trail.Join2(root, ".gitignore")) catch _ {
+		return []str{}
+	}
+	mut out = []str{}
+	for line in twine.Split(text, "\n") {
+		let l = twine.TrimSpace(line)
+		if len(l) == 0 || l[0] == '#' || l[0] == '!' {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+// ignored reports whether a .gitignore pattern matches the entry. It covers what projects use most: a name (`build`), a folder
+// (`build/`), an anchored path (`/dist`), a wildcard (`*.log`, `tmp*`), and a path with folders (`docs/out`). A leading `!`
+// (re-including) is not supported.
+fn (p Project) ignored(path str, name str, isDir bool) bool {
+	let rel = twine.TrimPrefix(path, p.Root + "/")
+	for pat in p.patterns {
+		mut pattern = pat
+		let dirOnly = twine.HasSuffix(pattern, "/")
+		if dirOnly {
+			pattern = twine.TrimSuffix(pattern, "/")
+		}
+		if dirOnly && !isDir {
+			continue
+		}
+		if twine.HasPrefix(pattern, "/") {
+			if wildcard(twine.TrimPrefix(pattern, "/"), rel) {
+				return true
+			}
+		} else if twine.Contains(pattern, "/") {
+			if wildcard(pattern, rel) {
+				return true
+			}
+		} else if wildcard(pattern, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// wildcard matches text against a pattern where * stands for any characters except a slash and ? for one.
+fn wildcard(pattern str, text str) bool {
+	return wildAt(pattern, 0, text, 0)
+}
+
+fn wildAt(pattern str, pi i64, text str, ti i64) bool {
+	mut p = pi
+	mut t = ti
+	for p < len(pattern) {
+		let c = pattern[p]
+		if c == '*' {
+			// a run of stars; then try every length of text for the star to cover (not across a slash)
+			for p < len(pattern) && pattern[p] == '*' {
+				p += 1
+			}
+			if p == len(pattern) {
+				return !twine.ContainsByte(text[t:], '/')
+			}
+			mut k = t
+			for k <= len(text) {
+				if wildAt(pattern, p, text, k) {
+					return true
+				}
+				if k < len(text) && text[k] == '/' {
+					break
+				}
+				k += 1
+			}
+			return false
+		}
+		if t >= len(text) {
+			return false
+		}
+		if c != '?' && c != text[t] {
+			return false
+		}
+		p += 1
+		t += 1
+	}
+	return t == len(text)
+}

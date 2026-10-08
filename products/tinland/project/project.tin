@@ -1,0 +1,295 @@
+// A project is a folder Tinland has open: the tree of its files for the project panel, which of them git ignores, the current
+// branch and, in search.tin and fuzzy.tin, the project-wide searches. It has no windows and no drawing: paths and text in,
+// entries and matches out.
+package project
+
+import "quarry"
+import "say"
+import "trail"
+import "twine"
+
+// Entry is a file or folder of the project.
+type Entry struct {
+	Path str
+	Name str
+	Dir bool
+	// Depth is how far below the root the entry is (the root is 0).
+	Depth i64
+	// Open is whether a folder shows its children; Loaded whether they were read from disk yet.
+	Open bool
+	Loaded bool
+	// Ignored entries match a .gitignore pattern: they are shown dimmed and left out of searches.
+	Ignored bool
+	Parent i64
+	Children []i64
+}
+
+// Project is the open folder.
+type Project struct {
+	Root str
+	// Name is the folder's name, the title of the window.
+	Name str
+	Branch str
+	Entries []Entry
+	// Rows are the entries a panel shows now, in order: the open folders' children follow them.
+	Rows []i64
+	Selected i64
+	patterns []str
+}
+
+// hidden names are never listed: they are not the user's files.
+fn hidden(name str) bool {
+	return name == ".git" || name == ".DS_Store" || name == ".hg" || name == ".svn"
+}
+
+// Open reads the folder (its first level; the rest is read as folders are opened). It fails when root is not a folder.
+fn Open(root str) !Project {
+	if !quarry.IsDir(root) {
+		fail say.Fault("%s", "not a folder: " + root)
+	}
+	let clean = trail.Clean(root)
+	let p = Project{Root: clean, Name: trail.Base(clean), Selected: -1}
+	p.Branch = Branch(clean)
+	p.patterns = loadIgnore(clean)
+	p.Entries = []Entry{Entry{Path: clean, Name: trail.Base(clean), Dir: true, Open: true, Parent: -1}}
+	p.load(0)
+	p.rebuild()
+	return p
+}
+
+// load reads the children of folder i from disk.
+fn (p mut Project) load(i i64) {
+	let dir = p.Entries[i]
+	dir.Loaded = true
+	dir.Children = []i64{}
+	let names = quarry.ReadDir(dir.Path) catch _ {
+		return
+	}
+	mut dirs = []Entry{}
+	mut files = []Entry{}
+	for name in names {
+		if hidden(name) {
+			continue
+		}
+		let path = trail.Join2(dir.Path, name)
+		let isDir = quarry.IsDir(path)
+		let e = Entry{Path: path, Name: name, Dir: isDir, Depth: dir.Depth + 1, Parent: i}
+		e.Ignored = dir.Ignored || p.ignored(path, name, isDir)
+		if isDir {
+			dirs = append(dirs, e)
+		} else {
+			files = append(files, e)
+		}
+	}
+	sortEntries(mut dirs)
+	sortEntries(mut files)
+	for e in dirs {
+		p.Entries = append(p.Entries, e)
+		dir.Children = append(dir.Children, len(p.Entries) - 1)
+	}
+	for e in files {
+		p.Entries = append(p.Entries, e)
+		dir.Children = append(dir.Children, len(p.Entries) - 1)
+	}
+}
+
+// sortEntries orders by name without regard to case (insertion sort: a folder's entries are not many).
+fn sortEntries(xs mut []Entry) {
+	for i in 1..len(xs) {
+		let x = xs[i]
+		let key = twine.ToLower(x.Name)
+		mut j = i - 1
+		for j >= 0 && twine.ToLower(xs[j].Name) > key {
+			xs[j + 1] = xs[j]
+			j -= 1
+		}
+		xs[j + 1] = x
+	}
+}
+
+// rebuild lists the rows: the root, and below each open folder its children.
+fn (p mut Project) rebuild() {
+	p.Rows = []i64{}
+	p.walk(0)
+}
+
+fn (p mut Project) walk(i i64) {
+	p.Rows = append(p.Rows, i)
+	let e = p.Entries[i]
+	if e.Dir && e.Open {
+		for c in e.Children {
+			p.walk(c)
+		}
+	}
+}
+
+// Toggle opens a closed folder (reading it first) or closes an open one.
+fn (p mut Project) Toggle(i i64) {
+	if i < 0 || i >= len(p.Entries) || !p.Entries[i].Dir {
+		return
+	}
+	let e = p.Entries[i]
+	e.Open = !e.Open
+	if e.Open && !e.Loaded {
+		p.load(i)
+	}
+	p.rebuild()
+}
+
+// Find is the index of the entry with the path (-1 when it is not loaded).
+fn (p Project) Find(path str) i64 {
+	for i in 0..len(p.Entries) {
+		if p.Entries[i].Path == path {
+			return i
+		}
+	}
+	return -1
+}
+
+// Reveal opens the folders above the path and selects it, as "reveal in project panel" does. It reports whether the path is in
+// the project.
+fn (p mut Project) Reveal(path str) bool {
+	if !twine.HasPrefix(path, p.Root + "/") {
+		return false
+	}
+	let rel = twine.TrimPrefix(path, p.Root + "/")
+	mut at = 0
+	for part in twine.Split(rel, "/") {
+		let e = p.Entries[at]
+		if !e.Loaded {
+			p.load(at)
+		}
+		e.Open = true
+		mut next = -1
+		for c in e.Children {
+			if p.Entries[c].Name == part {
+				next = c
+			}
+		}
+		if next < 0 {
+			return false
+		}
+		at = next
+	}
+	p.Selected = at
+	p.rebuild()
+	return true
+}
+
+// Select marks the entry as the current one (-1 for none).
+fn (p mut Project) Select(i i64) {
+	p.Selected = i
+}
+
+// Refresh reads the folders again after files were created or removed, keeping the open folders open and the selection on the
+// same path.
+fn (p mut Project) Refresh() {
+	mut open = []str{}
+	for e in p.Entries {
+		if e.Dir && e.Open {
+			open = append(open, e.Path)
+		}
+	}
+	let selected = p.selectedPath()
+	p.patterns = loadIgnore(p.Root)
+	p.Entries = []Entry{Entry{Path: p.Root, Name: p.Name, Dir: true, Open: true, Parent: -1}}
+	p.load(0)
+	// reopen what was open, shallowest first (the paths are in the order of the old entries, which is parents before children)
+	for path in open {
+		let i = p.Find(path)
+		if i >= 0 {
+			let e = p.Entries[i]
+			if e.Dir {
+				e.Open = true
+				if !e.Loaded {
+					p.load(i)
+				}
+			}
+		}
+	}
+	p.Selected = p.Find(selected)
+	p.Branch = Branch(p.Root)
+	p.rebuild()
+}
+
+fn (p Project) selectedPath() str {
+	if p.Selected < 0 || p.Selected >= len(p.Entries) {
+		return ""
+	}
+	return p.Entries[p.Selected].Path
+}
+
+// NewFile creates an empty file called name in the folder (an entry's folder: the entry itself when it is one, else the one that
+// holds it) and returns its path.
+fn (p mut Project) NewFile(at i64, name str) !str {
+	let path = trail.Join2(p.folderOf(at), name)
+	if quarry.Exists(path) {
+		fail say.Fault("%s", "already exists: " + name)
+	}
+	try quarry.WriteFile(path, "")
+	p.Refresh()
+	p.Reveal(path)
+	return path
+}
+
+// NewFolder creates a folder called name.
+fn (p mut Project) NewFolder(at i64, name str) !str {
+	let path = trail.Join2(p.folderOf(at), name)
+	if quarry.Exists(path) {
+		fail say.Fault("%s", "already exists: " + name)
+	}
+	try quarry.MkdirAll(path)
+	p.Refresh()
+	p.Reveal(path)
+	return path
+}
+
+// Rename gives the entry a new name in the same folder and returns its new path.
+fn (p mut Project) Rename(i i64, name str) !str {
+	let e = p.Entries[i]
+	let path = trail.Join2(trail.Dir(e.Path), name)
+	if quarry.Exists(path) {
+		fail say.Fault("%s", "already exists: " + name)
+	}
+	try quarry.Rename(e.Path, path)
+	p.Refresh()
+	p.Reveal(path)
+	return path
+}
+
+// Delete removes the file or folder (with everything in it) from disk.
+fn (p mut Project) Delete(i i64) ! {
+	if i <= 0 {
+		fail say.Fault("%s", "the project folder itself cannot be deleted here")
+	}
+	try quarry.RemoveAll(p.Entries[i].Path)
+	p.Selected = -1
+	p.Refresh()
+}
+
+// folderOf is the folder an entry creates things in.
+fn (p Project) folderOf(i i64) str {
+	if i < 0 || i >= len(p.Entries) {
+		return p.Root
+	}
+	let e = p.Entries[i]
+	if e.Dir {
+		return e.Path
+	}
+	return trail.Dir(e.Path)
+}
+
+// Branch is the current git branch of the folder ("" when it is not a git checkout; a detached head is the start of its hash).
+fn Branch(root str) str {
+	let head = quarry.ReadFile(trail.Join3(root, ".git", "HEAD")) catch _ {
+		return ""
+	}
+	let line = twine.TrimSpace(head)
+	if twine.HasPrefix(line, "ref: refs/heads/") {
+		return twine.TrimPrefix(line, "ref: refs/heads/")
+	}
+	if len(line) >= 7 {
+		return line[0:7]
+	}
+	return line
+}

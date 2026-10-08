@@ -1,0 +1,99 @@
+package main
+
+import "../../project"
+import "quarry"
+import "say"
+import "trail"
+
+fn put(path str, text str) {
+	quarry.WriteFile(path, text) catch _ {
+		say.Line("cannot write", path)
+	}
+}
+
+fn main() {
+	let root = trail.Clean(quarry.TempDir() + "/tinland_project_test")
+	quarry.RemoveAll(root) catch _ {
+	}
+	quarry.MkdirAll(root + "/src/deep") catch _ {
+	}
+	quarry.MkdirAll(root + "/build") catch _ {
+	}
+	quarry.MkdirAll(root + "/.git") catch _ {
+	}
+	put(root + "/.git/HEAD", "ref: refs/heads/feature/x\n")
+	put(root + "/.gitignore", "# comment\nbuild/\n*.log\n")
+	put(root + "/main.tin", `package main
+fn Main() {}
+`)
+	put(root + "/Readme.md", "Hello Main\n")
+	put(root + "/run.log", "Main\n")
+	put(root + "/build/out.txt", "Main\n")
+	put(root + "/src/util.tin", `fn main() {}
+fn helper() {}
+`)
+	put(root + "/src/deep/inner.tin", "let mainValue = 1\n")
+	mut p = project.Open(root) catch _ {
+		say.Line("open failed")
+		return
+	}
+	say.Line("name", p.Name, "branch", p.Branch)
+	show(p)
+	p.Toggle(p.Find(root + "/src"))
+	say.Line("after opening src")
+	show(p)
+	p.Reveal(root + "/src/deep/inner.tin")
+	say.Line("after reveal, selected", p.Entries[p.Selected].Name)
+	show(p)
+	let files = p.Files(100)
+	say.Line("files", len(files))
+	let hits = p.Search("main", project.Options{Limit: 50}) catch _ {
+		say.Line("search failed")
+		return
+	}
+	for h in hits {
+		say.Line(h.Path[len(root):], h.Line, h.Col, h.Len)
+	}
+	let cs = p.Search("main", project.Options{CaseSensitive: true, WholeWord: true, Limit: 50}) catch _ {
+		return
+	}
+	say.Line("case sensitive whole word", len(cs))
+	let rx = p.Search("fn \\w+\\(", project.Options{CaseSensitive: true, Regex: true, Limit: 50}) catch _ {
+		return
+	}
+	say.Line("regex", len(rx))
+	p.NewFile(p.Find(root + "/src"), "new.tin") catch _ {
+		say.Line("new failed")
+		return
+	}
+	say.Line("created", quarry.Exists(root + "/src/new.tin"), p.Entries[p.Selected].Name)
+	p.Rename(p.Selected, "renamed.tin") catch _ {
+		return
+	}
+	say.Line("renamed", quarry.Exists(root + "/src/renamed.tin"), quarry.Exists(root + "/src/new.tin"))
+	p.Delete(p.Selected) catch _ {
+		return
+	}
+	say.Line("deleted", quarry.Exists(root + "/src/renamed.tin"))
+	say.Line("fuzzy", project.Ranked("mt", []str{"main.tin", "src/util.tin", "Readme.md", "src/mount.tin"}, 3))
+	say.Line("fuzzy none", project.Fuzzy("zz", "main.tin"))
+	quarry.RemoveAll(root) catch _ {
+	}
+}
+
+fn show(p project.Project) {
+	for i in p.Rows {
+		let e = p.Entries[i]
+		mut mark = " "
+		if e.Dir && e.Open {
+			mark = "v"
+		} else if e.Dir {
+			mark = ">"
+		}
+		mut dim = ""
+		if e.Ignored {
+			dim = " (ignored)"
+		}
+		say.Line(mark, project.Lower(e.Name), e.Depth, dim)
+	}
+}

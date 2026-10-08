@@ -1,0 +1,236 @@
+package metal
+
+import "appkit"
+import "glyph"
+
+// The glyph atlas: one R8 texture CoreText draws characters into, on demand, one rectangle per character and font. A scene
+// refers to a character by the rectangle where the atlas holds it (Sprite). The top left two by two pixels are white, which
+// is what a solid rectangle samples.
+
+@framework("CoreText")
+extern fn CTFontGetAscent(font i64) f64
+
+@framework("CoreText")
+extern fn CTFontGetDescent(font i64) f64
+
+@framework("CoreText")
+extern fn CTFontGetLeading(font i64) f64
+
+const pixelR8 = 10
+const edge = 1
+
+// Glyph is where a character is in the atlas and how far the pen moves after it.
+type Glyph struct {
+	X i64
+	Y i64
+	W i64
+	H i64
+	Advance f64
+}
+
+// Font is a font at a size in device pixels, with the measurements of its lines.
+type Font struct {
+	Name str
+	Pixels f64
+	Ascent f64
+	Descent f64
+	Leading f64
+	// Advance is the width of "M", the width of every character of a monospaced font.
+	Advance f64
+	Line f64
+	Handle i64
+}
+
+// Atlas is the texture, its CPU copy and the glyphs drawn so far.
+type Atlas struct {
+	Texture i64
+	Size i64
+	Pixels i64
+	Fonts []Font
+	Glyphs map[i64]Glyph
+	// Icons are the SF Symbol names AddIcon was given; an icon's number is its place in the list.
+	Icons []str
+	NextX i64
+	NextY i64
+	RowH i64
+	Dirty bool
+	Full i64
+}
+
+// NewAtlas makes an empty size by size atlas.
+fn NewAtlas(g Gpu, size i64) Atlas {
+	let a = Atlas{Size: size, Glyphs: map[i64]Glyph{}}
+	a.Pixels = calloc(size * size, 1)
+	let desc = msg4(appkit.Class("MTLTextureDescriptor"), appkit.Sel("texture2DDescriptorWithPixelFormat:width:height:mipmapped:"), pixelR8, size, size, 0)
+	appkit.Send1(desc, "setUsage:", usageShaderRead)
+	appkit.Send1(desc, "setStorageMode:", 0)
+	a.Texture = appkit.Send1(g.Device, "newTextureWithDescriptor:", desc)
+	a.Reset()
+	return a
+}
+
+// Reset forgets every glyph (a full atlas does this by itself); the white block stays.
+fn (a mut Atlas) Reset() {
+	memset(a.Pixels, 0, a.Size * a.Size)
+	for y in 0..2 {
+		for x in 0..2 {
+			store8(a.Pixels + y * a.Size + x, 255)
+		}
+	}
+	a.Glyphs = keep(map[i64]Glyph{})
+	a.NextX = 2
+	a.NextY = 0
+	a.RowH = 2
+	a.Dirty = true
+}
+
+// AddFont registers a font (a PostScript name such as "Menlo-Regular") at a size in device pixels and returns its number.
+fn (a mut Atlas) AddFont(name str, pixels f64) i64 {
+	let f = Font{Name: name, Pixels: pixels}
+	f.Handle = appkit.FontNamed(name, pixels)
+	f.Ascent = CTFontGetAscent(f.Handle)
+	f.Descent = CTFontGetDescent(f.Handle)
+	f.Leading = CTFontGetLeading(f.Handle)
+	f.Line = f.Ascent + f.Descent + f.Leading
+	f.Advance = a.measure(f, "M")
+	a.Fonts = append(a.Fonts, keep(f))
+	return len(a.Fonts) - 1
+}
+
+// AddIcon registers an SF Symbol ("folder", "chevron.right", "magnifyingglass") and returns its number.
+fn (a mut Atlas) AddIcon(name str) i64 {
+	a.Icons = append(a.Icons, keep(name))
+	return len(a.Icons) - 1
+}
+
+// measure is the advance of the text in the font.
+fn (a mut Atlas) measure(f Font, text str) f64 {
+	return appkit.TextAdvance(f.Handle, text)
+}
+
+// Lookup returns the atlas rectangle of the character r in the font, drawing it first when the atlas does not have it.
+fn (a mut Atlas) Lookup(font i64, r i32) Glyph {
+	let key = font * 0x200000 + i64(r)
+	let (have, found) = a.Glyphs[key]
+	if found {
+		return have
+	}
+	let f = a.Fonts[font]
+	let text = glyph.RuneStr(r)
+	let adv = a.measure(f, text)
+	let w = i64(adv) + 3 + 2 * edge
+	let h = i64(f.Ascent + f.Descent) + 3 + 2 * edge
+	let g = Glyph{W: w, H: h, Advance: adv}
+	a.place(mut g)
+	// draw it in white into a scratch bitmap and keep its alpha
+	let bmp = appkit.NewBitmap(w, h)
+	appkit.SetFont(bmp, f.Name, f.Pixels)
+	appkit.SetColor(bmp, 1.0, 1.0, 1.0, 1.0)
+	appkit.DrawUnicode(bmp, f64(edge), f64(h) - f64(edge) - f64(i64(f.Ascent) + 1), text)
+	a.copyAlpha(g, bmp)
+	appkit.FreeBitmap(bmp)
+	a.Glyphs[key] = keep(g)
+	a.Dirty = true
+	return g
+}
+
+// Icon returns the atlas rectangle of the icon (a number AddIcon gave) drawn size pixels square, drawing it first when the atlas does
+// not have it.
+fn (a mut Atlas) Icon(icon i64, size i64) Glyph {
+	let key = -(icon * 4096 + size) - 1
+	let (have, found) = a.Glyphs[key]
+	if found {
+		return have
+	}
+	let w = size + 2 * edge
+	let g = Glyph{W: w, H: w, Advance: f64(size)}
+	a.place(mut g)
+	let bmp = appkit.NewBitmap(w, w)
+	appkit.DrawSymbol(bmp, a.Icons[icon], f64(edge), f64(edge), f64(size))
+	a.copyAlpha(g, bmp)
+	appkit.FreeBitmap(bmp)
+	a.Glyphs[key] = keep(g)
+	a.Dirty = true
+	return g
+}
+
+// place finds room for the glyph's rectangle (starting a new row, or a new atlas when this one is full) and sets its position.
+fn (a mut Atlas) place(g mut Glyph) {
+	if a.NextX + g.W > a.Size {
+		a.NextX = 0
+		a.NextY += a.RowH
+		a.RowH = 0
+	}
+	if a.NextY + g.H > a.Size {
+		a.Full += 1
+		a.Reset()
+		a.NextX = 0
+		a.NextY = 2
+		a.RowH = 0
+	}
+	g.X = a.NextX
+	g.Y = a.NextY
+	a.NextX += g.W
+	if g.H > a.RowH {
+		a.RowH = g.H
+	}
+}
+
+// copyAlpha keeps the alpha of the bitmap as the glyph's coverage.
+fn (a mut Atlas) copyAlpha(g Glyph, bmp appkit.Bitmap) {
+	for y in 0..g.H {
+		for x in 0..g.W {
+			store8(a.Pixels + (g.Y + y) * a.Size + g.X + x, appkit.Pixel(bmp, (y * g.W + x) * 4 + 3))
+		}
+	}
+}
+
+// Upload sends the glyphs drawn since the last upload to the GPU; call it before drawing a frame.
+fn (a mut Atlas) Upload() {
+	if !a.Dirty {
+		return
+	}
+	let region = calloc(6, 8)
+	region[3] = a.Size
+	region[4] = a.Size
+	region[5] = 1
+	msg4(a.Texture, appkit.Sel("replaceRegion:mipmapLevel:withBytes:bytesPerRow:"), region, 0, a.Pixels, a.Size)
+	free(region)
+	a.Dirty = false
+}
+
+// Text adds the text to the scene with the left end of its baseline at (x, y) (device pixels, y down) in the color, and returns
+// the x where the next character would start. A font whose characters are all one width keeps them aligned: pass its Advance
+// as cell to place each at a multiple of it, or 0 to use each character's own advance.
+fn (a mut Atlas) Text(scene mut Scene, font i64, x f64, y f64, text str, cell f64, r f64, g f64, b f64, al f64) f64 {
+	let f = a.Fonts[font]
+	mut pen = x
+	mut i = 0
+	for i < len(text) {
+		let (rune, n) = glyph.DecodeRune(text, i)
+		i += n
+		if rune == ' ' {
+			if cell > 0.0 {
+				pen += cell
+			} else {
+				pen += f.Advance
+			}
+			continue
+		}
+		let gl = a.Lookup(font, rune)
+		let gx = f64(i64(pen + 0.5)) - f64(edge)
+		let gy = f64(i64(y + 0.5)) - f64(i64(f.Ascent) + 1) - f64(edge)
+		scene.Sprite(gx, gy, f64(gl.W), f64(gl.H), f64(gl.X), f64(gl.Y), r, g, b, al)
+		if cell > 0.0 {
+			pen += cell
+		} else {
+			pen += gl.Advance
+		}
+	}
+	return pen
+}
+
+// EmptyAtlas is an atlas with nothing in it and no texture, for a variable that is set once the GPU is open.
+fn EmptyAtlas() Atlas {
+	return Atlas{Glyphs: map[i64]Glyph{}}
+}

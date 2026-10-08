@@ -103,6 +103,20 @@ extern fn msg4(recv i64, sel i64, a i64, b i64, c i64, d i64) i64
 @symbol("objc_msgSend")
 extern fn msgRect3(recv i64, sel i64, x f64, y f64, w f64, h f64, a i64, b i64, c i64) i64
 
+// A message with two doubles (a CGSize) or four (an NSRect or an MTLClearColor), and one with a double first and then four
+// integers: +[NSTimer scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:].
+@framework("/usr/lib/libobjc.A.dylib")
+@symbol("objc_msgSend")
+extern fn msgD2(recv i64, sel i64, a f64, b f64) i64
+
+@framework("/usr/lib/libobjc.A.dylib")
+@symbol("objc_msgSend")
+extern fn msgD4(recv i64, sel i64, a f64, b f64, c f64, d f64) i64
+
+@framework("/usr/lib/libobjc.A.dylib")
+@symbol("objc_msgSend")
+extern fn msgD1I4(recv i64, sel i64, t f64, a i64, b i64, c i64, d i64) i64
+
 // Sel is the selector named name.
 fn Sel(name str) i64 {
 	return sel_registerName(rt_cstr(name))
@@ -128,6 +142,21 @@ fn Send4(recv i64, name str, a i64, b i64, c i64, d i64) i64 {
 // SendRect3 sends a message whose arguments are an NSRect and three integers.
 fn SendRect3(recv i64, name str, x f64, y f64, w f64, h f64, a i64, b i64, c i64) i64 {
 	return msgRect3(recv, Sel(name), x, y, w, h, a, b, c)
+}
+
+// SendD2 sends a message whose arguments are two doubles (a CGSize).
+fn SendD2(recv i64, name str, a f64, b f64) i64 {
+	return msgD2(recv, Sel(name), a, b)
+}
+
+// SendD4 sends a message whose arguments are four doubles (an NSRect, an MTLClearColor).
+fn SendD4(recv i64, name str, a f64, b f64, c f64, d f64) i64 {
+	return msgD4(recv, Sel(name), a, b, c, d)
+}
+
+// SendTimer schedules a repeating timer that sends the message selector to target every seconds.
+fn SendTimer(seconds f64, target i64, selector str) i64 {
+	return msgD1I4(Class("NSTimer"), Sel("scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"), seconds, target, Sel(selector), 0, 1)
 }
 
 // NewString makes an NSString from s (+[NSString stringWithUTF8String:]); Foundation must be loaded.
@@ -178,6 +207,9 @@ extern fn CTLineCreateWithAttributedString(text i64) i64
 
 @framework("CoreText")
 extern fn CTLineDraw(line i64, ctx i64)
+
+@framework("CoreText")
+extern fn CTLineGetTypographicBounds(line i64, ascent i64, descent i64, leading i64) f64
 
 @framework("CoreGraphics")
 extern fn CGContextShowTextAtPoint(ctx i64, x f64, y f64, text i64, n i64)

@@ -1,0 +1,72 @@
+package ui
+
+// The drawing commands a frame comes down to. The framework knows nothing of the GPU: a backend (the metal canvas, or a test that
+// prints them) draws these in order.
+const CmdRect = 0
+const CmdBorder = 1
+const CmdText = 2
+const CmdIcon = 3
+const CmdClip = 4
+const CmdUnclip = 5
+const CmdCustom = 6
+
+// Cmd is one drawing command, in points. A rect and a border use Color, Radius and (border) Border; text is Tree.Texts[Arg]
+// in Font; an icon is number Arg; a custom area carries its node's Id in Arg; Clip and Unclip push and pop a clipping rectangle.
+type Cmd value struct {
+	Kind i64
+	X f64
+	Y f64
+	W f64
+	H f64
+	Col i64
+	Radius f64
+	Border f64
+	Arg i64
+	Font i64
+}
+
+// Paint lists the commands for a laid out tree: each box's background and border, then its children, clipped when the box clips.
+fn (t Tree) Paint() []Cmd {
+	mut cmds = []Cmd{}
+	if len(t.Nodes) > 0 {
+		t.paintNode(0, mut cmds)
+	}
+	return cmds
+}
+
+fn (t Tree) paintNode(i i64, out mut []Cmd) {
+	let n = t.Nodes[i]
+	if n.Kind == KindText {
+		out = append(out, Cmd{Kind: CmdText, X: n.X, Y: n.Y, W: n.W, H: n.H, Col: n.Col, Arg: n.Text, Font: n.Font})
+		return
+	}
+	if n.Kind == KindIcon {
+		out = append(out, Cmd{Kind: CmdIcon, X: n.X, Y: n.Y, W: n.W, H: n.H, Col: n.Col, Arg: n.Icon})
+		return
+	}
+	let s = n.Style
+	mut bg = s.Bg
+	if n.Id != 0 && n.Id == t.Hover && A(s.HoverBg) > 0.0 {
+		bg = s.HoverBg
+	}
+	if A(bg) > 0.0 {
+		out = append(out, Cmd{Kind: CmdRect, X: n.X, Y: n.Y, W: n.W, H: n.H, Col: bg, Radius: s.Radius})
+	}
+	if s.BorderW > 0.0 {
+		out = append(out, Cmd{Kind: CmdBorder, X: n.X, Y: n.Y, W: n.W, H: n.H, Col: s.Border, Radius: s.Radius, Border: s.BorderW})
+	}
+	if n.Kind == KindCustom {
+		out = append(out, Cmd{Kind: CmdCustom, X: n.X, Y: n.Y, W: n.W, H: n.H, Arg: n.Id})
+	}
+	if s.Clip {
+		out = append(out, Cmd{Kind: CmdClip, X: n.X, Y: n.Y, W: n.W, H: n.H})
+	}
+	mut c = n.First
+	for c >= 0 {
+		t.paintNode(c, mut out)
+		c = t.Nodes[c].Next
+	}
+	if s.Clip {
+		out = append(out, Cmd{Kind: CmdUnclip})
+	}
+}

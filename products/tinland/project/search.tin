@@ -1,0 +1,196 @@
+package project
+
+import "lasso"
+import "quarry"
+import "trail"
+import "twine"
+
+// The largest file a search reads, and how much of it must be free of zero bytes to count as text.
+const maxFileSize = 2000000
+const binaryProbe = 4096
+
+// Match is one place a search found: the file, the line (from 0), the column (a byte offset in the line), the length of the
+// match in bytes and the text of the line.
+type Match struct {
+	Path str
+	Line i64
+	Col i64
+	Len i64
+	Text str
+}
+
+// Options say what a search looks for.
+type Options struct {
+	CaseSensitive bool
+	WholeWord bool
+	Regex bool
+	// Limit is the number of matches after which the search stops.
+	Limit i64
+}
+
+// Files lists every file of the project that git does not ignore, as paths, in folder order; at most top of them.
+fn (p Project) Files(top i64) []str {
+	mut out = []str{}
+	p.collect(p.Root, mut out, top)
+	return out
+}
+
+fn (p Project) collect(dir str, out mut []str, top i64) {
+	let names = quarry.ReadDir(dir) catch _ {
+		return
+	}
+	mut subdirs = []str{}
+	for name in names {
+		if hidden(name) {
+			continue
+		}
+		if len(out) >= top {
+			return
+		}
+		let path = trail.Join2(dir, name)
+		let isDir = quarry.IsDir(path)
+		if p.ignored(path, name, isDir) {
+			continue
+		}
+		if isDir {
+			subdirs = append(subdirs, path)
+		} else {
+			out = append(out, path)
+		}
+	}
+	for d in subdirs {
+		p.collect(d, mut out, top)
+	}
+}
+
+// Search looks for text in the files of the project (those Files lists), and returns the matches in file order. With Regex the
+// text is a regular expression (lasso's RE2 syntax); it fails when the expression does not compile.
+fn (p Project) Search(needle str, opt Options) ![]Match {
+	mut out = []Match{}
+	if len(needle) == 0 {
+		return out
+	}
+	mut re = lasso.MustCompile("a")
+	if opt.Regex {
+		mut pattern = needle
+		if !opt.CaseSensitive {
+			pattern = "(?i)" + pattern
+		}
+		re = try lasso.Compile(pattern)
+	}
+	let files = p.Files(20000)
+	for path in files {
+		if len(out) >= opt.Limit {
+			break
+		}
+		let size = quarry.Size(path) catch _ {
+			continue
+		}
+		if size > maxFileSize {
+			continue
+		}
+		let text = quarry.ReadFile(path) catch _ {
+			continue
+		}
+		if looksBinary(text) {
+			continue
+		}
+		searchText(path, text, needle, opt, re, mut out)
+	}
+	return out
+}
+
+// looksBinary reports whether the start of the text holds a zero byte.
+fn looksBinary(text str) bool {
+	mut n = len(text)
+	if n > binaryProbe {
+		n = binaryProbe
+	}
+	for i in 0..n {
+		if text[i] == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// SearchText finds the matches in one text (a file's, or an open buffer's): the same rules as Search.
+fn SearchText(path str, text str, needle str, opt Options) ![]Match {
+	mut out = []Match{}
+	mut re = lasso.MustCompile("a")
+	if opt.Regex {
+		mut pattern = needle
+		if !opt.CaseSensitive {
+			pattern = "(?i)" + pattern
+		}
+		re = try lasso.Compile(pattern)
+	}
+	searchText(path, text, needle, opt, re, mut out)
+	return out
+}
+
+fn searchText(path str, text str, needle str, opt Options, re lasso.Regexp, out mut []Match) {
+	let lines = twine.Split(text, "\n")
+	let key = foldNeedle(needle, opt)
+	for row in 0..len(lines) {
+		if len(out) >= opt.Limit {
+			return
+		}
+		let line = lines[row]
+		if opt.Regex {
+			for m in re.FindAll(line, -1) {
+				if len(out) >= opt.Limit {
+					return
+				}
+				out = append(out, Match{Path: path, Line: row, Col: m.Start, Len: m.End - m.Start, Text: line})
+			}
+			continue
+		}
+		let hay = foldLine(line, opt)
+		mut from = 0
+		for from <= len(hay) - len(key) {
+			let at = twine.Index(hay[from:], key)
+			if at < 0 {
+				break
+			}
+			let col = from + at
+			from = col + 1
+			if opt.WholeWord && !wholeWordAt(line, col, len(key)) {
+				continue
+			}
+			out = append(out, Match{Path: path, Line: row, Col: col, Len: len(key), Text: line})
+			from = col + len(key)
+			if from == col {
+				from = col + 1
+			}
+		}
+	}
+}
+
+fn foldNeedle(needle str, opt Options) str {
+	if opt.CaseSensitive {
+		return needle
+	}
+	return Lower(needle)
+}
+
+fn foldLine(line str, opt Options) str {
+	if opt.CaseSensitive {
+		return line
+	}
+	return Lower(line)
+}
+
+fn isWordByte(c u8) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c >= 128
+}
+
+fn wholeWordAt(line str, col i64, n i64) bool {
+	if col > 0 && isWordByte(line[col - 1]) {
+		return false
+	}
+	if col + n < len(line) && isWordByte(line[col + n]) {
+		return false
+	}
+	return true
+}

@@ -1,0 +1,204 @@
+package ui
+
+// Layout gives every node its rectangle in a w by h area. The pass has two halves: the size each node asks for, from the
+// leaves up (text is as wide as its string, a box as large as its children and padding, a style's W and H override), then
+// the placement from the root down: along a box's direction the children keep what they asked for and the ones with Grow
+// share what is left, across it they stretch, start, center or end. A scrolling box reads where it is scrolled to from scrolls
+// and records how far it can go.
+fn (t mut Tree) Layout(w f64, h f64, scrolls mut Scrolls) {
+	if len(t.Nodes) == 0 {
+		return
+	}
+	t.natural(0)
+	t.place(0, 0.0, 0.0, w, h, mut scrolls)
+}
+
+fn maxf(a f64, b f64) f64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// natural works out NW and NH of node i and everything below it.
+fn (t mut Tree) natural(i i64) {
+	let n = t.Nodes[i]
+	mut w = 0.0
+	mut h = 0.0
+	if n.Kind == KindText {
+		w = t.Width(n.Font, t.Texts[n.Text])
+		h = t.LineHeight(n.Font)
+	} else if n.Kind == KindIcon {
+		w = n.Size
+		h = n.Size
+	} else {
+		let row = n.Style.Dir == Row
+		mut main = 0.0
+		mut cross = 0.0
+		mut count = 0
+		mut c = n.First
+		for c >= 0 {
+			t.natural(c)
+			let cn = t.Nodes[c]
+			if !cn.Style.Abs {
+				if row {
+					main += cn.NW
+					cross = maxf(cross, cn.NH)
+				} else {
+					main += cn.NH
+					cross = maxf(cross, cn.NW)
+				}
+				count += 1
+			}
+			c = cn.Next
+		}
+		if count > 1 {
+			main += n.Style.Gap * f64(count - 1)
+		}
+		if row {
+			w = main
+			h = cross
+		} else {
+			w = cross
+			h = main
+		}
+		w += n.Style.PadL + n.Style.PadR
+		h += n.Style.PadT + n.Style.PadB
+	}
+	if n.Style.W > 0.0 {
+		w = n.Style.W
+	}
+	if n.Style.H > 0.0 {
+		h = n.Style.H
+	}
+	w = maxf(w, n.Style.MinW)
+	h = maxf(h, n.Style.MinH)
+	t.Nodes[i].NW = w
+	t.Nodes[i].NH = h
+}
+
+// place sets the rectangle of node i to (x, y, w, h) and places its children inside it.
+fn (t mut Tree) place(i i64, x f64, y f64, w f64, h f64, scrolls mut Scrolls) {
+	let n = t.Nodes[i]
+	t.Nodes[i].X = x
+	t.Nodes[i].Y = y
+	t.Nodes[i].W = w
+	t.Nodes[i].H = h
+	if n.Kind != KindBox {
+		return
+	}
+	let s = n.Style
+	let row = s.Dir == Row
+	let ix = x + s.PadL
+	let iy = y + s.PadT
+	let iw = w - s.PadL - s.PadR
+	let ih = h - s.PadT - s.PadB
+	mut inner = ih
+	mut innerCross = iw
+	if row {
+		inner = iw
+		innerCross = ih
+	}
+	// what the in-flow children ask for, and the Grow they share
+	mut total = 0.0
+	mut grow = 0.0
+	mut count = 0
+	mut c = n.First
+	for c >= 0 {
+		let cn = t.Nodes[c]
+		if !cn.Style.Abs {
+			if row {
+				total += cn.NW
+			} else {
+				total += cn.NH
+			}
+			grow += cn.Style.Grow
+			count += 1
+		}
+		c = cn.Next
+	}
+	if count > 1 {
+		total += s.Gap * f64(count - 1)
+	}
+	mut free = inner - total
+	if s.Scroll {
+		free = 0.0
+	}
+	mut lead = 0.0
+	mut between = 0.0
+	if free > 0.0 && grow == 0.0 {
+		if s.Justify == JustifyCenter {
+			lead = free / 2.0
+		} else if s.Justify == JustifyEnd {
+			lead = free
+		} else if s.Justify == SpaceBetween && count > 1 {
+			between = free / f64(count - 1)
+		}
+	}
+	mut offset = 0.0
+	if s.Scroll {
+		let ext = total - inner
+		mut max = 0.0
+		if ext > 0.0 {
+			max = ext
+		}
+		if n.Id > 0 && n.Id < len(scrolls.Offset) {
+			scrolls.Max[n.Id] = max
+			offset = scrolls.Offset[n.Id]
+			if offset > max {
+				offset = max
+			}
+		}
+		t.Nodes[i].ContentH = total + s.PadT + s.PadB
+		t.Nodes[i].Offset = offset
+	}
+	mut pen = lead - offset
+	c = n.First
+	for c >= 0 {
+		let cn = t.Nodes[c]
+		let next = cn.Next
+		if cn.Style.Abs {
+			mut cx = x + cn.Style.X
+			mut cy = y + cn.Style.Y
+			if cn.Style.Right {
+				cx = x + w - cn.NW - cn.Style.X
+			}
+			if cn.Style.Bottom {
+				cy = y + h - cn.NH - cn.Style.Y
+			}
+			t.place(c, cx, cy, cn.NW, cn.NH, mut scrolls)
+			c = next
+			continue
+		}
+		mut main = cn.NW
+		mut crossAsk = cn.NH
+		mut crossFixed = cn.Style.H > 0.0
+		if !row {
+			main = cn.NH
+			crossAsk = cn.NW
+			crossFixed = cn.Style.W > 0.0
+		}
+		if free > 0.0 && grow > 0.0 && cn.Style.Grow > 0.0 {
+			main += free * cn.Style.Grow / grow
+		}
+		mut cross = innerCross
+		mut off = 0.0
+		if s.Align == Stretch && !crossFixed {
+			cross = innerCross
+		} else {
+			cross = crossAsk
+			if s.Align == Center {
+				off = (innerCross - cross) / 2.0
+			} else if s.Align == End {
+				off = innerCross - cross
+			}
+		}
+		if row {
+			t.place(c, ix + pen, iy + off, main, cross, mut scrolls)
+		} else {
+			t.place(c, ix + off, iy + pen, cross, main, mut scrolls)
+		}
+		pen += main + s.Gap + between
+		c = next
+	}
+}

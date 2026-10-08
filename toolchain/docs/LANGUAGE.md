@@ -70,7 +70,9 @@ fn main() {
 - One path per `import`, after the package declaration and before every other
   declaration. There are no import aliases and no grouped imports.
 - `import "say"` is the standard library (`toolchain/std/say` ... `packages/wire`). `import "./geom"` is
-  relative to the importing file: `./geom.tin`, or every `.tin` file in `./geom/`.
+  relative to the importing file: `./geom.tin`, or every `.tin` file in `./geom/`. A `..`
+  after a directory name cancels it (`./render/../ui` is `./ui`), so packages in sibling
+  directories import each other with one spelling and are one package.
   `import "util"`, outside the standard library, is `<directory of the program>/util(.tin)`;
   `import "github.com/ana/geo"` is a dependency (below).
 - A package is a file `name.tin` or a directory of `.tin` files. Directory files are read

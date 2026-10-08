@@ -1,0 +1,238 @@
+package ui
+
+// Color is a straight (not premultiplied) RGBA color packed into one integer as 0xRRGGBBAA, so a style, a node and a drawing
+// command hold it as one word. R, G, B and A unpack the components as numbers from 0 to 1.
+type Color = i64
+
+// Hex is the opaque color 0xRRGGBB.
+fn Hex(rgb i64) Color {
+	return (rgb << 8) | 255
+}
+
+// HexA is the color 0xRRGGBB with alpha a (0 to 1).
+fn HexA(rgb i64, a f64) Color {
+	return (rgb << 8) | i64(a * 255.0 + 0.5)
+}
+
+// None is the transparent color: a style whose Bg is None draws no background.
+fn None() Color {
+	return 0
+}
+
+fn R(c Color) f64 {
+	return f64((c >> 24) & 255) / 255.0
+}
+
+fn G(c Color) f64 {
+	return f64((c >> 16) & 255) / 255.0
+}
+
+fn B(c Color) f64 {
+	return f64((c >> 8) & 255) / 255.0
+}
+
+fn A(c Color) f64 {
+	return f64(c & 255) / 255.0
+}
+
+// Directions a box lays its children out in.
+const Row = 0
+const Column = 1
+
+// Alignment across the direction (Style.Align).
+const Stretch = 0
+const Start = 1
+const Center = 2
+const End = 3
+
+// Distribution along the direction (Style.Justify).
+const JustifyStart = 0
+const JustifyCenter = 1
+const JustifyEnd = 2
+const SpaceBetween = 3
+
+// Style is how a box looks and how it sizes and places its children: a subset of flexbox. Sizes are in points; a width or height
+// of 0 is "as large as the content" (or, with Grow, what the siblings leave).
+type Style value struct {
+	Dir i64
+	W f64
+	H f64
+	MinW f64
+	MinH f64
+	Grow f64
+	PadL f64
+	PadT f64
+	PadR f64
+	PadB f64
+	Gap f64
+	Align i64
+	Justify i64
+	Bg i64
+	HoverBg i64
+	BorderW f64
+	Border i64
+	Radius f64
+	// Abs takes the box out of the flow: it sits at (X, Y) from the top left of its parent, or, when Right or Bottom is set,
+	// that far from the parent's right or bottom edge.
+	Abs bool
+	Right bool
+	Bottom bool
+	X f64
+	Y f64
+	// Clip hides what the children draw outside the box; Scroll also lets the user move them up and down.
+	Clip bool
+	Scroll bool
+}
+
+// Box is a style with nothing set: a column of its children.
+fn Box() Style {
+	return Style{Dir: Column}
+}
+
+// HBox lays its children out left to right.
+fn HBox() Style {
+	return Style{Dir: Row}
+}
+
+// VBox lays its children out top to bottom.
+fn VBox() Style {
+	return Style{Dir: Column}
+}
+
+// The methods below change one thing and return the new style, so a style reads as a chain: ui.HBox().Wide(200).Pad(8).
+fn (s Style) Wide(w f64) Style {
+	mut t = s
+	t.W = w
+	return t
+}
+
+fn (s Style) High(h f64) Style {
+	mut t = s
+	t.H = h
+	return t
+}
+
+fn (s Style) Size(w f64, h f64) Style {
+	mut t = s
+	t.W = w
+	t.H = h
+	return t
+}
+
+fn (s Style) Min(w f64, h f64) Style {
+	mut t = s
+	t.MinW = w
+	t.MinH = h
+	return t
+}
+
+fn (s Style) Flex(grow f64) Style {
+	mut t = s
+	t.Grow = grow
+	return t
+}
+
+// Pad pads all four sides.
+fn (s Style) Pad(p f64) Style {
+	mut t = s
+	t.PadL = p
+	t.PadT = p
+	t.PadR = p
+	t.PadB = p
+	return t
+}
+
+// PadXY pads left and right by x, top and bottom by y.
+fn (s Style) PadXY(x f64, y f64) Style {
+	mut t = s
+	t.PadL = x
+	t.PadR = x
+	t.PadT = y
+	t.PadB = y
+	return t
+}
+
+fn (s Style) Spacing(gap f64) Style {
+	mut t = s
+	t.Gap = gap
+	return t
+}
+
+fn (s Style) Items(a i64) Style {
+	mut t = s
+	t.Align = a
+	return t
+}
+
+fn (s Style) Content(j i64) Style {
+	mut t = s
+	t.Justify = j
+	return t
+}
+
+fn (s Style) Fill(c Color) Style {
+	mut t = s
+	t.Bg = c
+	return t
+}
+
+fn (s Style) Hover(c Color) Style {
+	mut t = s
+	t.HoverBg = c
+	return t
+}
+
+fn (s Style) Outline(w f64, c Color) Style {
+	mut t = s
+	t.BorderW = w
+	t.Border = c
+	return t
+}
+
+fn (s Style) Round(r f64) Style {
+	mut t = s
+	t.Radius = r
+	return t
+}
+
+// At places the box at (x, y) from its parent's top left, outside the flow.
+fn (s Style) At(x f64, y f64) Style {
+	mut t = s
+	t.Abs = true
+	t.X = x
+	t.Y = y
+	return t
+}
+
+// AtRight places the box y from the top and x from the right edge of its parent.
+fn (s Style) AtRight(x f64, y f64) Style {
+	mut t = s
+	t.Abs = true
+	t.Right = true
+	t.X = x
+	t.Y = y
+	return t
+}
+
+// AtBottom places the box x from the left and y from the bottom edge of its parent.
+fn (s Style) AtBottom(x f64, y f64) Style {
+	mut t = s
+	t.Abs = true
+	t.Bottom = true
+	t.X = x
+	t.Y = y
+	return t
+}
+
+fn (s Style) Clipped() Style {
+	mut t = s
+	t.Clip = true
+	return t
+}
+
+fn (s Style) Scrolls() Style {
+	mut t = s
+	t.Clip = true
+	t.Scroll = true
+	return t
+}

@@ -1,0 +1,309 @@
+// Metal for the Tinland editor: a device, a pipeline that draws batches of colored rectangles, an offscreen target
+// that can be read back (tests and screenshots) and a CAMetalLayer target (windows). Developer tools only, like appkit.
+package metal
+
+import "appkit"
+
+@framework("Metal")
+extern fn MTLCreateSystemDefaultDevice() i64
+
+@framework("QuartzCore")
+extern fn CACurrentMediaTime() f64
+
+// objc_msgSend shapes the Metal calls need (the calling convention depends on the argument types).
+@framework("/usr/lib/libobjc.A.dylib")
+@symbol("objc_msgSend")
+extern fn msg1(recv i64, sel i64, a i64) i64
+
+@framework("/usr/lib/libobjc.A.dylib")
+@symbol("objc_msgSend")
+extern fn msg2(recv i64, sel i64, a i64, b i64) i64
+
+@framework("/usr/lib/libobjc.A.dylib")
+@symbol("objc_msgSend")
+extern fn msg3(recv i64, sel i64, a i64, b i64, c i64) i64
+
+@framework("/usr/lib/libobjc.A.dylib")
+@symbol("objc_msgSend")
+extern fn msg4(recv i64, sel i64, a i64, b i64, c i64, d i64) i64
+
+const pixelBGRA = 80
+const loadClear = 2
+const storeStore = 1
+const usageShaderRead = 1
+const usageRenderTarget = 4
+const triangleStrip = 4
+
+// The shader draws instances, each a rectangle (x, y, width, height in pixels) that samples a rectangle of the glyph atlas
+// (a solid rectangle samples the atlas' white texel), is multiplied by a premultiplied color and may have rounded corners.
+// Everything in a frame is one buffer of instances and one draw call, in the order it was added.
+const shaderSource = `#include <metal_stdlib>
+using namespace metal;
+struct Inst { float4 rect; float4 uv; float4 color; float4 params; float4 clip; };
+struct VOut { float4 pos [[position]]; float4 color; float2 uv; float2 local; float2 half_size; float radius; float border; float4 clip; };
+vertex VOut scene_vs(uint vid [[vertex_id]], uint iid [[instance_id]], constant Inst* insts [[buffer(0)]], constant float2& size [[buffer(1)]], constant float2& atlas [[buffer(2)]]) {
+  float2 corner = float2(vid & 1, vid >> 1);
+  Inst q = insts[iid];
+  float2 p = q.rect.xy + corner * q.rect.zw;
+  VOut o;
+  o.pos = float4(p.x / size.x * 2.0 - 1.0, 1.0 - p.y / size.y * 2.0, 0.0, 1.0);
+  o.color = q.color;
+  o.uv = (q.uv.xy + corner * q.uv.zw) / atlas;
+  o.local = (corner - 0.5) * q.rect.zw;
+  o.half_size = q.rect.zw * 0.5;
+  o.radius = q.params.x;
+  o.border = q.params.y;
+  o.clip = q.clip;
+  return o;
+}
+fragment float4 scene_fs(VOut in [[stage_in]], texture2d<float> tex [[texture(0)]]) {
+  constexpr sampler s(filter::nearest);
+  if (in.pos.x < in.clip.x || in.pos.y < in.clip.y || in.pos.x >= in.clip.z || in.pos.y >= in.clip.w) { discard_fragment(); }
+  float cover = tex.sample(s, in.uv).r;
+  if (in.radius > 0.0 || in.border > 0.0) {
+    float2 d = abs(in.local) - (in.half_size - in.radius);
+    float dist = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - in.radius;
+    cover *= clamp(0.5 - dist, 0.0, 1.0);
+    if (in.border > 0.0) { cover *= clamp(dist + in.border + 0.5, 0.0, 1.0); }
+  }
+  return in.color * cover;
+}
+`
+
+// Gpu is a Metal device with the pipeline for scenes.
+type Gpu struct {
+	Device i64
+	Queue i64
+	Pipeline i64
+	Error str
+	// the instance buffers, used in turn: while the GPU reads one the next frame fills another
+	Buffers []i64
+	Sizes []i64
+	Pending []i64
+	Turn []i64
+}
+
+// Open makes the default device, a command queue and the scene pipeline. Device is 0 when the machine has no
+// GPU (a virtual machine on a CI runner); Error says what failed.
+fn Open() Gpu {
+	appkit.LoadFoundation()
+	let g = Gpu{Buffers: []i64{0, 0, 0}, Sizes: []i64{0, 0, 0}, Pending: []i64{0, 0, 0}, Turn: []i64{0}}
+	g.Device = MTLCreateSystemDefaultDevice()
+	if g.Device == 0 {
+		g.Error = "no Metal device"
+		return g
+	}
+	g.Queue = appkit.Send(g.Device, "newCommandQueue")
+	let err = calloc(1, 8)
+	let lib = msg3(g.Device, appkit.Sel("newLibraryWithSource:options:error:"), appkit.NewString(shaderSource), 0, err)
+	if lib == 0 {
+		g.Error = "shader: " + appkit.StringOf(appkit.Send(err[0], "localizedDescription"))
+		g.Device = 0
+		return g
+	}
+	let vs = appkit.Send1(lib, "newFunctionWithName:", appkit.NewString("scene_vs"))
+	let fs = appkit.Send1(lib, "newFunctionWithName:", appkit.NewString("scene_fs"))
+	let desc = appkit.Send(appkit.Send(appkit.Class("MTLRenderPipelineDescriptor"), "alloc"), "init")
+	appkit.Send1(desc, "setVertexFunction:", vs)
+	appkit.Send1(desc, "setFragmentFunction:", fs)
+	let color = appkit.Send1(appkit.Send(desc, "colorAttachments"), "objectAtIndexedSubscript:", 0)
+	appkit.Send1(color, "setPixelFormat:", pixelBGRA)
+	// premultiplied alpha: source * 1 + destination * (1 - source alpha)
+	appkit.Send1(color, "setBlendingEnabled:", 1)
+	appkit.Send1(color, "setSourceRGBBlendFactor:", 1)
+	appkit.Send1(color, "setSourceAlphaBlendFactor:", 1)
+	appkit.Send1(color, "setDestinationRGBBlendFactor:", 5)
+	appkit.Send1(color, "setDestinationAlphaBlendFactor:", 5)
+	g.Pipeline = msg2(g.Device, appkit.Sel("newRenderPipelineStateWithDescriptor:error:"), desc, err)
+	if g.Pipeline == 0 {
+		g.Error = "pipeline: " + appkit.StringOf(appkit.Send(err[0], "localizedDescription"))
+		g.Device = 0
+	}
+	return g
+}
+
+// Scene is what a frame shows: instances of twenty floats each, in drawing order, and the clipping rectangle new ones get.
+type Scene struct {
+	Data []f32
+	N i64
+	clip []f64
+}
+
+// add appends one instance: rectangle, atlas rectangle, color (not premultiplied), corner radius, border width.
+fn (q mut Scene) add(x f64, y f64, w f64, h f64, sx f64, sy f64, sw f64, sh f64, r f64, g f64, b f64, a f64, radius f64, border f64) {
+	mut c0 = 0.0
+	mut c1 = 0.0
+	mut c2 = 1000000.0
+	mut c3 = 1000000.0
+	if len(q.clip) >= 4 {
+		let n = len(q.clip)
+		c0 = q.clip[n - 4]
+		c1 = q.clip[n - 3]
+		c2 = q.clip[n - 2]
+		c3 = q.clip[n - 1]
+	}
+	q.Data = append(q.Data, f32(x), f32(y), f32(w), f32(h), f32(sx), f32(sy), f32(sw), f32(sh), f32(r * a), f32(g * a), f32(b * a), f32(a), f32(radius), f32(border), f32(0), f32(0), f32(c0), f32(c1), f32(c2), f32(c3))
+	q.N += 1
+}
+
+// Rect adds a solid rectangle (pixels from the top left) of the color (components 0 to 1, not premultiplied) with
+// corners rounded by radius pixels (0 for square ones).
+fn (q mut Scene) Rect(x f64, y f64, w f64, h f64, r f64, g f64, b f64, a f64, radius f64) {
+	q.add(x, y, w, h, 0.5, 0.5, 0.0, 0.0, r, g, b, a, radius, 0.0)
+}
+
+// Outline adds the edge of a rounded rectangle, border pixels wide, inside the rectangle.
+fn (q mut Scene) Outline(x f64, y f64, w f64, h f64, r f64, g f64, b f64, a f64, radius f64, border f64) {
+	q.add(x, y, w, h, 0.5, 0.5, 0.0, 0.0, r, g, b, a, radius, border)
+}
+
+// Sprite adds the w by h pixels of the atlas that start at (sx, sy) at (x, y), in the color (a glyph is white
+// coverage the color is applied to).
+fn (q mut Scene) Sprite(x f64, y f64, w f64, h f64, sx f64, sy f64, r f64, g f64, b f64, a f64) {
+	q.add(x, y, w, h, sx, sy, w, h, r, g, b, a, 0.0, 0.0)
+}
+
+// PushClip limits what is added from now on to the rectangle (inside the clip already in force); PopClip restores the last one.
+fn (q mut Scene) PushClip(x f64, y f64, w f64, h f64) {
+	mut x0 = x
+	mut y0 = y
+	mut x1 = x + w
+	mut y1 = y + h
+	let n = len(q.clip)
+	if n >= 4 {
+		if q.clip[n - 4] > x0 {
+			x0 = q.clip[n - 4]
+		}
+		if q.clip[n - 3] > y0 {
+			y0 = q.clip[n - 3]
+		}
+		if q.clip[n - 2] < x1 {
+			x1 = q.clip[n - 2]
+		}
+		if q.clip[n - 1] < y1 {
+			y1 = q.clip[n - 1]
+		}
+	}
+	q.clip = append(q.clip, x0, y0, x1, y1)
+}
+
+fn (q mut Scene) PopClip() {
+	if len(q.clip) >= 4 {
+		q.clip = q.clip[0:len(q.clip) - 4]
+	}
+}
+
+// Reset empties the scene, keeping its memory.
+fn (q mut Scene) Reset() {
+	q.Data = q.Data[0:0]
+	q.N = 0
+	q.clip = q.clip[0:0]
+}
+
+// Target is a texture to draw into: offscreen, so it can be read back.
+type Target struct {
+	Texture i64
+	W i64
+	H i64
+}
+
+// NewTarget makes a w by h BGRA texture the CPU can read.
+fn NewTarget(g Gpu, w i64, h i64) Target {
+	let t = Target{W: w, H: h}
+	let desc = msg4(appkit.Class("MTLTextureDescriptor"), appkit.Sel("texture2DDescriptorWithPixelFormat:width:height:mipmapped:"), pixelBGRA, w, h, 0)
+	appkit.Send1(desc, "setUsage:", usageRenderTarget | usageShaderRead)
+	// MTLStorageModeShared
+	appkit.Send1(desc, "setStorageMode:", 0)
+	t.Texture = appkit.Send1(g.Device, "newTextureWithDescriptor:", desc)
+	return t
+}
+
+// Draw clears the texture to the color and draws the scene over it (glyphs and sprites come from the atlas), then waits for
+// the GPU.
+fn Draw(g Gpu, texture i64, w i64, h i64, scene Scene, atlas Atlas, r f64, gr f64, b f64, a f64) {
+	let pool = appkit.PoolPush()
+	let cmd = encode(g, texture, w, h, scene, atlas, r, gr, b, a)
+	appkit.Send(cmd, "commit")
+	appkit.Send(cmd, "waitUntilCompleted")
+	appkit.PoolPop(pool)
+}
+
+// DrawLayer draws a frame into the next drawable of a CAMetalLayer of w by h pixels and shows it; it does not wait.
+fn DrawLayer(g Gpu, layer i64, w i64, h i64, scene Scene, atlas Atlas, r f64, gr f64, b f64, a f64) {
+	let pool = appkit.PoolPush()
+	appkit.SendD2(layer, "setDrawableSize:", f64(w), f64(h))
+	let drawable = appkit.Send(layer, "nextDrawable")
+	if drawable != 0 {
+		let cmd = encode(g, appkit.Send(drawable, "texture"), w, h, scene, atlas, r, gr, b, a)
+		appkit.Send1(cmd, "presentDrawable:", drawable)
+		appkit.Send(cmd, "commit")
+		g.Pending[g.Turn[0] % 3] = cmd
+		appkit.Send(cmd, "retain")
+		g.Turn[0] += 1
+	}
+	appkit.PoolPop(pool)
+}
+
+// buffer returns an instance buffer holding the scene: the next of the three in turn, once the GPU is done with it.
+fn buffer(g Gpu, scene Scene) i64 {
+	let i = g.Turn[0] % 3
+	let need = scene.N * 80
+	if g.Pending[i] != 0 {
+		appkit.Send(g.Pending[i], "waitUntilCompleted")
+		appkit.Send(g.Pending[i], "release")
+		g.Pending[i] = 0
+	}
+	if g.Sizes[i] < need {
+		if g.Buffers[i] != 0 {
+			appkit.Send(g.Buffers[i], "release")
+		}
+		// the buffer is a little larger than needed, so the next frame's slightly longer text fits too (MTLResourceStorageModeShared is 0)
+		g.Sizes[i] = need + need / 2 + 4096
+		g.Buffers[i] = appkit.Send2(g.Device, "newBufferWithLength:options:", g.Sizes[i], 0)
+	}
+	let data = cast(i64, scene.Data)
+	memcpy(appkit.Send(g.Buffers[i], "contents"), data[2], need)
+	return g.Buffers[i]
+}
+
+// encode records the clear and the scene into a command buffer for the texture and returns it uncommitted.
+fn encode(g Gpu, texture i64, w i64, h i64, scene Scene, atlas Atlas, r f64, gr f64, b f64, a f64) i64 {
+	let pass = appkit.Send(appkit.Class("MTLRenderPassDescriptor"), "renderPassDescriptor")
+	let att = appkit.Send1(appkit.Send(pass, "colorAttachments"), "objectAtIndexedSubscript:", 0)
+	appkit.Send1(att, "setTexture:", texture)
+	appkit.Send1(att, "setLoadAction:", loadClear)
+	appkit.Send1(att, "setStoreAction:", storeStore)
+	appkit.SendD4(att, "setClearColor:", r, gr, b, a)
+	let instances = buffer(g, scene)
+	let cmd = appkit.Send(g.Queue, "commandBuffer")
+	let enc = appkit.Send1(cmd, "renderCommandEncoderWithDescriptor:", pass)
+	if scene.N > 0 {
+		appkit.Send1(enc, "setRenderPipelineState:", g.Pipeline)
+		// a slice value points at its header: length, capacity, then the address of the elements
+		let sizes = []f32{f32(w), f32(h), f32(atlas.Size), f32(atlas.Size)}
+		let header = cast(i64, sizes)
+		appkit.Send3(enc, "setVertexBuffer:offset:atIndex:", instances, 0, 0)
+		appkit.Send3(enc, "setVertexBytes:length:atIndex:", header[2], 8, 1)
+		appkit.Send3(enc, "setVertexBytes:length:atIndex:", header[2] + 8, 8, 2)
+		appkit.Send2(enc, "setFragmentTexture:atIndex:", atlas.Texture, 0)
+		appkit.Send4(enc, "drawPrimitives:vertexStart:vertexCount:instanceCount:", triangleStrip, 0, 4, scene.N)
+	}
+	appkit.Send(enc, "endEncoding")
+	return cmd
+}
+
+// Pixels reads the target back as w * h * 4 bytes (blue, green, red, alpha); the result is the address of the bytes.
+fn Pixels(t Target) i64 {
+	let bytes = calloc(t.W * t.H, 4)
+	let region = calloc(6, 8)
+	region[3] = t.W
+	region[4] = t.H
+	region[5] = 1
+	msg4(t.Texture, appkit.Sel("getBytes:bytesPerRow:fromRegion:mipmapLevel:"), bytes, t.W * 4, region, 0)
+	return bytes
+}
+
+// Pixel is byte i of the bytes Pixels returned.
+fn Pixel(bytes i64, i i64) i64 {
+	return i64(load8(bytes + i))
+}

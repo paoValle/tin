@@ -1,0 +1,42 @@
+name tinland_project_test branch feature/x
+v tinland_project_test 0 
+> build 1  (ignored)
+> src 1 
+  .gitignore 1 
+  main.tin 1 
+  readme.md 1 
+  run.log 1  (ignored)
+after opening src
+v tinland_project_test 0 
+> build 1  (ignored)
+v src 1 
+> deep 2 
+  util.tin 2 
+  .gitignore 1 
+  main.tin 1 
+  readme.md 1 
+  run.log 1  (ignored)
+after reveal, selected inner.tin
+v tinland_project_test 0 
+> build 1  (ignored)
+v src 1 
+v deep 2 
+  inner.tin 3 
+  util.tin 2 
+  .gitignore 1 
+  main.tin 1 
+  readme.md 1 
+  run.log 1  (ignored)
+files 5
+/Readme.md 0 6 4
+/main.tin 0 8 4
+/main.tin 1 3 4
+/src/util.tin 0 3 4
+/src/deep/inner.tin 0 4 4
+case sensitive whole word 2
+regex 3
+created true new.tin
+renamed true false
+deleted false
+fuzzy [main.tin src/mount.tin]
+fuzzy none -1

@@ -53,7 +53,12 @@ Generated from the comments in `toolchain/std/*/` and `packages/*/` by `tools/ge
 | [scroll](#scroll) | XML tokenizer and writer (encoding/xml) |
 | [lasso](#lasso) | regular expressions with linear-time matching (regexp) |
 | [appkit](#appkit) | macOS frameworks for the Tinland editor (Cocoa, WebKit) |
+| [metal](#metal) | Metal: a GPU scene of rectangles and text with a glyph atlas, for the Tinland editor |
+| [gpuwin](#gpuwin) | a window AppKit calls into (Objective-C classes defined in Tin), drawn on the GPU |
 | [textedit](#textedit) | the editing model behind Tinland (buffer, cursor, undo, highlighting) |
+| [tinjson](#tinjson) | a JSON reader and writer for the developer tools |
+| [tinsym](#tinsym) | the compiler's declarations and errors, name resolution and completion (tin lsp, Tinland) |
+| [tinfmt](#tinfmt) | the whitespace formatter (tin fmt, Tinland) |
 
 ## say
 
@@ -1439,6 +1444,7 @@ crucible.Done()
 - `Bench(label str, n i64, f fn(i64))`: Bench runs f(i) for i in [0, n) and prints the time per call.
 - `type T struct`: T is one running test: checks record failures in it, and the test continues.
 - `type B struct`: B is one running benchmark: run the measured code b.N times.
+- `Configure(pattern str, json bool)`: Configure sets how tin test runs the tests: pattern (a lasso regular expression, "" for every test) picks the tests and benchmarks whose names match, and json prints one JSON event per line instead of text (toolchain/docs/TOOLING.md section 5.2). A pattern that is not a regular expression ends the run with status 2.
 - `(t mut T) Error(msg str)`: Error marks the test failed with msg (it keeps running).
 - `(t mut T) Log(msg str)`: Log records msg; it is printed only if the test fails.
 - `(t T) Failed() bool`: Failed reports whether the test has failed so far.
@@ -1447,7 +1453,7 @@ crucible.Done()
 - `(t mut T) NoFault(label str, err fault)`: NoFault fails the test if err is not nil.
 - `(t mut T) HasFault(label str, err fault)`: HasFault fails the test if err is nil.
 - `Equal[V constraints.Comparable](t mut T, label str, got V, want V)`: Equal fails the test unless got == want; both are printed on failure.
-- `Run(name str, f fn(mut T))`: Run runs one test and prints its result like go test -v.
+- `Run(name str, f fn(mut T))`: Run runs one test and prints its result like go test -v (or as JSON events, see Configure); a test that does not match the -run pattern is not run.
 - `RunBench(name str, f fn(mut B))`: RunBench runs one benchmark with b.N doubling until it takes at least 1 s, then prints the time per operation.
 - `Finish()`: Finish prints PASS or FAIL and exits with status 1 when a test failed.
 
@@ -1876,6 +1882,8 @@ Package textedit is the editing model behind Tinland: a text buffer with a curso
 - `FromText(text str) Buffer`: FromText returns a buffer holding text; both \n and \r\n end a line.
 - `(b Buffer) Text() str`: Text is the whole text, lines joined with \n.
 - `(b Buffer) Cur() Pos`: Cur is the cursor.
+- `RuneAt(s str, i i64) i64`: RuneAt is the code point of the character that starts at byte i of s (0xfffd for bytes that are not UTF-8).
+- `RuneWidth(r i64) i64`: RuneWidth is how many screen columns a code point takes: 2 for the East Asian wide and fullwidth characters and emoji, 0 for combining marks, 1 for everything else.
 - `DisplayCol(line str, col i64, tabWidth i64) i64`: DisplayCol is the screen column of byte offset col in line: runes are one column, a tab goes to the next multiple of tabWidth.
 - `ColForDisplay(line str, dcol i64, tabWidth i64) i64`: before reports whether a comes before b in the text. ColForDisplay is the byte column of the character at display column dcol of line (tabs count to the next multiple of tabWidth): where a mouse click lands.
 - `(b Buffer) SelStart() Pos`: SelStart and SelEnd are the ends of the selection in text order (both the cursor when nothing is selected).
@@ -1911,3 +1919,42 @@ Package textedit is the editing model behind Tinland: a text buffer with a curso
 - `(b mut Buffer) MoveLines(dir i64)`: MoveLines moves the touched lines up (dir -1) or down (dir 1) by one line, the cursor going with them.
 - `(b mut Buffer) ReplaceAll(needle str, repl str) i64`: ReplaceAll replaces every occurrence of needle with repl as one undo step and returns how many there were; the cursor goes to the start of the text.
 - `(b mut Buffer) SelectWordAt(row i64, col i64)`: SelectWordAt selects the word (letters, digits and underscores) around column col of row, or the one character there when it is not part of a word.
+- `(b mut Buffer) SetText(text str)`: SetText replaces the whole text as one undo step, keeping the cursor on its line and column (or the nearest place that exists).
+
+## tinjson
+
+- `type J struct`: J is a parsed JSON value.
+- `HexVal(c u8) i64`
+- `Parse(text str) (J, bool)`: Parse reads one JSON value; ok is false when the text is not valid.
+- `(j J) Get(key str) J`: Get is the member of an object with that key (null when there is none).
+- `(j J) At(i i64) J`: At is element i of an array (null past the end).
+- `(j J) Text() str`
+- `(j J) Int() i64`
+- `Quote(s str) str`: Quote is s as a JSON string.
+- `(j J) Len() i64`: Len is the number of elements of an array (or members of an object).
+- `(j J) Bool() bool`: Bool is the value of a true or false (false for anything else).
+- `(j J) IsString() bool`: IsString reports whether the value is a string.
+- `(j J) IsNull() bool`: IsNull reports whether the value is null (or missing).
+- `(j J) IsNumber() bool`: IsNumber reports whether the value is a number.
+- `(j J) Items() []J`: Items are the elements of an array.
+
+## tinsym
+
+- `type Sym struct`: Sym is one declaration.
+- `type Member struct`: Member is a line of a struct, enum or shape body: a field and its type, a variant and its payload.
+- `type Diag struct`: Diag is one error.
+- `type Item struct`: Item is one candidate for completion: its text, what it is (a Sym kind, or field, package, keyword) and a description.
+- `Parse(out str) ([]Sym, []Diag)`: Parse reads the JSON lines of `tinc -symbols -json`: the declarations and the errors.
+- `DirOf(path str) str`: DirOf is the directory part of a path.
+- `LineOf(text str, n i64) str`: LineOf is line n (0-based) of text without its line break ("" past the end).
+- `WordAt(text str, n i64, col i64) (str, i64, i64)`: WordAt is the identifier around byte column col of line n of text, with where it starts and ends in the line.
+- `ImportsOf(text str) []str`: ImportsOf are the package names the text imports (the last element of each import path).
+- `CurrentPkg(text str) str`: CurrentPkg is the package of the text: "" for main, as the compiler names it.
+- `TypeParts(t str) (str, str)`: TypeParts splits a type as the compiler writes it ("mut geo.Point", "?Point", "[]str") into the package ("" when unqualified) and the name of the named type it is, or "" when it is not one (a slice, a map, a number).
+- `Resolve(syms []Sym, path str, text str, n i64, col i64) []Sym`: Resolve is the declarations the word at line n, byte column col of the text can mean: after pkg. the exported name in that package; after any other dot a method of that name; otherwise a name of the text's package (in its directory), else of any package.
+- `const Keywords = "break case catch const continue default defer detach else enum extern fail fn for go guard if import keep let limit map match mut package parallel range return secret shared struct switch try type var while within use on shape"`: Keywords are the reserved words.
+- `Complete(syms []Sym, path str, text str, n i64, col i64) []Item`: Complete is the candidates at line n, byte column col of the text (the word being typed is not filtered out: the caller matches it): after pkg. its exported names; after another dot every method and field name (the type of the value is not known here); otherwise the package's names, the imported packages and the keywords.
+
+## tinfmt
+
+- `Format(src str) str`: Format returns the canonical form of the source: tabs for indentation, no trailing whitespace, at most one blank line in a row and none after an opening bracket, before a closing one or at either end of the file, and a final newline.

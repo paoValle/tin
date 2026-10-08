@@ -1,0 +1,108 @@
+package project
+
+// Fuzzy scores how well the query matches the candidate as a subsequence of its characters (case ignored): every query character
+// must appear in the candidate in order. A higher score is a better match: consecutive characters, characters right after a
+// separator (a slash, dot, underscore or dash) or at the start, and matches in the file name rather than the folders score more.
+// It returns -1 when the query does not match.
+fn Fuzzy(query str, candidate str) i64 {
+	if len(query) == 0 {
+		return 0
+	}
+	let q = Lower(query)
+	let c = Lower(candidate)
+	mut score = 0
+	mut qi = 0
+	mut last = -2
+	let nameStart = lastSlash(candidate) + 1
+	for i in 0..len(c) {
+		if qi < len(q) && c[i] == q[qi] {
+			score += 10
+			if i == last + 1 {
+				score += 15
+			}
+			if i == 0 || isSeparator(c[i - 1]) {
+				score += 12
+			}
+			if i >= nameStart {
+				score += 5
+			}
+			last = i
+			qi += 1
+		}
+	}
+	if qi < len(q) {
+		return -1
+	}
+	// shorter candidates are tighter matches
+	score -= len(c) / 8
+	return score
+}
+
+fn lastSlash(s str) i64 {
+	mut k = -1
+	for i in 0..len(s) {
+		if s[i] == '/' {
+			k = i
+		}
+	}
+	return k
+}
+
+fn isSeparator(c u8) bool {
+	return c == '/' || c == '.' || c == '_' || c == '-' || c == ' '
+}
+
+// Ranked returns the candidates that match the query, best first, at most top of them.
+fn Ranked(query str, candidates []str, top i64) []str {
+	mut scores = []i64{}
+	mut found = []str{}
+	for cand in candidates {
+		let s = Fuzzy(query, cand)
+		if s < 0 {
+			continue
+		}
+		// insert keeping the best first (the list stays short: top)
+		mut at = len(found)
+		for at > 0 && scores[at - 1] < s {
+			at -= 1
+		}
+		if at >= top {
+			continue
+		}
+		scores = insertInt(scores, at, s)
+		found = insertStr(found, at, cand)
+		if len(found) > top {
+			scores = scores[0:top]
+			found = found[0:top]
+		}
+	}
+	return found
+}
+
+fn insertInt(xs []i64, at i64, v i64) []i64 {
+	mut out = []i64{}
+	for i in 0..len(xs) {
+		if i == at {
+			out = append(out, v)
+		}
+		out = append(out, xs[i])
+	}
+	if at >= len(xs) {
+		out = append(out, v)
+	}
+	return out
+}
+
+fn insertStr(xs []str, at i64, v str) []str {
+	mut out = []str{}
+	for i in 0..len(xs) {
+		if i == at {
+			out = append(out, v)
+		}
+		out = append(out, xs[i])
+	}
+	if at >= len(xs) {
+		out = append(out, v)
+	}
+	return out
+}

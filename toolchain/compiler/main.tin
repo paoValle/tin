@@ -487,11 +487,41 @@ fn package_files(base str) i64 {
 	return cast(i64, out)
 }
 
+// clean_dots removes "name/.." pairs from a path (products/app/ui/../ui becomes products/app/ui), so a package reached by two
+// relative paths is one directory with one name, not two copies of its files. Other "." and ".." segments stay as they are.
+fn clean_dots(path str) str {
+	mut segs = []str{}
+	mut start = 0
+	mut i = 0
+	for i <= len(path) {
+		if i == len(path) || i64(path[i]) == '/' {
+			let seg = path[start:i]
+			if seg == ".." && len(segs) > 0 && segs[len(segs) - 1] != ".." && segs[len(segs) - 1] != "." && segs[len(segs) - 1] != "" {
+				segs = segs[0:len(segs) - 1]
+			} else {
+				segs = append(segs, seg)
+			}
+			start = i + 1
+		}
+		i = i + 1
+	}
+	let b = buf_new()
+	mut k = 0
+	for k < len(segs) {
+		if k > 0 {
+			buf_byte(b, '/')
+		}
+		buf_str(b, segs[k])
+		k = k + 1
+	}
+	return str(b)
+}
+
 // resolve_import finds an import's files: ./x and ../x next to the importing file,
 // otherwise the standard library, then the main program's directory.
 fn resolve_import(ipath str, from str) i64 {
 	if i64(byte_at(ipath, 0)) == '.' {
-		return package_files(cat_path(cat_path(dir_of(from), "/"), ipath))
+		return package_files(clean_dots(cat_path(cat_path(dir_of(from), "/"), ipath)))
 	}
 	// A path import (github.com/ana/geo) is read from vendor/ only: never lib/ or the network.
 	if remote_path(ipath) != 0 {

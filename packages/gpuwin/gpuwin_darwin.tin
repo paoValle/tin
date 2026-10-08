@@ -1,0 +1,200 @@
+// A window the system calls into, as Zed's does: the view and the delegate are Objective-C classes defined here, so
+// AppKit delivers events, frame ticks, menu choices and the close request as calls to Tin functions, and the program
+// sits in [NSApp run] between them instead of polling. The window's contents are drawn on the GPU (metal).
+package gpuwin
+
+import "appkit"
+import "constraints"
+import "metal"
+
+const tagClose = -1
+
+// What the program wants to hear about. Set them before Run.
+mut onEvent fn(i64) = ignoreEvent
+mut onFrame fn() = ignoreFrame
+mut onCommand fn(i64) = ignoreCommand
+mut onQuit fn() bool = allowQuit
+
+fn ignoreEvent(e i64) {
+}
+
+fn ignoreFrame() {
+}
+
+fn ignoreCommand(tag i64) {
+}
+
+fn allowQuit() bool {
+	return true
+}
+
+// OnEvent sets the function that gets every key and mouse event of the window (an NSEvent; appkit.EventType and the
+// other Event functions read it).
+fn OnEvent(f fn(i64)) {
+	onEvent = f
+}
+
+// OnFrame sets the function called sixty times a second: draw, if something changed.
+fn OnFrame(f fn()) {
+	onFrame = f
+}
+
+// OnCommand sets the function that gets the tag of a menu item the user chose.
+fn OnCommand(f fn(i64)) {
+	onCommand = f
+}
+
+// OnQuit sets the function asked when the window's close button or Quit is used; it returns true to let the
+// program end (and false after it showed its own "save changes?" question).
+fn OnQuit(f fn() bool) {
+	onQuit = f
+}
+
+mut gpu = metal.Gpu{}
+
+@callback
+fn viewEvent(self i64, cmd i64, e i64) {
+	onEvent(e)
+}
+
+@callback
+fn viewYes(self i64, cmd i64) i64 {
+	return 1
+}
+
+@callback
+fn viewTick(self i64, cmd i64, timer i64) {
+	onFrame()
+}
+
+// makeBackingLayer: the view's layer is a CAMetalLayer that presents what the GPU draws.
+@callback
+fn viewLayer(self i64, cmd i64) i64 {
+	let layer = appkit.Send(appkit.Class("CAMetalLayer"), "layer")
+	appkit.Send1(layer, "setDevice:", gpu.Device)
+	// MTLPixelFormatBGRA8Unorm
+	appkit.Send1(layer, "setPixelFormat:", 80)
+	appkit.Send1(layer, "setFramebufferOnly:", 1)
+	return layer
+}
+
+@callback
+fn commandChosen(self i64, cmd i64, sender i64) {
+	onCommand(appkit.Send(sender, "tag"))
+}
+
+// windowShouldClose: the close button asks the program instead of closing the window
+@callback
+fn windowShouldClose(self i64, cmd i64, window i64) i64 {
+	if onQuit() {
+		return 1
+	}
+	return 0
+}
+
+// applicationShouldTerminate: Quit asks the program too (NSTerminateNow is 1, NSTerminateCancel 0)
+@callback
+fn shouldTerminate(self i64, cmd i64, app i64) i64 {
+	if onQuit() {
+		return 1
+	}
+	return 0
+}
+
+@callback
+fn terminateAfterLastWindow(self i64, cmd i64, app i64) i64 {
+	return 1
+}
+
+// Window is the open window.
+type Window struct {
+	Win appkit.Window
+	View i64
+	Layer i64
+	Delegate i64
+}
+
+mut classesMade bool
+
+// Open shows a window of w by h points with a title, drawn by the GPU. Gpu.Device is 0 when there is no GPU.
+fn Open(title str, w f64, h f64) (Window, metal.Gpu) {
+	let win = Window{Win: appkit.Window{}}
+	win.Win = appkit.OpenWindow(title, w, h)
+	gpu = keep(metal.Open())
+	if gpu.Device == 0 {
+		return win, gpu
+	}
+	appkit.InitCallbacks()
+	if !classesMade {
+		classesMade = true
+		let view = appkit.NewClass("NSView", "TinView")
+		appkit.AddMethod(view, "keyDown:", viewEvent, "v@:@")
+		appkit.AddMethod(view, "keyUp:", viewEvent, "v@:@")
+		appkit.AddMethod(view, "flagsChanged:", viewEvent, "v@:@")
+		appkit.AddMethod(view, "mouseDown:", viewEvent, "v@:@")
+		appkit.AddMethod(view, "mouseUp:", viewEvent, "v@:@")
+		appkit.AddMethod(view, "mouseDragged:", viewEvent, "v@:@")
+		appkit.AddMethod(view, "rightMouseDown:", viewEvent, "v@:@")
+		appkit.AddMethod(view, "scrollWheel:", viewEvent, "v@:@")
+		appkit.AddMethod(view, "acceptsFirstResponder", viewYes, "B@:")
+		appkit.AddMethod(view, "wantsUpdateLayer", viewYes, "B@:")
+		appkit.AddMethod(view, "makeBackingLayer", viewLayer, "@@:")
+		appkit.AddMethod(view, "tick:", viewTick, "v@:@")
+		appkit.RegisterClass(view)
+		let delegate = appkit.NewClass("NSObject", "TinDelegate")
+		appkit.AddMethod(delegate, "windowShouldClose:", windowShouldClose, "B@:@")
+		appkit.AddMethod(delegate, "applicationShouldTerminate:", shouldTerminate, "q@:@")
+		appkit.AddMethod(delegate, "applicationShouldTerminateAfterLastWindowClosed:", terminateAfterLastWindow, "B@:@")
+		appkit.AddMethod(delegate, "command:", commandChosen, "v@:@")
+		appkit.RegisterClass(delegate)
+	}
+	let frame = appkit.SendD4(appkit.Send(appkit.Class("TinView"), "alloc"), "initWithFrame:", 0.0, 0.0, w, h)
+	win.View = frame
+	appkit.Send1(win.View, "setWantsLayer:", 1)
+	appkit.Send1(win.Win.Win, "setContentView:", win.View)
+	win.Layer = appkit.Send(win.View, "layer")
+	appkit.Send1(win.Win.Win, "makeFirstResponder:", win.View)
+	win.Delegate = appkit.Send(appkit.Send(appkit.Class("TinDelegate"), "alloc"), "init")
+	appkit.Send1(win.Win.Win, "setDelegate:", win.Delegate)
+	appkit.Send1(win.Win.App, "setDelegate:", win.Delegate)
+	appkit.SendTimer(1.0 / 60.0, win.View, "tick:")
+	return win, gpu
+}
+
+// Size is the drawable size of the window in pixels.
+fn Size(win Window) (i64, i64) {
+	let scale = appkit.Scale(win.Win)
+	let (w, h) = appkit.ContentSize(win.Win)
+	return i64(w * scale), i64(h * scale)
+}
+
+// Draw shows a frame: the clear color and the scene.
+fn Draw(win Window, scene metal.Scene, atlas metal.Atlas, r f64, g f64, b f64, a f64) {
+	let (w, h) = Size(win)
+	appkit.SendWithDouble(win.Layer, "setContentsScale:", appkit.Scale(win.Win))
+	metal.DrawLayer(gpu, win.Layer, w, h, scene, atlas, r, g, b, a)
+}
+
+// Run hands the thread to AppKit: it returns after Quit.
+fn Run(win Window) {
+	appkit.Send(win.Win.App, "run")
+}
+
+// Quit ends Run.
+fn Quit(win Window) {
+	appkit.Send1(win.Win.App, "terminate:", 0)
+}
+
+mut stashed i64
+
+// Stash remembers the object the callbacks work on: AppKit calls plain functions, which have no variables of their own, so the
+// program hands them its state this way and takes it back with State. The object must stay alive while Run is running (it does
+// when main holds it).
+fn Stash[T constraints.Any](v T) {
+	stashed = cast(i64, v)
+}
+
+// State is the object Stash was given; T must be the same type.
+fn State[T constraints.Any]() T {
+	return cast(T, stashed)
+}
