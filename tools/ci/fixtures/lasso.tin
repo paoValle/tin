@@ -2,7 +2,8 @@ package main
 
 // The lasso twin, Tin side: read pattern/input pairs (hex-encoded, one pair per line) on stdin
 // and print what lasso says for each, in the same format as bench/ref/lasso (Go's regexp):
-// "compile" for a pattern that does not compile, else "match ... find ... subs ... all ...".
+// "compile" for a pattern that does not compile, else "match ... find ... subs ... all ...
+// allsubs ... repl ... func ... split ...".
 // tools/ci/lasso_check.py feeds both sides the same corpus and compares the lines (#571).
 
 import "say"
@@ -77,6 +78,16 @@ fn main() {
 		out += " allsubs"
 		for _, v in re.FindAllSubmatchIndex(s, n) {
 			out += say.Fmt(" %d", v)
+		}
+		// Replace, ReplaceFunc and Split, hex-encoded: an empty match right after another one
+		// is skipped as in Go (#717).
+		out += " repl " + seal.Hex([]u8(re.Replace(s, "<$0|${1}>")))
+		out += " func " + seal.Hex([]u8(re.ReplaceFunc(s, fn(m str) str {
+			return "[" + m + "]"
+		})))
+		out += " split"
+		for _, piece in re.Split(s, n) {
+			out += " " + seal.Hex([]u8(piece))
 		}
 		say.Line(out)
 	}

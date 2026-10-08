@@ -14,6 +14,8 @@ Three phases:
    pattern and string the anchored match (`\\A(?:pattern)\\z`) and, when it matches, the search
    result must be the file's.
 
+Phase 1 also compares Replace, ReplaceFunc and Split (hex-encoded) with Go's (#717).
+
 The inputs use code points whose Unicode category and script tables agree between the glyph
 tables (Unicode 15) and the Go toolchain's (a newer Unicode), so a table version difference is
 not reported as a lasso bug; the Unicode classes themselves are covered.
@@ -204,7 +206,8 @@ def subs_of(line):
 def allsubs_of(line):
     """The values of the allsubs field of one output line."""
     toks = line.split()
-    return [int(v) for v in toks[toks.index("allsubs")+1:]]
+    end = toks.index("repl") if "repl" in toks else len(toks)
+    return [int(v) for v in toks[toks.index("allsubs")+1:end]]
 
 
 def expected_subs(res):

@@ -213,35 +213,21 @@ fn (re Regexp) Submatch(s str) []?str {
 // expanded, like Go's ReplaceAllString.
 fn (re Regexp) Replace(s str, tmpl str) str {
 	mut out = ""
+	mut last = i64(0)
 	mut pos = i64(0)
-	mut prevEnd = i64(-1)
-	for {
-		if pos > i64(len(s)) {
-			break
-		}
+	for pos <= i64(len(s)) {
 		let m = re.find(s, pos)
 		if len(m) == 0 {
 			break
 		}
-		out += s[pos:m[0]]
-		out += expand(re, tmpl, s, m)
-		if m[1] == m[0] {
-			if m[0] >= i64(len(s)) {
-				pos = m[0]
-				prevEnd = m[1]
-				break
-			}
-			let (_, size) = decodeAt(s, m[0])
-			out += s[m[0]:m[0]+size]
-			pos = m[0] + size
-		} else {
-			pos = m[1]
+		out += s[last:m[0]]
+		if replaces(m, last) {
+			out += expand(re, tmpl, s, m)
 		}
-		prevEnd = m[1]
+		last = m[1]
+		pos = nextSearch(s, pos, m[1])
 	}
-	if pos <= i64(len(s)) {
-		out += s[pos:]
-	}
+	out += s[last:]
 	return out
 }
 
@@ -249,33 +235,41 @@ fn (re Regexp) Replace(s str, tmpl str) str {
 // ReplaceAllStringFunc.
 fn (re Regexp) ReplaceFunc(s str, f fn(str) str) str {
 	mut out = ""
+	mut last = i64(0)
 	mut pos = i64(0)
-	for {
-		if pos > i64(len(s)) {
-			break
-		}
+	for pos <= i64(len(s)) {
 		let m = re.find(s, pos)
 		if len(m) == 0 {
 			break
 		}
-		out += s[pos:m[0]]
-		out += f(s[m[0]:m[1]])
-		if m[1] == m[0] {
-			if m[0] >= i64(len(s)) {
-				pos = m[0]
-				break
-			}
-			let (_, size) = decodeAt(s, m[0])
-			out += s[m[0]:m[0]+size]
-			pos = m[0] + size
-		} else {
-			pos = m[1]
+		out += s[last:m[0]]
+		if replaces(m, last) {
+			out += f(s[m[0]:m[1]])
 		}
+		last = m[1]
+		pos = nextSearch(s, pos, m[1])
 	}
-	if pos <= i64(len(s)) {
-		out += s[pos:]
-	}
+	out += s[last:]
 	return out
+}
+
+// replaces reports whether match m gets a replacement, Go's rule: not an empty match right
+// after the previous match (which ended at last), so `a*` on "baaac" gives XbXcX, not XbXXcX.
+fn replaces(m []i64, last i64) bool {
+	return m[1] > last || m[0] == 0
+}
+
+// nextSearch is where the search goes on after a match ending at end that was searched for
+// from pos: past the match, and always at least one character on (Go's replaceAll).
+fn nextSearch(s str, pos i64, end i64) i64 {
+	let (_, width) = decodeAt(s, pos)
+	if pos+width > end {
+		return pos + width
+	}
+	if pos+1 > end {
+		return pos + 1
+	}
+	return end
 }
 
 // Split slices s around every match, like Go's Split: n < 0 returns every piece, n == 0 returns

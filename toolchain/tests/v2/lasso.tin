@@ -93,6 +93,12 @@ fn main() {
 	say.Line("replace func", words.ReplaceFunc("a=b c=d", fn(s str) str {
 		return "<" + s + ">"
 	}))
+	// An empty match right after a non-empty one gets no replacement, as in Go (#717).
+	let stars = lasso.MustCompile(`a*`)
+	let bracketed = stars.ReplaceFunc("baaac", fn(s str) str {
+		return "[" + s + "]"
+	})
+	say.Line("replace empty", stars.Replace("baaac", "X"), bracketed, lasso.MustCompile(`\w*`).Replace("ab cd", "X"))
 	say.Line("split", splitOf(words, "a=b c=d", -1))
 	say.Line("split n", splitOf(words, "a=b c=d e=f", 2))
 	say.Line("quote", lasso.QuoteMeta(`a.b*c(d)[e]{f}|g^h$i\j`))

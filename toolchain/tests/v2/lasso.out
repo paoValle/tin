@@ -13,6 +13,7 @@ all \B ab -1  1-1 |  1 1
 all (?P<k>\w+) one two -1  0-3 4-7 |  0 3 0 3 4 7 4 7
 replace two:one four:three x
 replace func <a=b> <c=d>
+replace empty XbXcX []b[aaa]c[] X X
 split  "" " " ""
 split n  "" " c=d e=f"
 quote a\.b\*c\(d\)\[e\]\{f\}\|g\^h\$i\\j

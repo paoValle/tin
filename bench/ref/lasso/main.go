@@ -1,7 +1,7 @@
 // Command lasso reads pattern/input pairs on stdin (hex-encoded, one pair per line) and prints,
-// for each, what Go's regexp says: whether it matches, the leftmost match, the submatch offsets
-// and every match. tools/ci/fixtures/lasso.tin prints the same lines and
-// tools/ci/lasso_check.py compares them (#571).
+// for each, what Go's regexp says: whether it matches, the leftmost match, the submatch offsets,
+// every match, and what Replace, ReplaceFunc and Split give. tools/ci/fixtures/lasso.tin prints
+// the same lines and tools/ci/lasso_check.py compares them (#571, #717).
 package main
 
 import (
@@ -72,6 +72,14 @@ func main() {
 			for _, v := range m {
 				fmt.Fprintf(out, " %d", v)
 			}
+		}
+		fmt.Fprintf(out, " repl %s", hex.EncodeToString([]byte(re.ReplaceAllString(s, "<$0|${1}>"))))
+		fmt.Fprintf(out, " func %s", hex.EncodeToString([]byte(re.ReplaceAllStringFunc(s, func(m string) string {
+			return "[" + m + "]"
+		}))))
+		fmt.Fprintf(out, " split")
+		for _, piece := range re.Split(s, n) {
+			fmt.Fprintf(out, " %s", hex.EncodeToString([]byte(piece)))
 		}
 		fmt.Fprintln(out)
 	}
