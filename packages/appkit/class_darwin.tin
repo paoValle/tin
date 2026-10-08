@@ -1,0 +1,57 @@
+package appkit
+
+import "constraints"
+
+// Objective-C classes defined from Tin. A method's implementation is a Tin function marked @callback (the compiler puts the
+// core context where the code of a Tin function expects it before AppKit calls it, and puts AppKit's own value back after);
+// A method gets self and the selector, then its arguments, like a C function:
+//
+//	@callback
+//	fn keyDown(self i64, cmd i64, event i64) {
+//		...
+//	}
+//
+//	InitCallbacks()
+//	let cls = NewClass("NSView", "TinView")
+//	AddMethod(cls, "keyDown:", keyDown, "v@:@")
+//	RegisterClass(cls)
+//
+// Call InitCallbacks once, on the thread that will be called back (a Mac application's main thread, which is the one main
+// runs on). The strings are Objective-C type encodings: v void, @ object, : selector, q 64-bit integer, d double, B bool.
+
+@framework("/usr/lib/libobjc.A.dylib")
+extern fn objc_allocateClassPair(superclass i64, name i64, extra i64) i64
+
+@framework("/usr/lib/libobjc.A.dylib")
+extern fn objc_registerClassPair(cls i64)
+
+@framework("/usr/lib/libobjc.A.dylib")
+extern fn class_addMethod(cls i64, sel i64, imp i64, types i64) i64
+
+// InitCallbacks remembers this thread's core context, which a @callback function installs when AppKit calls it.
+fn InitCallbacks() {
+	rt_callback_set()
+}
+
+// NewClass starts a class named name that inherits from the class named super (0 when the name is taken or super is
+// unknown); add its methods and then RegisterClass it.
+fn NewClass(super str, name str) i64 {
+	let parent = Class(super)
+	if parent == 0 {
+		return 0
+	}
+	return objc_allocateClassPair(parent, rt_cstr(name), 0)
+}
+
+// AddMethod adds a method called selector, implemented by the @callback function imp, with the type encoding
+// types ("v@:@" is a void method taking an object).
+fn AddMethod[F constraints.Any](cls i64, selector str, imp F, types str) bool {
+	// a function value points at its descriptor, whose first word is the code address
+	let descriptor = cast(i64, imp)
+	return (class_addMethod(cls, Sel(selector), descriptor[0], rt_cstr(types)) & 0xff) != 0
+}
+
+// RegisterClass makes the class usable; its methods can no longer change.
+fn RegisterClass(cls i64) {
+	objc_registerClassPair(cls)
+}

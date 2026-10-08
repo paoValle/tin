@@ -2199,6 +2199,9 @@ names (E041) and invalid arguments (E042) are compile errors.
 | `@json("name")` | a struct field | the JSON member name `argo` writes and reads |
 | `@nopoll` | a function | no safepoint polls in its loops, for short hot kernels ([TOOLING.md](TOOLING.md)) |
 | `@wrap` | a function | the machine's integer arithmetic: `+ - *` and negation wrap, shift counts modulo 64 (section 6); for hashes, ciphers and constant-time field arithmetic |
+| `@callback` | a function | C code can call it: the function saves the caller's x28 and puts the core context there (`rt_callback_set` saved it on the core that will be called), so the Tin code in it runs as it does anywhere. Take its address through a function value (`appkit.AddMethod` does for an Objective-C method). Arm64 only; at most eight integer or float arguments |
+| `@framework("Name")` | an external function (trusted code) | the library the extern is bound from: a macOS framework by name (`"CoreGraphics"`) or a dylib by path (`"/usr/lib/libobjc.A.dylib"`); the default is libSystem |
+| `@symbol("name")` | an external function (trusted code) | the symbol the extern is bound to, when it is not the function's own name (several externs may bind `objc_msgSend` with different argument shapes) |
 
 ```tin
 type User struct {

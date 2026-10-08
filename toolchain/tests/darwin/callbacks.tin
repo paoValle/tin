@@ -1,0 +1,28 @@
+package main
+
+import "appkit"
+import "say"
+
+// A @callback is a Tin function C code can call: here the methods of an Objective-C class defined from Tin.
+@callback
+fn addHundred(self i64, cmd i64, n i64) i64 {
+	return n + 100
+}
+
+@callback
+fn describe(self i64, cmd i64) i64 {
+	return appkit.NewString("a Tin object")
+}
+
+fn main() {
+	appkit.LoadFoundation()
+	appkit.InitCallbacks()
+	let cls = appkit.NewClass("NSObject", "TinProbe")
+	say.Line("added:", appkit.AddMethod(cls, "addHundred:", addHundred, "q@:q"), appkit.AddMethod(cls, "description", describe, "@@:"))
+	appkit.RegisterClass(cls)
+	let obj = appkit.Send(appkit.Send(cls, "alloc"), "init")
+	say.Line("a message to it:", appkit.Send1(obj, "addHundred:", 5))
+	say.Line("its description:", appkit.StringOf(appkit.Send(obj, "description")))
+	// a second class with the same name cannot be made
+	say.Line("name taken:", appkit.NewClass("NSObject", "TinProbe") == 0)
+}

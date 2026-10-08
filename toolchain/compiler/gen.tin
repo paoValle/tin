@@ -5325,6 +5325,19 @@ fn emit_inverted(k i64, l i64) {
 	}
 }
 
+// callback_ctx_sym is the symbol of the runtime's rt_callback_ctx, where a @callback function finds the core context.
+fn callback_ctx_sym(f Fn) i64 {
+	mut i = 0
+	for i < len(prog_vars) {
+		if prog_vars[i].name == "rt_callback_ctx" {
+			return sym_ref(SK_VAR, i)
+		}
+		i = i + 1
+	}
+	err_code_quoted(f.pos, "E990 INTERNAL", "function ", f.name, " is a @callback but the runtime has no rt_callback_ctx")
+	return 0
+}
+
 // finish_fn wraps the body in its prologue and epilogues and drops unreachable code.
 fn finish_fn(f Fn, nslots i64, pre []i64) {
 	mut saved = []i64{}
@@ -5334,6 +5347,12 @@ fn finish_fn(f Fn, nslots i64, pre []i64) {
 			saved = append(saved, r)
 		}
 		r = r + 1
+	}
+	// A @callback function is entered from C code, which leaves its own value in x28: save it with the other
+	// callee-saved registers and put the core context there once the frame is set up (below).
+	let callback = fn_has_attr(f, "callback")
+	if callback != 0 {
+		saved = append(saved, 28)
 	}
 	r = 8
 	for r <= 15 {
@@ -5369,6 +5388,12 @@ fn finish_fn(f Fn, nslots i64, pre []i64) {
 		}
 		out4(I_ADDI, FP, SP, 0, 0)
 		save_regs(cast([]i64, saved), 16 + slot_bytes, 0)
+	}
+	if callback != 0 {
+		// x28 = the core context the program saved in rt_callback_ctx (rt_callback_set)
+		let ctx_sym = callback_ctx_sym(f)
+		out4(I_ADRP, X16, ctx_sym, 0, 0)
+		out4(I_LDRLO, 28, X16, ctx_sym, 0)
 	}
 	let n = len(cg) / 5
 	mut dead = 0

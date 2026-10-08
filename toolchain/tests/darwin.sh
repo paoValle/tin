@@ -10,7 +10,7 @@ if [ "$(uname -s)" != Darwin ]; then
 fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
-for name in display objc number bitmap; do
+for name in display objc number bitmap callbacks; do
 	"$compiler" -o "$tmp/$name" "toolchain/tests/darwin/$name.tin"
 	"$tmp/$name" > "$tmp/$name.out"
 	cmp "$tmp/$name.out" "toolchain/tests/darwin/$name.out" || { echo "FAIL darwin $name"; exit 1; }

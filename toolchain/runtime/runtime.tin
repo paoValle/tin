@@ -7365,3 +7365,12 @@ fn rt_helper_main(id i64) {
 		}
 	}
 }
+
+// rt_callback_ctx is the core context (the value of x28) a @callback function loads into x28 when C code calls it: C code
+// leaves its own value there, and the Tin code in the callback needs its core's. The program saves it with rt_callback_set
+// on the core that will be called back (a program's main, for a Mac application's main thread).
+shared mut rt_callback_ctx i64
+
+fn rt_callback_set() {
+	rt_callback_ctx = __ctx()
+}

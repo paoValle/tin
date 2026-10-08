@@ -464,8 +464,8 @@ fn fn_attributes_check(attrs i64, is_extern i64) {
 			if len(args) != 1 || cast(Node, args[0]).kind != EX_STR {
 				p_fail_code(a.pos, "E042 ATTRIBUTE_ARGS", "@" + a.name + " takes one string: the name, like @" + a.name + "(\"CoreGraphics\")")
 			}
-		} else if a.name != "nopoll" && a.name != "wrap" {
-			p_fail_code(a.pos, "E041 UNKNOWN_ATTRIBUTE", "unknown function attribute @" + a.name + "; supported attributes are @nopoll, @wrap, @framework and @symbol")
+		} else if a.name != "nopoll" && a.name != "wrap" && a.name != "callback" {
+			p_fail_code(a.pos, "E041 UNKNOWN_ATTRIBUTE", "unknown function attribute @" + a.name + "; supported attributes are @nopoll, @wrap, @callback, @framework and @symbol")
 		} else if len(cast([]i64, a.args)) != 0 {
 			p_fail_code(a.pos, "E042 ATTRIBUTE_ARGS", "@" + a.name + " takes no arguments")
 		}
