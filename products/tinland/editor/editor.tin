@@ -99,6 +99,8 @@ type Editor struct {
 	// Marks are the lines git says differ from the last commit (line * 4 + 1 added, 2 changed, 3 lines removed above), for the file named
 	// MarksPath as it was when MarksSaves saves had happened; Saves counts the saves.
 	Marks    []i64
+	// Extra are the carets besides the buffer's own (multi.tin).
+	Extra    []textedit.Pos
 	MarksPath str
 	MarksSaves i64
 	Saves    i64
@@ -108,7 +110,7 @@ type Editor struct {
 }
 
 fn New(buf textedit.Buffer) Editor {
-	let ed = Editor{Buf: buf, FindFrom: textedit.Pos{}, Marks: []i64{}, AreaW: 800.0, AreaH: 500.0, CharW: 7.8, LineH: 17.0, Redraw: true, Blink: true}
+	let ed = Editor{Buf: buf, FindFrom: textedit.Pos{}, Marks: []i64{}, Extra: []textedit.Pos{}, AreaW: 800.0, AreaH: 500.0, CharW: 7.8, LineH: 17.0, Redraw: true, Blink: true}
 	ed.rawFor = -1
 	ed.Diags = []tinsym.Diag{}
 	ed.DiagFor = -1
@@ -416,6 +418,9 @@ fn (ed mut Editor) handleKey(k Key) {
 	if ed.Mode != modeEdit {
 		ed.promptKey(k)
 		ed.ensureVisible()
+		return
+	}
+	if len(ed.Extra) > 0 && ed.multiKey(k) {
 		return
 	}
 	let shift = (k.Flags & flagShift) != 0

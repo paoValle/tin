@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds Tinland.app (macOS): the editor from products/tinland/main.tin in an application bundle with its icon, so it has its own
-# Dock icon and name in the menu bar and opens from Finder. The release workflow zips it (Tinland-VERSION-darwin-arm64.zip). Usage: tools/dev/tinland_app.sh [OUTPUT_DIR]   (default bin/)
+# Dock icon and name in the menu bar and opens from Finder (VERSION in the environment sets the version it reports; the VERSION file otherwise). The release workflow zips it (Tinland-VERSION-darwin-arm64.zip). Usage: tools/dev/tinland_app.sh [OUTPUT_DIR]   (default bin/)
 # Open a folder from the command line with: open -a bin/Tinland.app --args /path/to/folder
 set -eu
 cd "$(dirname "$0")/../.." || exit 1
@@ -12,7 +12,7 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 bin/tinc -o "$app/Contents/MacOS/Tinland" products/tinland/main.tin
 cp products/tinland/icon/Tinland.icns "$app/Contents/Resources/Tinland.icns"
-version=$(cat VERSION)
+version=${VERSION:-$(cat VERSION)}
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -193,3 +193,21 @@ budget scroll ok
 --- untitled row 2 col 2 dirty true
 {
 	}
+--- untitled row 3 col 3 dirty true
+xyone
+xytwo
+xythree
+--- untitled row 3 col 2 dirty true
+xone
+xtwo
+xthree
+--- untitled row 3 col 9 dirty true
+xone
+xztwo
+xzthreez
+--- untitled row 3 col 10 dirty true
+xone
+xztwo
+xzthreezq
+complete Line true true
+complete NoSuchWord false true

@@ -1,5 +1,6 @@
 package editor
 
+import "sift"
 import "textedit"
 import "tinsym"
 import "twine"
@@ -88,7 +89,7 @@ fn wordByte(c u8) bool {
 
 // openCompletion lists what can be written at the caret, for the word typed so far.
 fn (ed mut Editor) openCompletion() {
-	let items = tinsym.Complete(ed.Syms, ed.Buf.Path, ed.Buf.Text(), ed.Buf.Row, ed.Buf.Col)
+	let items = ed.candidates()
 	let want = twine.ToLower(ed.prefix())
 	mut shown = []tinsym.Item{}
 	for it in items {
@@ -110,7 +111,7 @@ fn (ed mut Editor) refilter() {
 		return
 	}
 	let want = twine.ToLower(ed.prefix())
-	let items = tinsym.Complete(ed.Syms, ed.Buf.Path, ed.Buf.Text(), ed.Buf.Row, ed.Buf.Col)
+	let items = ed.candidates()
 	mut shown = []tinsym.Item{}
 	for it in items {
 		if len(shown) < 200 && twine.HasPrefix(twine.ToLower(it.Label), want) {
@@ -162,4 +163,53 @@ fn (ed mut Editor) completionKey(k Key) bool {
 		return true
 	}
 	return false
+}
+
+// candidates are what completion offers: for Tin source, what the compiler's declarations say can be written at the caret; for
+// every other file, the words that occur in the open files (three letters or more), in alphabetical order.
+fn (ed Editor) candidates() []tinsym.Item {
+	let lang = textedit.LanguageOf(ed.Buf.Path)
+	if lang == textedit.LangTin {
+		return tinsym.Complete(ed.Syms, ed.Buf.Path, ed.Buf.Text(), ed.Buf.Row, ed.Buf.Col)
+	}
+	let typed = ed.prefix()
+	mut seen = map[str]bool{}
+	mut words = []str{}
+	mut buffers = []textedit.Buffer{ed.Buf}
+	for t in ed.Tabs {
+		buffers = append(buffers, t.Buf)
+	}
+	for b in buffers {
+		mut scanned = 0
+		for r in 0..len(b.Lines) {
+			let line = b.Lines[r]
+			scanned += len(line)
+			if scanned > 400000 {
+				break
+			}
+			mut i = 0
+			for i < len(line) {
+				if !wordByte(line[i]) {
+					i += 1
+					continue
+				}
+				let start = i
+				for i < len(line) && wordByte(line[i]) {
+					i += 1
+				}
+				let w = line[start:i]
+				let (_, have) = seen[w]
+				if len(w) >= 3 && !have && w != typed {
+					seen[w] = true
+					words = append(words, w)
+				}
+			}
+		}
+	}
+	sift.Strs(mut words)
+	mut items = []tinsym.Item{}
+	for w in words {
+		items = append(items, tinsym.Item{Label: w, Kind: "word"})
+	}
+	return items
 }

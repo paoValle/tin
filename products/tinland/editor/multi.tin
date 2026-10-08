@@ -1,0 +1,172 @@
+package editor
+
+import "textedit"
+
+// More than one caret. The buffer has one cursor and a selection; the others are Editor.Extra, plain places with no selection of
+// their own. Typing, Backspace, Delete, the arrow keys, Home and End act on every caret; any other key puts the extra carets
+// away first. Edits go from the last caret to the first, so the places still to be edited stay where they were.
+
+// CmdCursorBelow and CmdCursorAbove add a caret on the line below or above the last one added.
+const CmdCursorBelow = 28
+const CmdCursorAbove = 29
+
+// before reports whether place a comes before place b in the text.
+fn before(a textedit.Pos, b textedit.Pos) bool {
+	return a.Row < b.Row || (a.Row == b.Row && a.Col < b.Col)
+}
+
+// carets are all the carets, the main one included, last in the text first.
+fn (ed Editor) carets() []textedit.Pos {
+	mut all = []textedit.Pos{textedit.Pos{Row: ed.Buf.Row, Col: ed.Buf.Col}}
+	for p in ed.Extra {
+		all = append(all, p)
+	}
+	// insertion sort, last place first (there are few carets)
+	for i in 1..len(all) {
+		let x = all[i]
+		mut j = i - 1
+		for j >= 0 && before(all[j], x) {
+			all[j + 1] = all[j]
+			j -= 1
+		}
+		all[j + 1] = x
+	}
+	return all
+}
+
+// setCarets makes the first of the places the main caret and the rest the extra ones (equal places count once).
+fn (ed mut Editor) setCarets(all []textedit.Pos) {
+	mut extra = []textedit.Pos{}
+	mut mainAt = textedit.Pos{Row: ed.Buf.Row, Col: ed.Buf.Col}
+	for i in 0..len(all) {
+		mut dup = false
+		for k in 0..len(extra) {
+			if extra[k].Row == all[i].Row && extra[k].Col == all[i].Col {
+				dup = true
+			}
+		}
+		if i == 0 {
+			mainAt = all[i]
+		} else if !dup && !(all[i].Row == mainAt.Row && all[i].Col == mainAt.Col) {
+			extra = append(extra, all[i])
+		}
+	}
+	ed.Buf.MoveTo(mainAt.Row, mainAt.Col, false)
+	ed.Extra = extra
+}
+
+// AddCursor adds a caret on the line below (dir 1) or above (-1) the lowest or highest caret, at the same display column.
+fn (ed mut Editor) AddCursor(dir i64) {
+	let all = ed.carets()
+	mut at = all[0]
+	if dir < 0 {
+		at = all[len(all) - 1]
+	}
+	let row = at.Row + dir
+	if row < 0 || row >= len(ed.Buf.Lines) {
+		return
+	}
+	let dcol = textedit.DisplayCol(ed.Buf.Lines[at.Row], at.Col, 4)
+	let col = textedit.ColForDisplay(ed.Buf.Lines[row], dcol, 4)
+	ed.Extra = append(ed.Extra, textedit.Pos{Row: row, Col: col})
+	ed.Follow = true
+	ed.Redraw = true
+}
+
+// ClearCarets puts the extra carets away.
+fn (ed mut Editor) ClearCarets() {
+	if len(ed.Extra) > 0 {
+		ed.Extra = []textedit.Pos{}
+		ed.Redraw = true
+	}
+}
+
+// multiKey acts on a key for all the carets and reports whether it did; a key it does not know puts the extra carets away.
+fn (ed mut Editor) multiKey(k Key) bool {
+	let cmd = (k.Flags & flagCmd) != 0
+	if k.Code == keyEscape {
+		ed.ClearCarets()
+		return true
+	}
+	if cmd || (k.Flags & flagCtrl) != 0 || ed.Mode != modeEdit {
+		ed.ClearCarets()
+		return false
+	}
+	let b = ed.Buf
+	if k.Code == keyLeft || k.Code == keyRight || k.Code == keyUp || k.Code == keyDown || k.Code == keyHome || k.Code == keyEnd {
+		let all = ed.carets()
+		mut moved = []textedit.Pos{}
+		for p in all {
+			b.MoveTo(p.Row, p.Col, false)
+			if k.Code == keyLeft {
+				b.Left(false)
+			} else if k.Code == keyRight {
+				b.Right(false)
+			} else if k.Code == keyUp {
+				b.Up(false)
+			} else if k.Code == keyDown {
+				b.Down(false)
+			} else if k.Code == keyHome {
+				b.Home(false)
+			} else {
+				b.End(false)
+			}
+			moved = append(moved, textedit.Pos{Row: b.Row, Col: b.Col})
+		}
+		ed.setCarets(moved)
+		ed.Follow = true
+		return true
+	}
+	if k.Code == keyBackspace || k.Code == keyForwardDelete {
+		let all = ed.carets()
+		mut after = []textedit.Pos{}
+		for i in 0..len(all) {
+			let p = all[i]
+			b.MoveTo(p.Row, p.Col, false)
+			mut np = p
+			let line = b.Lines[p.Row]
+			if k.Code == keyBackspace && p.Col > 0 {
+				b.Backspace()
+				np = textedit.Pos{Row: b.Row, Col: b.Col}
+				// carets later on the same line, already done, move left by what was removed
+				for j in 0..len(after) {
+					if after[j].Row == p.Row {
+						after[j].Col -= p.Col - np.Col
+					}
+				}
+			} else if k.Code == keyForwardDelete && p.Col < len(line) {
+				b.Delete()
+				let removed = len(line) - len(b.Lines[p.Row])
+				for j in 0..len(after) {
+					if after[j].Row == p.Row {
+						after[j].Col -= removed
+					}
+				}
+			}
+			after = append(after, np)
+		}
+		ed.setCarets(after)
+		ed.Follow = true
+		return true
+	}
+	if typeable(k.Chars) && k.Code != keyReturn && k.Code != keyEnter && k.Code != keyTab {
+		let all = ed.carets()
+		mut after = []textedit.Pos{}
+		for p in all {
+			b.MoveTo(p.Row, p.Col, false)
+			b.Insert(k.Chars)
+			let np = textedit.Pos{Row: b.Row, Col: b.Col}
+			for j in 0..len(after) {
+				if after[j].Row == p.Row {
+					after[j].Col += np.Col - p.Col
+				}
+			}
+			after = append(after, np)
+		}
+		ed.setCarets(after)
+		ed.Follow = true
+		return true
+	}
+	ed.ClearCarets()
+	return false
+}

@@ -35,6 +35,14 @@ fn (ed mut Editor) Perform(cmd i64) {
 		ed.handleKey(Key{Code: keyLeft, Flags: flagCmd | flagAlt, Chars: ""})
 		return
 	}
+	if cmd == CmdCursorBelow {
+		ed.AddCursor(1)
+		return
+	}
+	if cmd == CmdCursorAbove {
+		ed.AddCursor(-1)
+		return
+	}
 	if cmd == CmdInfo {
 		ed.handleKey(Key{Code: -1, Flags: flagCtrl, Chars: "q"})
 		return

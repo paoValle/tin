@@ -107,6 +107,13 @@ fn RunScript(ed mut Editor, script str) {
 			}
 		} else if twine.HasPrefix(step, "key:") {
 			ed.handleKey(keyFor(step[4:]))
+		} else if twine.HasPrefix(step, "cursor:") {
+			// cursor:below and cursor:above add a caret
+			if step == "cursor:below" {
+				ed.AddCursor(1)
+			} else {
+				ed.AddCursor(-1)
+			}
 		} else if step == "dump" {
 			ed.dump()
 		} else if twine.HasPrefix(step, "jump:") {

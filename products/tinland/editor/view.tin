@@ -278,6 +278,14 @@ fn (ed mut Editor) Paint(th theme.Theme, x f64, y f64, w f64, h f64, scene mut m
 		ed.markCell(th, textX, y, b.Row, caretBracketCol(ed), mut scene)
 		ed.markCell(th, textX, y, mr, mc, mut scene)
 	}
+	// the other carets
+	for p in ed.Extra {
+		let en = p.Row - ed.Scroll
+		if en >= 0 && en <= rows && p.Row < len(b.Lines) {
+			let ex = textX + f64(textedit.DisplayCol(b.Lines[p.Row], p.Col, 4) - ed.HScroll) * ed.CharW
+			render.Fill(mut scene, ex, y + ed.rowTop(en), 1.5, lh, th.Cursor)
+		}
+	}
 	ed.scrollbar(th, x, y, w, h, mut scene)
 	ed.promptBox(th, x, y, w, mut scene)
 	ed.popups(th, x, y, w, h, mut scene)

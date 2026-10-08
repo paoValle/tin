@@ -68,6 +68,9 @@ fn BuildMenus(win gpuwin.Window, cfg Settings) appkit.Menu {
 	item(m, edit, "Format Document", "i", cmd | shift, editor.CmdFormat)
 
 	let sel = appkit.AddMenu(m, "Selection")
+	item(m, sel, "Add Cursor Below", "\xef\x9c\x81", cmd | alt, editor.CmdCursorBelow)
+	item(m, sel, "Add Cursor Above", "\xef\x9c\x80", cmd | alt, editor.CmdCursorAbove)
+	appkit.AddSeparator(sel)
 	item(m, sel, "Select All", "a", cmd, editor.CmdSelectAll)
 	appkit.AddSeparator(sel)
 	item(m, sel, "Duplicate Line", "d", cmd, editor.CmdDuplicate)
