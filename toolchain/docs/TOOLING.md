@@ -40,6 +40,8 @@ moving or deleting the tree breaks it.
 | `tin replay CAPSULE --against BUILD [--live KIND]... [--save-test NAME --issue N]` | run a recorded request again with every effect served from its capsule, and report the first divergence (see §8.1) |
 | `tin fix -edition 1 FILE.tin...` | translate each file to edition 1 in place, and declare `mut` every `let` the program reassigns (E711). A file whose translation does not parse as edition 1, or changes when translated again, is left unchanged with the reason (for example a `const` in a nested block, which has to move by hand); exit status 1 when any file was left unchanged |
 | `tin vendor [DIR]` | copy every package `DIR/tin.mod` requires (transitively, from local source directories) into `DIR/vendor/<path>` and write `DIR/tin.lock` with each vendored file's SHA-256 (see §2.1) |
+| `tin fmt [-l] [-d] [-w] FILE.tin... \| DIR \| -stdin` | format source files: the canonical whitespace (§3.2); `-l` lists the files that would change (exit status 1 when there are any), `-d` prints the change as a unified diff that `patch` applies, `-w` rewrites them (the default without `-l` and `-d`), a directory stands for the `.tin` files under it, `-stdin` formats standard input to standard output (for editors) |
+| `tin lsp` | the language server (LSP 3.17 over standard input and output, full document sync): diagnostics as you type, document and workspace symbols, go to definition, hover and completion, for any editor (§3.4) |
 | `tin check [-json] [-overlay FILE=PATH]... FILE.tin...` | lex, parse and check the program and write nothing: exit 0 when it is correct, 1 with the errors (text form, or one JSON object per line with `-json`, §3.1); `-overlay` reads FILE's content from PATH, so an editor checks what is typed, not what is saved |
 | `tin caps FILE.tin...` | check the program and print, per package, the capabilities (`net`, `files`, `spawn`, `exec`, `unsafe`) its exported functions can reach |
 | `tin suite` | run the compiler's strict test suite (`tools/dev/v2test.sh`) |
@@ -153,6 +155,48 @@ The tree is formatted, and `tools/ci/test_fmt_gate.py` fails when `tin fmt -l` l
 names: the hot files of AGENTS.md rule 6 (so work in flight there is not disturbed; they join when their owners take the one
 reformatting), the `_bad` tests and the other files whose position in the source is part of what a test checks (expected error
 positions, recorded effect sites, a hash in a `tin.lock`, edition 0 syntax), and the VS Code fixtures.
+
+### 3.3 Declarations as JSON (`tinc -symbols`, protocol version 1)
+
+One JSON object per line for each function, method, type, shape, constant and global of every loaded file, and for the
+locals and parameters of the functions in the files named on the command line:
+
+| field | meaning |
+|---|---|
+| `kind` | `fn`, `method`, `type` (struct, enum and named types), `shape`, `const`, `var` (a package-level `let` or `shared`) or `local` (a local variable or parameter) |
+| `name`, `pkg` | the name and its package (`""` for `main`) |
+| `file`, `line`, `col`, `endCol` | where the name is: the path as loaded, 1-based line and byte column, the column just past the name |
+| `recv` | a method's receiver type (without type arguments), else `""` |
+| `exported` | the name starts with a capital letter |
+| `sig` | the declaration's first line without its indentation and opening brace: `fn (p Point) Dist() i64`, `type Point struct` |
+| `doc` | the `//` comment lines directly above the declaration, joined with newlines |
+| `members` | for a struct, enum or shape: one `{"name","detail"}` per line of its body (a field and its type, a variant and its payload) |
+| `fn`, `fnLine`, `type` | for a `local`: the function it is in (the outermost, for a closure), the line that function starts on, and its type as the compiler writes it (`Point`, `mut Point`, `[]str`) |
+
+Errors, if any, are printed as in §3.1 when `-json` is also given, in the same stream (an object with a `severity`
+member is an error, one with a `kind` a declaration). `tin lsp` answers outline, go to definition, hover and completion from
+these lines.
+
+### 3.4 The language server: `tin lsp`
+
+`tin lsp` (`tools/lsp`, built when it starts) speaks the Language Server Protocol on standard input and output. It has no
+checker of its own: for every opened, changed or saved document it runs `tinc -symbols -json -overlay FILE=TEXT FILE`
+(§3.1 and §3.3: the unsaved text is what is checked, the errors and the declarations come from one run) and answers from
+the result.
+
+| request | answer |
+|---|---|
+| `textDocument/publishDiagnostics` (sent after open, change and save) | the compiler's errors, with ranges (UTF-16 columns), the E-code as `code`, `source` `tinc`, and the fix text of ERRORS.md after `Fix:` in the message |
+| `textDocument/documentSymbol`, `workspace/symbol` | the declarations of the file, or all that match the query (not the locals) |
+| `textDocument/definition` | a local or parameter of the function around the position; after `pkg.`, the exported name in that package; after any other `.`, the methods of that name; otherwise the name in the document's package, else in any package. The runtime and the standard library are searched too |
+| `textDocument/hover` | the declaration's signature and its doc comment, as markdown |
+| `textDocument/completion` (also after `.`) | after `pkg.` its exported names; after a local's dot (and after the dots of its fields) the fields and methods of its type; after any other `.` every method and field name; otherwise the function's locals, the package's names, the imported packages and the keywords |
+
+The compiler is `$TINLSP_TINC`, else `$TIN_ROOT/bin/tinc` (`tin lsp` sets it). A file that does not parse reports its one
+error and keeps the declarations of the last version that did, so outline and definition keep working while a line is
+half typed. Limits: the type of an expression that is not a name or a chain of fields (a call, an index) is not known, so
+completion after it offers every method and field name; a package-level `let` has no type text yet, so completion after a
+global's dot does too.
 
 ## 4. Make targets
 

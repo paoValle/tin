@@ -3,6 +3,7 @@ package main
 import "say"
 import "tinjson"
 import "tinsym"
+import "twine"
 
 // The compiler's declarations and errors as JSON lines, and what an editor asks of them: which declaration a name is,
 // and what can be written at a place.
@@ -78,4 +79,24 @@ fn main() {
 	say.Line(ty, nm, "|", ty2, nm2, "|")
 	let plain = names(tinsym.Complete(syms, path, text, 7, 1))
 	say.Line("plain:", plain[:48])
+
+	// a chain of fields: ln.From. is the members of Point, ln.name. and n. have none, ln. is the members of Line
+	let local = "{{\"kind\":\"local\",\"name\":\"%s\",\"pkg\":\"\",\"file\":\"/p/c.tin\",\"line\":4,\"col\":6,\"endCol\":8,\"fn\":\"main\",\"fnLine\":3,\"type\":\"%s\"}}\n"
+	let (cs, _) = tinsym.Parse(sym("fn", "main", "", "/p/c.tin", 3, "", "fn main()", "[]") +
+			sym("type", "Point", "", "/p/c.tin", 20, "", "type Point struct", "[{{\"name\":\"X\",\"detail\":\"i64\"}},{{\"name\":\"Y\",\"detail\":\"i64\"}}]") +
+			sym("method", "Dist", "", "/p/c.tin", 25, "Point", "fn (p Point) Dist() i64", "[]") +
+			sym("type", "Line", "", "/p/c.tin", 30, "", "type Line struct", "[{{\"name\":\"From\",\"detail\":\"Point\"}},{{\"name\":\"name\",\"detail\":\"str\"}},{{\"name\":\"n\",\"detail\":\"i64  // count\"}}]") +
+			fmtLocal(local, "ln", "mut Line") + fmtLocal(local, "n", "i64"))
+	let src = "package main\n\nfn main() {{\n\tln.From.\n\tln.name.\n\tln.n.\n\tln.\n\tn.\n\tln.Bogus.\n}}\n"
+	say.Line("chain From:", names(tinsym.Complete(cs, "/p/c.tin", src, 3, 9)))
+	say.Line("chain name:", names(tinsym.Complete(cs, "/p/c.tin", src, 4, 9)))
+	say.Line("chain n:", names(tinsym.Complete(cs, "/p/c.tin", src, 5, 7)))
+	say.Line("local Line:", names(tinsym.Complete(cs, "/p/c.tin", src, 6, 4)))
+	say.Line("local i64:", names(tinsym.Complete(cs, "/p/c.tin", src, 7, 3)))
+	say.Line("unknown field:", len(tinsym.Complete(cs, "/p/c.tin", src, 8, 12)) > 5)
+}
+
+// fmtLocal is a local variable's JSON line with its name and type filled in.
+fn fmtLocal(template str, name str, ty str) str {
+	return twine.Replace(twine.Replace(template, "%s", name, 1), "%s", ty, 1)
 }

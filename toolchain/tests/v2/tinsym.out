@@ -17,3 +17,9 @@ a local: /p/main.tin:6
 locals plain: local:p local:parts fn:main fn:helper ty
 geo Point |   |
 plain: local:p local:parts fn:main fn:helper type:Point
+chain From: field:X field:Y method:Dist 
+chain name: 
+chain n: 
+local Line: field:From field:name field:n 
+local i64: 
+unknown field: true

@@ -155,17 +155,74 @@ fn CurrentPkg(text str) str {
 	return ""
 }
 
-// qualifierAt is the identifier before the dot that precedes the word starting at byte from ("" when there is no dot).
+// qualifierAt is the chain of identifiers before the dot that precedes the word starting at byte from, such as "p" or
+// "line.start" ("" when there is no dot, "?" when what is before it is not a plain chain, like a call).
 fn qualifierAt(l str, from i64) (str, bool) {
 	if from == 0 || l[from - 1] != '.' {
 		return "", false
 	}
 	mut q = from - 1
 	let qend = q
-	for q > 0 && isWordByte(l[q - 1]) {
+	for q > 0 && (isWordByte(l[q - 1]) || (l[q - 1] == '.' && q >= 2 && isWordByte(l[q - 2]))) {
 		q -= 1
 	}
+	if q > 0 && (l[q - 1] == ')' || l[q - 1] == ']') {
+		return "?", true
+	}
 	return l[q:qend], true
+}
+
+// membersOf are the fields and methods of the named type tname declared in package owner, and whether the type is known.
+fn membersOf(syms []Sym, owner str, tname str) ([]Item, bool) {
+	mut items = []Item{}
+	mut seen = map[str]bool{}
+	mut known = false
+	for sym in syms {
+		if sym.Kind == "type" && sym.Name == tname && sym.Pkg == owner {
+			known = true
+			for m in sym.Members {
+				if !seen[m.Name] {
+					seen[m.Name] = true
+					items = append(items, Item{Label: m.Name, Kind: "field", Detail: m.Detail})
+				}
+			}
+		}
+	}
+	if !known {
+		return items, false
+	}
+	for sym in syms {
+		if sym.Kind == "method" && sym.Recv == tname && sym.Pkg == owner && !seen[sym.Name] {
+			seen[sym.Name] = true
+			items = append(items, Item{Label: sym.Name, Kind: "method", Detail: sym.Sig})
+		}
+	}
+	return items, true
+}
+
+// fieldType is the type, as (package, name), of the field f of the named type tname in package owner, and whether the
+// field is known: the name is "" when its type is not a named one (a number, a str, a slice).
+fn fieldType(syms []Sym, owner str, tname str, f str) (str, str, bool) {
+	for sym in syms {
+		if sym.Kind == "type" && sym.Name == tname && sym.Pkg == owner {
+			for m in sym.Members {
+				if m.Name == f {
+					// the member's detail is the rest of its line: the type, then perhaps a tag or a comment
+					mut t = m.Detail
+					let sp = twine.Index(t, " ")
+					if sp >= 0 {
+						t = t[:sp]
+					}
+					let (tpkg, name) = TypeParts(t)
+					if len(tpkg) > 0 {
+						return tpkg, name, true
+					}
+					return owner, name, true
+				}
+			}
+		}
+	}
+	return "", "", false
 }
 
 fn isImported(text str, name str) bool {
@@ -311,34 +368,34 @@ fn Complete(syms []Sym, path str, text str, n i64, col i64) []Item {
 	if dotted {
 		let isPackage = isImported(text, qualifier)
 		if !isPackage {
-			// a local variable or parameter of a known type: that type's fields and methods
-			let (local, isLocal) = localNamed(syms, path, n + 1, qualifier)
+			// a local variable or parameter of a known type, perhaps followed by fields: that type's fields and methods
+			let parts = twine.Split(qualifier, ".")
+			let (local, isLocal) = localNamed(syms, path, n + 1, parts[0])
 			if isLocal {
-				let (tpkg, tname) = TypeParts(local.Type)
+				let (tpkg, tname0) = TypeParts(local.Type)
 				mut owner = tpkg
 				if len(tpkg) == 0 {
 					owner = local.Pkg
 				}
-				mut known = false
-				for sym in syms {
-					if sym.Kind == "type" && sym.Name == tname && sym.Pkg == owner {
-						known = true
-						for m in sym.Members {
-							if !seen[m.Name] {
-								seen[m.Name] = true
-								items = append(items, Item{Label: m.Name, Kind: "field", Detail: m.Detail})
-							}
-						}
-					}
+				mut tname = tname0
+				mut typed = len(local.Type) > 0
+				mut step = 1
+				for step < len(parts) && len(tname) > 0 && typed {
+					let (npkg, nname, found) = fieldType(syms, owner, tname, parts[step])
+					owner = npkg
+					tname = nname
+					typed = found
+					step += 1
 				}
-				for sym in syms {
-					if known && sym.Kind == "method" && sym.Recv == tname && sym.Pkg == owner && !seen[sym.Name] {
-						seen[sym.Name] = true
-						items = append(items, Item{Label: sym.Name, Kind: "method", Detail: sym.Sig})
-					}
-				}
-				if known {
+				if typed && len(tname) == 0 {
+					// the value is of a type without fields or methods (a number, a str, a slice)
 					return items
+				}
+				if typed && len(tname) > 0 {
+					let (found, known) = membersOf(syms, owner, tname)
+					if known {
+						return found
+					}
 				}
 			}
 		}

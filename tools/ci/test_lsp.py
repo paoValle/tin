@@ -42,6 +42,12 @@ type Other struct {
 	Z i64
 }
 
+type Line struct {
+	From Point
+	n    i64
+	name str
+}
+
 fn (o Other) Ping() i64 {
 	return o.Z
 }
@@ -50,7 +56,8 @@ fn main() {
 	let p = Point{X: 1, Y: 2}
 	let parts = twine.Split("a,b", ",")
 	let o = Other{Z: 3}
-	say.Line(p.Dist(), o.Ping(), helper(1), len(parts))
+	let ln = Line{From: p, n: 1, name: "ln"}
+	say.Line(p.Dist(), o.Ping(), ln.From.X, ln.name, ln.n, helper(1), len(parts))
 }
 '''
 
@@ -169,7 +176,7 @@ class LanguageServer(unittest.TestCase):
         td = {'uri': self.uri}
         outline = self.client.request('textDocument/documentSymbol', {'textDocument': td})['result']
         self.assertEqual(sorted((s['name'], s['kind']) for s in outline),
-                         [('Dist', 6), ('Other', 23), ('Ping', 6), ('Point', 23), ('helper', 12), ('main', 12)])
+                         [('Dist', 6), ('Line', 23), ('Other', 23), ('Ping', 6), ('Point', 23), ('helper', 12), ('main', 12)])
         pos = self.at(PROGRAM, 'helper(1)')
         found = self.client.request('textDocument/definition', {'textDocument': td, 'position': pos})['result']
         self.assertEqual(len(found), 1)
@@ -207,6 +214,13 @@ class LanguageServer(unittest.TestCase):
         pos = self.at(PROGRAM, 'Ping()', 1)
         items = self.client.request('textDocument/completion', {'textDocument': td, 'position': pos})['result']['items']
         self.assertEqual({i['label'] for i in items}, {'Ping', 'Z'})
+        # after a chain of fields: the members of the last field's type
+        pos = self.at(PROGRAM, 'X, ln.name')
+        items = self.client.request('textDocument/completion', {'textDocument': td, 'position': pos})['result']['items']
+        self.assertEqual({i['label'] for i in items}, {'Dist', 'X', 'Y'})
+        pos = self.at(PROGRAM, 'name, ln.n')
+        items = self.client.request('textDocument/completion', {'textDocument': td, 'position': pos})['result']['items']
+        self.assertEqual({i['label'] for i in items}, {'From', 'n', 'name'})
         # plain completion offers the locals of the function
         items = self.client.request('textDocument/completion', {'textDocument': td, 'position': self.at(PROGRAM, 'say.Line')})['result']['items']
         details = {i['label']: i['detail'] for i in items}
