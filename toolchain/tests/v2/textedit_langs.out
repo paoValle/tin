@@ -1,0 +1,22 @@
+1 3 8 11 9 12 0
+ 1:func 7:main 4:// run
+ 1:let 3:0x2a 4:/* c */ 7:Some 2:"s"
+ 1:int 4:/* starts
+block open: 1
+ 4:still */ 1:return 3:1
+block closes: 0
+ 1:def 7:f 4:# note
+ 1:echo 2:"$HOME" 4:# c
+ 6:"key" 3:1 3:2.5 5:true 5:null
+ 6:name 4:# comment
+ 1:# Title
+ 4:```tin
+fence: 1
+ 2:code here
+ 4:```
+fence closed: 0
+ 2:`x`
+ 1:const 2:`a b
+js template: 2
+
+ 1:let 3:1 4:// c

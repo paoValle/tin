@@ -48,6 +48,8 @@ type Tab struct {
 	Buf     textedit.Buffer
 	Scroll  i64
 	HScroll i64
+	// Mtime is when the file was last changed on disk, as of the last time it was read or written here (0 until first seen).
+	Mtime   i64
 }
 
 // Editor is the application state: the text, where the view is scrolled, the mode, and the pixels.
@@ -87,7 +89,8 @@ type Editor struct {
 	Quit     bool
 	Headless bool
 	Title    str
-	rawRows  []bool
+	rawRows  []i64
+	rawLang  i64
 	rawFor   i64
 	acc      f64
 	accX     f64
@@ -219,9 +222,27 @@ fn (ed mut Editor) Load(path str) bool {
 		}
 		i += 1
 	}
+	let size = quarry.Size(path) catch _ {
+		0
+	}
+	if size > 20000000 {
+		ed.Say("too large to open: " + path)
+		return false
+	}
 	let text = quarry.ReadFile(path) catch _ {
 		ed.Say("cannot read " + path)
 		return false
+	}
+	// a zero byte in the first few kilobytes means the file is not text
+	mut probe = len(text)
+	if probe > 8192 {
+		probe = 8192
+	}
+	for i in 0..probe {
+		if text[i] == 0 {
+			ed.Say("binary file, not opened: " + path)
+			return false
+		}
 	}
 	let buf = textedit.FromText(text)
 	buf.Path = path
@@ -295,6 +316,12 @@ fn (ed mut Editor) save(asNew bool) bool {
 	ed.Buf.Path = path
 	ed.Buf.Dirty = false
 	ed.Saves += 1
+	ed.stash()
+	if ed.Active >= 0 {
+		ed.Tabs[ed.Active].Mtime = quarry.ModTime(path) catch _ {
+			0
+		}
+	}
 	ed.Say("saved " + path)
 	return true
 }
@@ -891,4 +918,85 @@ fn (ed Editor) insidePair() bool {
 	let prev = charAt(line, b.Col - 1)
 	let next = charAt(line, b.Col)
 	return len(prev) > 0 && closerOf(prev) == next && len(next) > 0
+}
+
+// Empty reports whether the active tab is the untouched empty one a new editor starts with.
+fn (ed Editor) Empty() bool {
+	return len(ed.Tabs) == 1 && len(ed.Buf.Path) == 0 && !ed.Buf.Dirty && len(ed.Buf.Lines) == 1 && len(ed.Buf.Lines[0]) == 0
+}
+
+// ReloadClean reads again the files of the open tabs that have no unsaved changes (after something else changed them on disk),
+// keeping the caret where it was as far as the new text allows.
+fn (ed mut Editor) ReloadClean() {
+	ed.stash()
+	for i in 0..len(ed.Tabs) {
+		let t = ed.Tabs[i]
+		if len(t.Buf.Path) == 0 || t.Buf.Dirty {
+			continue
+		}
+		let text = quarry.ReadFile(t.Buf.Path) catch _ {
+			continue
+		}
+		if text == t.Buf.Text() {
+			continue
+		}
+		let row = t.Buf.Row
+		let col = t.Buf.Col
+		t.Buf.SetText(text)
+		t.Buf.Dirty = false
+		t.Buf.MoveTo(row, col, false)
+		if i == ed.Active {
+			ed.Buf = t.Buf
+		}
+	}
+	ed.rawFor = -1
+	ed.Redraw = true
+}
+
+// CheckDisk looks at the files of the open tabs for changes made by something else: a tab without unsaved changes is read
+// again, one with them gets a message. It reports whether anything changed.
+fn (ed mut Editor) CheckDisk() bool {
+	ed.stash()
+	mut changed = false
+	for i in 0..len(ed.Tabs) {
+		let t = ed.Tabs[i]
+		if len(t.Buf.Path) == 0 {
+			continue
+		}
+		let now = quarry.ModTime(t.Buf.Path) catch _ {
+			continue
+		}
+		if t.Mtime == 0 {
+			t.Mtime = now
+			continue
+		}
+		if now == t.Mtime {
+			continue
+		}
+		t.Mtime = now
+		if t.Buf.Dirty {
+			ed.Say(nameOf(t.Buf) + " changed on disk; saving overwrites it")
+			changed = true
+			continue
+		}
+		let text = quarry.ReadFile(t.Buf.Path) catch _ {
+			continue
+		}
+		if text != t.Buf.Text() {
+			let row = t.Buf.Row
+			let col = t.Buf.Col
+			t.Buf.SetText(text)
+			t.Buf.Dirty = false
+			t.Buf.MoveTo(row, col, false)
+			if i == ed.Active {
+				ed.Buf = t.Buf
+			}
+			changed = true
+		}
+	}
+	if changed {
+		ed.rawFor = -1
+		ed.Redraw = true
+	}
+	return changed
 }

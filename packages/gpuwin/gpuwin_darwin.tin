@@ -15,6 +15,8 @@ import "metal"
 const KindEvent = 1
 const KindCommand = 2
 const KindQuit = 3
+// KindDrop: files were dropped on the window; the payload is an NSArray of their paths (kept until Release).
+const KindDrop = 4
 
 mut queue = []i64{}
 mut head i64
@@ -48,6 +50,25 @@ fn Release(e i64) {
 fn viewEvent(self i64, cmd i64, e i64) {
 	appkit.Send(e, "retain")
 	push(KindEvent, e)
+}
+
+// draggingEntered: files dragged over the window are welcome (NSDragOperationCopy)
+@callback
+fn viewDragEntered(self i64, cmd i64, sender i64) i64 {
+	return 1
+}
+
+// performDragOperation: write down the paths of the files dropped
+@callback
+fn viewDrop(self i64, cmd i64, sender i64) i64 {
+	let pb = appkit.Send(sender, "draggingPasteboard")
+	let paths = appkit.Send1(pb, "propertyListForType:", appkit.NewString("NSFilenamesPboardType"))
+	if paths == 0 {
+		return 0
+	}
+	appkit.Send(paths, "retain")
+	push(KindDrop, paths)
+	return 1
 }
 
 @callback
@@ -129,6 +150,8 @@ fn Open(title str, w f64, h f64) (Window, metal.Gpu) {
 		appkit.AddMethod(view, "acceptsFirstResponder", viewYes, "B@:")
 		appkit.AddMethod(view, "wantsUpdateLayer", viewYes, "B@:")
 		appkit.AddMethod(view, "makeBackingLayer", viewLayer, "@@:")
+		appkit.AddMethod(view, "draggingEntered:", viewDragEntered, "Q@:@")
+		appkit.AddMethod(view, "performDragOperation:", viewDrop, "B@:@")
 		appkit.RegisterClass(view)
 		let delegate = appkit.NewClass("NSObject", "TinDelegate")
 		appkit.AddMethod(delegate, "windowShouldClose:", windowShouldClose, "B@:@")
@@ -140,6 +163,7 @@ fn Open(title str, w f64, h f64) (Window, metal.Gpu) {
 	let frame = appkit.SendD4(appkit.Send(appkit.Class("TinView"), "alloc"), "initWithFrame:", 0.0, 0.0, w, h)
 	win.View = frame
 	appkit.Send1(win.View, "setWantsLayer:", 1)
+	appkit.Send1(win.View, "registerForDraggedTypes:", appkit.Send1(appkit.Class("NSArray"), "arrayWithObject:", appkit.NewString("NSFilenamesPboardType")))
 	appkit.Send1(win.Win.Win, "setContentView:", win.View)
 	win.Layer = appkit.Send(win.View, "layer")
 	// the appkit helpers (ContentSize, Scale) read the window's view and layer
@@ -198,4 +222,14 @@ fn PopUp(win Window, e i64, titles []str, tags []i64) {
 		appkit.Send1(menu, "addItem:", item)
 	}
 	appkit.Send3(appkit.Class("NSMenu"), "popUpContextMenu:withEvent:forView:", menu, e, win.View)
+}
+
+// DropPaths are the paths in an NSArray a KindDrop entry carried.
+fn DropPaths(list i64) []str {
+	mut out = []str{}
+	let n = appkit.Send(list, "count")
+	for i in 0..n {
+		out = append(out, appkit.StringOf(appkit.Send1(list, "objectAtIndex:", i)))
+	}
+	return out
 }

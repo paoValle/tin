@@ -194,3 +194,38 @@ fn wholeWordAt(line str, col i64, n i64) bool {
 	}
 	return true
 }
+
+// ReplaceMatches writes repl over each of the matches in its file (the matches a Search found, in file order) and returns how
+// many it replaced. A file that changed since the search is skipped.
+fn ReplaceMatches(matches []Match, repl str) !i64 {
+	mut done = 0
+	mut i = 0
+	for i < len(matches) {
+		let path = matches[i].Path
+		mut j = i
+		for j < len(matches) && matches[j].Path == path {
+			j += 1
+		}
+		let text = try quarry.ReadFile(path)
+		let lines = twine.Split(text, "\n")
+		let orig = twine.Split(text, "\n")
+		mut changed = false
+		// within a line the later matches go first, so the earlier columns stay right
+		mut k = j - 1
+		for k >= i {
+			let m = matches[k]
+			if m.Line < len(lines) && orig[m.Line] == m.Text && m.Col + m.Len <= len(lines[m.Line]) {
+				let now = lines[m.Line]
+				lines[m.Line] = now[0:m.Col] + repl + now[m.Col + m.Len:len(now)]
+				changed = true
+				done += 1
+			}
+			k -= 1
+		}
+		if changed {
+			try quarry.WriteFile(path, twine.Join(lines, "\n"))
+		}
+		i = j
+	}
+	return done
+}

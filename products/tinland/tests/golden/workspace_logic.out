@@ -18,6 +18,9 @@ active main.tin
 closed split 1 0
 selected util.tin
 opened by Return util.tin 0
+replaced 3 true No results
+reloaded notes.md rewritten elsewhere
+binary true true
 marks [2 9]
 git [ M main.tin]
 restored true true notes.md 4

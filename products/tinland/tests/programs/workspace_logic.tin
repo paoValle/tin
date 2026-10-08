@@ -113,6 +113,29 @@ fn main2() {}
 	say.Line("selected", ws.Proj.Entries[ws.Proj.Selected].Name)
 	ws.Key(36, 0, "")
 	say.Line("opened by Return", ws.Ed.Name(), ws.Focus)
+	// replace in the project
+	put(root + "/r.txt", "foo bar foo\nfoo\n")
+	ws.Search.Regex = false
+	ws.Search.Query = "foo"
+	ws.RunSearch()
+	ws.Search.Replace = "baz"
+	ws.ReplaceAll()
+	let replaced = quarry.ReadFile(root + "/r.txt") catch _ {
+		"unreadable"
+	}
+	say.Line("replaced", ws.Search.Replaced, replaced == "baz bar baz\nbaz\n", ws.Search.Summary())
+	// a file changed by another program is read again
+	ws.OpenFile(root + "/notes.md")
+	ws.CheckDisk()
+	put(root + "/notes.md", "rewritten elsewhere\n")
+	appkit.RunCapture("touch -t 203001010000 '" + root + "/notes.md'")
+	ws.CheckDisk()
+	say.Line("reloaded", ws.Ed.Name(), ws.Ed.Buf.Lines[0])
+	// a binary file is not opened
+	put(root + "/blob.bin", "ab\x00cd")
+	let before = ws.Ed.Name()
+	ws.OpenFile(root + "/blob.bin")
+	say.Line("binary", ws.Ed.Name() == before, twine.HasPrefix(ws.Ed.Message, "binary file"))
 	// git: the marks in the gutter and the panel's list of changed files
 	appkit.RunCapture("git -C '" + root + "' init -q && git -C '" + root + "' add -A && git -C '" + root + "' -c user.email=t@t -c user.name=t commit -qm first")
 	put(root + "/main.tin", `package changed

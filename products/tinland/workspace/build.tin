@@ -96,7 +96,9 @@ fn (ws Workspace) projectPanel(t mut ui.Tree) {
 	t.Close()
 	t.Open(ui.VBox().Flex(1.0).Scrolls(), idLeftScroll)
 	if !ws.HasProj {
-		t.Text("Open a folder with File > Open Folder", render.FontUI, th.Faint, ui.Box().Pad(12.0))
+		t.Open(ui.VBox().Pad(12.0), 0)
+		t.Text("Open a folder with File > Open Folder", render.FontUI, th.Faint, ui.Box())
+		t.Close()
 	} else {
 		let rows = len(ws.Proj.Rows)
 		let viewH = ws.H - titleH - statusH - 34.0
@@ -300,6 +302,25 @@ fn (ws Workspace) searchPanel(t mut ui.Tree) {
 	ws.switchButton(mut t, "Aa", ws.Search.Case, idSearchCase)
 	ws.switchButton(mut t, "ab", ws.Search.Word, idSearchWord)
 	ws.switchButton(mut t, ".*", ws.Search.Regex, idSearchRegex)
+	t.Close()
+	mut edge2 = th.Border
+	if ws.Focus == FocusReplace {
+		edge2 = th.Accent
+	}
+	t.Open(ui.HBox().High(30.0).Items(ui.Center).Spacing(4.0).PadXY(8.0, 0.0).Fill(th.Editor).Round(4.0).Outline(1.0, edge2), idSearchReplace)
+	t.Open(ui.HBox().Flex(1.0).Items(ui.Center).Clipped(), 0)
+	if len(ws.Search.Replace) == 0 {
+		t.Text("Replace", render.FontUI, th.Faint, ui.Box())
+	} else {
+		t.Text(ws.Search.Replace, render.FontUI, th.Text, ui.Box())
+	}
+	if ws.Focus == FocusReplace && ws.Ed.Blink {
+		t.Leaf(ui.Box().Size(1.5, 16.0).Fill(th.Cursor), 0)
+	}
+	t.Close()
+	t.Open(ui.HBox().High(20.0).Items(ui.Center).PadXY(6.0, 0.0).Round(4.0).Fill(th.Selected).Hover(th.Border), idReplaceAll)
+	t.Text("All", render.FontSmall, th.Text, ui.Box())
+	t.Close()
 	t.Close()
 	t.Text(ws.Search.Summary(), render.FontSmall, th.Muted, ui.Box().PadXY(2.0, 2.0))
 	t.Close()

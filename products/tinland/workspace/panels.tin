@@ -37,7 +37,9 @@ fn (ws Workspace) outlinePanel(t mut ui.Tree) {
 	let rows = ws.outlineRows()
 	ws.panelFrame(mut t, "Outline", ws.Ed.Name())
 	if len(rows) == 0 {
-		t.Text("No symbols", render.FontUI, th.Faint, ui.Box().Pad(12.0))
+		t.Open(ui.VBox().Pad(12.0), 0)
+		t.Text("No symbols", render.FontUI, th.Faint, ui.Box())
+		t.Close()
 	}
 	for r in rows {
 		let s = ws.Ed.Syms[r]
@@ -54,7 +56,9 @@ fn (ws Workspace) diagnosticsPanel(t mut ui.Tree) {
 	let th = ws.Th
 	ws.panelFrame(mut t, "Problems", ws.Ed.DiagSummary())
 	if len(ws.Ed.Diags) == 0 {
-		t.Text("No problems", render.FontUI, th.Faint, ui.Box().Pad(12.0))
+		t.Open(ui.VBox().Pad(12.0), 0)
+		t.Text("No problems", render.FontUI, th.Faint, ui.Box())
+		t.Close()
 	}
 	for i in 0..len(ws.Ed.Diags) {
 		let d = ws.Ed.Diags[i]
@@ -71,9 +75,13 @@ fn (ws Workspace) gitPanel(t mut ui.Tree) {
 	let th = ws.Th
 	ws.panelFrame(mut t, "Git", ws.Proj.Branch)
 	if !ws.HasProj {
-		t.Text("Open a folder", render.FontUI, th.Faint, ui.Box().Pad(12.0))
+		t.Open(ui.VBox().Pad(12.0), 0)
+		t.Text("Open a folder", render.FontUI, th.Faint, ui.Box())
+		t.Close()
 	} else if len(ws.Git) == 0 {
-		t.Text("No changes", render.FontUI, th.Faint, ui.Box().Pad(12.0))
+		t.Open(ui.VBox().Pad(12.0), 0)
+		t.Text("No changes", render.FontUI, th.Faint, ui.Box())
+		t.Close()
 	}
 	for i in 0..len(ws.Git) {
 		let line = ws.Git[i]

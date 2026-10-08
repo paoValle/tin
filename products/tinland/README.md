@@ -24,7 +24,7 @@ For an application with its own Dock icon and name in the menu bar, `tools/dev/t
 | Cmd+B, Cmd+J, Ctrl+` | show or hide the project panel, the output panel, the terminal (a shell in the project folder: colors, history, arrows, Cmd+V pastes) |
 | Cmd+\ , Cmd+Shift+\ | split the editor to the right, close the split (each pane has its own tabs) |
 | Cmd+= , Cmd+- , Cmd+0 | zoom in, out, reset the code font |
-| Cmd+Shift+F | search in the project (Return runs it; Aa, ab and .* switch case, whole word and regular expression) |
+| Cmd+Shift+F | search in the project (Return runs it; Aa, ab and .* switch case, whole word and regular expression; Tab goes to the replace box, Return there replaces every match in the project) |
 | Cmd+Alt+N, Cmd+Alt+Shift+N | new file, new folder in the selected folder (the File menu also has Rename and Delete) |
 | Cmd+S (Shift: Save As), Cmd+N, Cmd+W, Cmd+Q | save, new tab, close tab, quit (each asks about unsaved changes) |
 | Cmd+1 to 9, Ctrl+Tab | switch tabs |
@@ -45,7 +45,7 @@ For an application with its own Dock icon and name in the menu bar, `tools/dev/t
 Every key command is also in the menu bar. Errors are underlined while you type: after a pause the compiler checks the text (`tinc -check -json` with the
 unsaved buffer as an overlay), the line gets a red mark and its message shows in the status line.
 
-Double click selects a word, triple click a line; the wheel scrolls what is under the mouse; the divider beside the project panel drags; the title bar moves the window (a double click zooms it); a right click in the project panel opens a menu (new file, new folder, rename, delete). The folder and the open files come back at the next start when no path is given. Lines git sees as added, changed or removed have a mark in the gutter.
+Double click selects a word, triple click a line; the wheel scrolls what is under the mouse; the divider beside the project panel drags; the title bar moves the window (a double click zooms it); a right click in the project panel opens a menu (new file, new folder, rename, delete). The folder and the open files come back at the next start when no path is given. Files and folders dropped on the window open; a file changed by another program is read again (or flagged when it has unsaved changes); binary files are not opened. Syntax colors for Tin, Go, Rust, JavaScript and TypeScript, Python, C and C++, Java, Swift, shell, JSON, YAML and TOML, and Markdown, chosen by the file name. Lines git sees as added, changed or removed have a mark in the gutter.
 
 ## Without a window
 

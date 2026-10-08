@@ -106,6 +106,10 @@ fn (ws mut Workspace) key(code i64, flags i64, chars str) {
 		ws.termKey(code, flags, chars)
 		return
 	}
+	if ws.Focus == FocusReplace && (flags & appkit.ModCmd) == 0 {
+		ws.replaceKey(code, flags, chars)
+		return
+	}
 	if ws.Focus == FocusSearch && (flags & appkit.ModCmd) == 0 {
 		ws.searchKey(code, flags, chars)
 		return
@@ -161,6 +165,10 @@ fn (ws mut Workspace) press(x f64, y f64, clicks i64, flags i64) {
 	ws.Ed.Mode = 0
 	if id == idSearchInput {
 		ws.Focus = FocusSearch
+	} else if id == idSearchReplace {
+		ws.Focus = FocusReplace
+	} else if id == idReplaceAll {
+		ws.ReplaceAll()
 	} else if id == idSearchCase {
 		ws.Search.Case = !ws.Search.Case
 		ws.Search.Done = false
@@ -325,6 +333,15 @@ fn (ws mut Workspace) Perform(cmd i64) {
 			ws.LeftOpen = true
 			ws.Panel = PanelProject
 		}
+	} else if cmd == editor.CmdPaste && ws.Picker.Open {
+		ws.Picker.Query = pasteLine(ws.Picker.Query, appkit.ClipboardText())
+		ws.Picker.Sel = 0
+		ws.refilter()
+	} else if cmd == editor.CmdPaste && ws.Focus == FocusSearch {
+		ws.Search.Query = pasteLine(ws.Search.Query, appkit.ClipboardText())
+		ws.Search.Done = false
+	} else if cmd == editor.CmdPaste && ws.Focus == FocusReplace {
+		ws.Search.Replace = pasteLine(ws.Search.Replace, appkit.ClipboardText())
 	} else if cmd == editor.CmdPaste && ws.Focus == FocusTerminal {
 		ws.Pty.Type(appkit.ClipboardText())
 	} else if cmd == editor.CmdOpen {

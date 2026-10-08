@@ -32,6 +32,8 @@ const idSearchWord = 22
 const idSearchRegex = 23
 const idPickerInput = 24
 const idSearchScroll = 25
+const idSearchReplace = 28
+const idReplaceAll = 29
 const idPanelScroll = 26
 const idRow = 10000
 const idOutputLine = 30000
@@ -116,6 +118,7 @@ const FocusSearch = 1
 const FocusPicker = 2
 const FocusTerminal = 3
 const FocusProject = 4
+const FocusReplace = 5
 
 // New makes a workspace around an editor.
 fn New(th theme.Theme, ed editor.Editor) Workspace {
@@ -223,4 +226,17 @@ fn (ws mut Workspace) RequestQuit() bool {
 	}
 	ws.Quit = true
 	return true
+}
+
+// CheckDisk looks for changes made to the open files by other programs, in every pane.
+fn (ws mut Workspace) CheckDisk() {
+	for i in 0..len(ws.Panes) {
+		if ws.Panes[i].CheckDisk() {
+			ws.Dirty = true
+		}
+	}
+	if ws.HasProj && ws.Bottom != BottomTerminal && ws.Panel == PanelGit && ws.LeftOpen {
+		ws.RefreshGit()
+		ws.Dirty = true
+	}
 }

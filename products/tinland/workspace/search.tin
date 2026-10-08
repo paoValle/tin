@@ -15,6 +15,9 @@ type Search struct {
 	Done bool
 	Error str
 	Files i64
+	// Replace is the text the replace box holds; Replaced says how many matches the last Replace All changed.
+	Replace str
+	Replaced i64
 }
 
 // RunSearch searches the project for the query.
@@ -46,6 +49,8 @@ fn (ws mut Workspace) RunSearch() {
 fn (ws mut Workspace) searchKey(code i64, flags i64, chars str) {
 	if code == keyEscape {
 		ws.Focus = FocusEditor
+	} else if code == keyTab {
+		ws.Focus = FocusReplace
 	} else if code == keyReturn {
 		ws.RunSearch()
 	} else {
@@ -77,7 +82,7 @@ fn (s Search) Summary() str {
 		return s.Error
 	}
 	if !s.Done {
-		return "Press Return to search"
+		return "Press Return to search, Tab for the replacement"
 	}
 	if len(s.Matches) == 0 {
 		return "No results"
@@ -92,4 +97,35 @@ fn (s Search) Summary() str {
 // shortName is the path below the project folder.
 fn (ws Workspace) relPath(path str) str {
 	return twine.TrimPrefix(path, ws.Proj.Root + "/")
+}
+
+// replaceKey handles a key while the replace box has the keyboard.
+fn (ws mut Workspace) replaceKey(code i64, flags i64, chars str) {
+	if code == keyEscape {
+		ws.Focus = FocusEditor
+	} else if code == keyTab {
+		ws.Focus = FocusSearch
+	} else if code == keyReturn {
+		ws.ReplaceAll()
+	} else {
+		ws.Search.Replace = editLine(ws.Search.Replace, code, flags, chars)
+	}
+	ws.Dirty = true
+}
+
+// ReplaceAll writes the replace text over every match of the search, then reloads the open files that were not edited.
+fn (ws mut Workspace) ReplaceAll() {
+	if len(ws.Search.Matches) == 0 {
+		return
+	}
+	let n = project.ReplaceMatches(ws.Search.Matches, ws.Search.Replace) catch _ {
+		ws.Ed.Say("replace failed")
+		return
+	}
+	ws.Search.Replaced = n
+	for i in 0..len(ws.Panes) {
+		ws.Panes[i].ReloadClean()
+	}
+	ws.RunSearch()
+	ws.Ed.Say("replaced " + mint.Itoa(n) + " matches")
 }

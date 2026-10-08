@@ -54,6 +54,14 @@ fn Run(paths []str) bool {
 			idle = 0
 		}
 		if !got && (wait == 0.5 || idle % 10 == 0) {
+			// about once a second, look for files changed by something else
+			mut every = 20
+			if wait == 0.5 {
+				every = 2
+			}
+			if idle % every == 0 {
+				ws.CheckDisk()
+			}
 			ws.Ed.Blink = !ws.Ed.Blink
 			ws.Ed.Redraw = true
 		}
@@ -102,6 +110,15 @@ fn take(ws mut workspace.Workspace, win gpuwin.Window) {
 			gpuwin.Release(payload)
 		} else if kind == gpuwin.KindCommand {
 			ws.Perform(payload)
+		} else if kind == gpuwin.KindDrop {
+			for path in gpuwin.DropPaths(payload) {
+				if quarry.IsDir(path) {
+					ws.OpenFolder(path)
+				} else {
+					ws.OpenFile(path)
+				}
+			}
+			gpuwin.Release(payload)
 		} else if kind == gpuwin.KindQuit {
 			ws.RequestQuit()
 		}

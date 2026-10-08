@@ -1,0 +1,35 @@
+package main
+
+import "say"
+import "textedit"
+
+fn show(lang i64, line str, state i64) i64 {
+	let (spans, next) = textedit.HighlightLang(lang, line, state)
+	mut out = ""
+	for s in spans {
+		out = out + " " + say.Str(s.Kind) + ":" + line[s.Start:s.End]
+	}
+	say.Line(out)
+	return next
+}
+
+// Highlighting by language: the language from the file name, then the classes of a line in each family.
+fn main() {
+	say.Line(textedit.LanguageOf("a/b/main.go"), textedit.LanguageOf("x.tsx"), textedit.LanguageOf("Makefile"), textedit.LanguageOf("notes.md"), textedit.LanguageOf("data.json"), textedit.LanguageOf("README"), textedit.LanguageOf(""))
+	show(textedit.LangGo, "func main() {{ // run", 0)
+	show(textedit.LangRust, "let x: u32 = 0x2a; /* c */ Some(\"s\")", 0)
+	say.Line("block open:", show(textedit.LangC, "int x; /* starts", 0))
+	say.Line("block closes:", show(textedit.LangC, "still */ return 1;", 1))
+	show(textedit.LangPython, "def f(x): # note", 0)
+	show(textedit.LangShell, "echo \"$HOME\" # c", 0)
+	show(textedit.LangJSON, "  \"key\": [1, 2.5, true, null],", 0)
+	show(textedit.LangYAML, "name: tin # comment", 0)
+	show(textedit.LangMarkdown, "# Title", 0)
+	say.Line("fence:", show(textedit.LangMarkdown, "```tin", 0))
+	show(textedit.LangMarkdown, "code here", 1)
+	say.Line("fence closed:", show(textedit.LangMarkdown, "```", 1))
+	show(textedit.LangMarkdown, "use `x` here", 0)
+	say.Line("js template:", show(textedit.LangJS, "const s = `a b", 0))
+	show(textedit.LangPlain, "nothing to see", 0)
+	show(textedit.LangTin, "let x = 1 // c", 0)
+}

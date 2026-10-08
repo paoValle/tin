@@ -60,6 +60,9 @@ fn (ws mut Workspace) Paint(scene mut metal.Scene) {
 			let c = cmds[i]
 			if c.Arg == idEditor || c.Arg == idEditor2 {
 				ws.Panes[paneOf(c.Arg)].Paint(th, c.X, c.Y, c.W, c.H, mut scene)
+				if !ws.HasProj && c.Arg == idEditor && ws.Panes[0].Empty() {
+					ws.welcome(c.X, c.Y, c.W, c.H, mut scene)
+				}
 			} else {
 				ws.paintTerminal(c.X, c.Y, c.W, c.H, mut scene)
 			}
@@ -75,4 +78,22 @@ fn (ws mut Workspace) Paint(scene mut metal.Scene) {
 }
 
 fn noCustom(id i64, x f64, y f64, w f64, h f64, scene mut metal.Scene) {
+}
+
+// welcome tells what to do first, in the middle of an empty editor with no folder open.
+fn (ws Workspace) welcome(x f64, y f64, w f64, h f64, scene mut metal.Scene) {
+	let th = ws.Th
+	let labels = []str{"Open Folder", "Go to File", "Command Palette", "Terminal"}
+	let keys = []str{"Cmd+Shift+O", "Cmd+P", "Cmd+Shift+P", "Ctrl+`"}
+	let lh = ws.Ed.LineH
+	mut top = y + (h - lh * f64(len(labels) + 2)) / 2.0
+	let title = "Tinland"
+	render.Pen(mut scene, render.FontUIBold, x + (w - render.Width(render.FontUIBold, title)) / 2.0, top, title, th.Text)
+	top += lh * 2.0
+	let left = x + (w - 32.0 * render.CodeCell()) / 2.0
+	for i in 0..len(labels) {
+		render.Pen(mut scene, render.FontCode, left, top, labels[i], th.Muted)
+		render.Pen(mut scene, render.FontCode, left + 20.0 * render.CodeCell(), top, keys[i], th.Faint)
+		top += lh
+	}
 }

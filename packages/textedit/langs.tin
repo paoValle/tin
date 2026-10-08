@@ -1,0 +1,321 @@
+package textedit
+
+import "twine"
+
+// Highlighting for the languages besides Tin that a project holds: the same classes (keyword, string, number, comment, constant,
+// type, function) from the usual lexical rules of each family: C like (Go, Rust, JavaScript and TypeScript, C and C++, Java,
+// Swift), Python, shell, JSON, YAML and TOML, and Markdown. It is a lexer for one line at a time, with a state that carries
+// what runs over lines (a block comment, a multi-line string, a code fence).
+const LangTin = 0
+const LangGo = 1
+const LangRust = 2
+const LangJS = 3
+const LangPython = 4
+const LangC = 5
+const LangJava = 6
+const LangSwift = 7
+const LangShell = 8
+const LangJSON = 9
+const LangYAML = 10
+const LangMarkdown = 11
+const LangPlain = 12
+
+// What a line starts inside, for HighlightLang.
+const StateNone = 0
+const StateBlock = 1
+const StateRaw = 2
+
+// LanguageOf is the language of a file by its name.
+fn LanguageOf(path str) i64 {
+	let base = lastElement(path)
+	let lower = lowerASCII(base)
+	let dot = twine.LastIndexByte(lower, '.')
+	mut ext = ""
+	if dot >= 0 {
+		ext = lower[dot + 1:]
+	}
+	if ext == "tin" {
+		return LangTin
+	}
+	if ext == "go" {
+		return LangGo
+	}
+	if ext == "rs" {
+		return LangRust
+	}
+	if ext == "js" || ext == "jsx" || ext == "ts" || ext == "tsx" || ext == "mjs" || ext == "cjs" {
+		return LangJS
+	}
+	if ext == "py" {
+		return LangPython
+	}
+	if ext == "c" || ext == "h" || ext == "cc" || ext == "cpp" || ext == "cxx" || ext == "hpp" || ext == "m" || ext == "mm" {
+		return LangC
+	}
+	if ext == "java" || ext == "kt" || ext == "scala" || ext == "cs" {
+		return LangJava
+	}
+	if ext == "swift" {
+		return LangSwift
+	}
+	if ext == "sh" || ext == "bash" || ext == "zsh" || lower == "makefile" || lower == "dockerfile" || lower == ".gitignore" || lower == ".zshrc" || lower == ".bashrc" {
+		return LangShell
+	}
+	if ext == "json" {
+		return LangJSON
+	}
+	if ext == "yaml" || ext == "yml" || ext == "toml" || ext == "ini" || ext == "cfg" {
+		return LangYAML
+	}
+	if ext == "md" || ext == "markdown" {
+		return LangMarkdown
+	}
+	if len(path) == 0 {
+		return LangTin
+	}
+	return LangPlain
+}
+
+fn lastElement(path str) str {
+	let i = twine.LastIndexByte(path, '/')
+	if i < 0 {
+		return path
+	}
+	return path[i + 1:]
+}
+
+fn lowerASCII(s str) str {
+	mut b = twine.NewBuilder(len(s))
+	for i in 0..len(s) {
+		let c = s[i]
+		if c >= 'A' && c <= 'Z' {
+			b.Byte(c + 32)
+		} else {
+			b.Byte(c)
+		}
+	}
+	return b.String()
+}
+
+// keywords is the reserved words of a language, separated by spaces.
+fn keywords(lang i64) str {
+	if lang == LangGo {
+		return " break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var "
+	}
+	if lang == LangRust {
+		return " as async await break const continue crate dyn else enum extern fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait type unsafe use where while "
+	}
+	if lang == LangJS {
+		return " async await break case catch class const continue debugger default delete do else enum export extends finally for from function if implements import in instanceof interface let new of package private protected public readonly return static super switch this throw try type typeof var void while with yield "
+	}
+	if lang == LangPython {
+		return " and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield self "
+	}
+	if lang == LangC {
+		return " auto break case char class const continue default do double else enum extern float for goto if inline int long namespace new operator private protected public register return short signed sizeof static struct switch template this typedef typename union unsigned using virtual void volatile while "
+	}
+	if lang == LangJava {
+		return " abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for fun if implements import instanceof int interface long native new object package private protected public return short static super switch synchronized this throw throws try val var void volatile when while "
+	}
+	if lang == LangSwift {
+		return " as break case class continue default defer do else enum extension fallthrough for func guard if import in init let nil private protocol public repeat return self static struct subscript super switch throw try typealias var where while "
+	}
+	if lang == LangShell {
+		return " if then else elif fi for while do done case esac in function return export local readonly echo cd exit set unset source "
+	}
+	return ""
+}
+
+fn isConstantWord(w str) bool {
+	return w == "true" || w == "false" || w == "null" || w == "nil" || w == "None" || w == "True" || w == "False" || w == "undefined" || w == "NULL" || w == "nullptr"
+}
+
+// HighlightLang classifies one line of a file of the language. state says what the line starts inside (StateNone, StateBlock
+// for a /* */ comment or a Markdown code fence, StateRaw for a multi-line string); the second result is the state the next line
+// starts in.
+fn HighlightLang(lang i64, line str, state i64) ([]Span, i64) {
+	if lang == LangTin {
+		let (spans, raw) = Highlight(line, state == StateRaw)
+		if raw {
+			return spans, StateRaw
+		}
+		return spans, StateNone
+	}
+	if lang == LangPlain {
+		return []Span{}, StateNone
+	}
+	if lang == LangMarkdown {
+		return highlightMarkdown(line, state)
+	}
+	return highlightGeneric(lang, line, state)
+}
+
+fn highlightMarkdown(line str, state i64) ([]Span, i64) {
+	let trimmed = twine.TrimSpace(line)
+	if twine.HasPrefix(trimmed, "```") {
+		if state == StateBlock {
+			return []Span{Span{Start: 0, End: len(line), Kind: KindComment}}, StateNone
+		}
+		return []Span{Span{Start: 0, End: len(line), Kind: KindComment}}, StateBlock
+	}
+	if state == StateBlock {
+		return []Span{Span{Start: 0, End: len(line), Kind: KindString}}, StateBlock
+	}
+	mut spans = []Span{}
+	if twine.HasPrefix(trimmed, "#") {
+		spans = append(spans, Span{Start: 0, End: len(line), Kind: KindKeyword})
+		return spans, StateNone
+	}
+	if twine.HasPrefix(trimmed, ">") {
+		spans = append(spans, Span{Start: 0, End: len(line), Kind: KindComment})
+		return spans, StateNone
+	}
+	// `inline code`
+	mut i = 0
+	for i < len(line) {
+		if line[i] == '`' {
+			let end = twine.IndexByte(line[i + 1:], '`')
+			if end >= 0 {
+				spans = append(spans, Span{Start: i, End: i + end + 2, Kind: KindString})
+				i = i + end + 2
+				continue
+			}
+		}
+		i += 1
+	}
+	return spans, StateNone
+}
+
+fn highlightGeneric(lang i64, line str, state i64) ([]Span, i64) {
+	mut spans = []Span{}
+	let n = len(line)
+	let words = keywords(lang)
+	let slashComments = lang == LangGo || lang == LangRust || lang == LangJS || lang == LangC || lang == LangJava || lang == LangSwift
+	let blockComments = slashComments
+	let hashComments = lang == LangPython || lang == LangShell || lang == LangYAML
+	let backtick = lang == LangJS || lang == LangGo || lang == LangShell
+	mut st = state
+	mut i = 0
+	for i < n {
+		if st == StateBlock {
+			let start = i
+			let end = twine.Index(line[i:], "*/")
+			if end < 0 {
+				i = n
+			} else {
+				i = i + end + 2
+				st = StateNone
+			}
+			spans = append(spans, Span{Start: start, End: i, Kind: KindComment})
+			continue
+		}
+		if st == StateRaw {
+			let start = i
+			for i < n && line[i] != '`' {
+				i += 1
+			}
+			if i < n {
+				i += 1
+				st = StateNone
+			}
+			spans = append(spans, Span{Start: start, End: i, Kind: KindString})
+			continue
+		}
+		let c = line[i]
+		if slashComments && c == '/' && i + 1 < n && line[i + 1] == '/' {
+			spans = append(spans, Span{Start: i, End: n, Kind: KindComment})
+			i = n
+		} else if blockComments && c == '/' && i + 1 < n && line[i + 1] == '*' {
+			st = StateBlock
+			let start = i
+			let end = twine.Index(line[i + 2:], "*/")
+			if end < 0 {
+				i = n
+			} else {
+				i = i + 2 + end + 2
+				st = StateNone
+			}
+			spans = append(spans, Span{Start: start, End: i, Kind: KindComment})
+		} else if hashComments && c == '#' && (i == 0 || line[i - 1] == ' ' || line[i - 1] == '\t' || lang != LangShell) {
+			spans = append(spans, Span{Start: i, End: n, Kind: KindComment})
+			i = n
+		} else if c == '"' || c == '\'' {
+			let start = i
+			i += 1
+			for i < n && line[i] != c {
+				if line[i] == '\\' && i + 1 < n {
+					i += 1
+				}
+				i += 1
+			}
+			if i < n {
+				i += 1
+			}
+			mut kind = KindString
+			// a JSON or YAML key: a string followed by a colon
+			if (lang == LangJSON || lang == LangYAML) && i < n && line[i] == ':' {
+				kind = KindType
+			}
+			spans = append(spans, Span{Start: start, End: i, Kind: kind})
+		} else if c == '`' && backtick {
+			st = StateRaw
+			let start = i
+			i += 1
+			for i < n && line[i] != '`' {
+				i += 1
+			}
+			if i < n {
+				i += 1
+				st = StateNone
+			}
+			spans = append(spans, Span{Start: start, End: i, Kind: KindString})
+		} else if c == '$' && lang == LangShell && i + 1 < n && (isIdentStart(line[i + 1]) || line[i + 1] == '{' || line[i + 1] == '(') {
+			let start = i
+			i += 1
+			if line[i] == '{' || line[i] == '(' {
+				i += 1
+				for i < n && line[i] != '}' && line[i] != ')' {
+					i += 1
+				}
+				if i < n {
+					i += 1
+				}
+			} else {
+				for i < n && isWordByte(line[i]) {
+					i += 1
+				}
+			}
+			spans = append(spans, Span{Start: start, End: i, Kind: KindConstant})
+		} else if isDigit(c) || (c == '.' && i + 1 < n && isDigit(line[i + 1])) {
+			let start = i
+			for i < n && (isWordByte(line[i]) || (line[i] == '.' && i + 1 < n && isDigit(line[i + 1]))) {
+				i += 1
+			}
+			spans = append(spans, Span{Start: start, End: i, Kind: KindNumber})
+		} else if isIdentStart(c) {
+			let start = i
+			for i < n && (isWordByte(line[i]) || (lang == LangYAML && line[i] == '-')) {
+				i += 1
+			}
+			let word = line[start:i]
+			mut kind = KindPlain
+			if isConstantWord(word) {
+				kind = KindConstant
+			} else if len(words) > 0 && twine.Index(words, " " + word + " ") >= 0 {
+				kind = KindKeyword
+			} else if lang == LangYAML && i < n && line[i] == ':' {
+				kind = KindType
+			} else if lang != LangJSON && lang != LangYAML && i < n && line[i] == '(' {
+				kind = KindFunc
+			} else if c >= 'A' && c <= 'Z' && lang != LangYAML {
+				kind = KindType
+			}
+			if kind != KindPlain {
+				spans = append(spans, Span{Start: start, End: i, Kind: kind})
+			}
+		} else {
+			i += 1
+		}
+	}
+	return spans, st
+}

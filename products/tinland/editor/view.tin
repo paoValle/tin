@@ -51,21 +51,22 @@ fn (ed mut Editor) Prepare() {
 	ed.updateRaw()
 }
 
-// updateRaw recomputes, for each line, whether it starts inside a multi-line `raw string`.
+// updateRaw recomputes, for each line, what it starts inside (a block comment, a multi-line string, a code fence): the state the
+// highlighting of the language needs from the line above.
 fn (ed mut Editor) updateRaw() {
-	if ed.rawFor == ed.Buf.Version && len(ed.rawRows) == len(ed.Buf.Lines) {
+	let lang = textedit.LanguageOf(ed.Buf.Path)
+	if ed.rawFor == ed.Buf.Version && len(ed.rawRows) == len(ed.Buf.Lines) && ed.rawLang == lang {
 		return
 	}
-	mut rows = []bool{}
-	mut raw = false
-	mut i = 0
-	for i < len(ed.Buf.Lines) {
-		rows = append(rows, raw)
-		let (spans, next) = textedit.Highlight(ed.Buf.Lines[i], raw)
-		raw = next
-		i += 1
+	mut rows = []i64{}
+	mut state = 0
+	for i in 0..len(ed.Buf.Lines) {
+		rows = append(rows, state)
+		let (spans, next) = textedit.HighlightLang(lang, ed.Buf.Lines[i], state)
+		state = next
 	}
 	ed.rawRows = rows
+	ed.rawLang = lang
 	ed.rawFor = ed.Buf.Version
 }
 
@@ -77,8 +78,8 @@ type cell struct {
 
 // cellsOf expands a line into display cells: tabs become spaces to the next tab stop, a multi-byte character is one cell (two
 // for a wide one), and each cell gets its syntax class.
-fn cellsOf(line str, raw bool) []cell {
-	let (spans, _) = textedit.Highlight(line, raw)
+fn cellsOf(line str, state i64, lang i64) []cell {
+	let (spans, _) = textedit.HighlightLang(lang, line, state)
 	mut kinds = make([]i64, len(line), len(line))
 	for sp in spans {
 		mut j = sp.Start
@@ -161,11 +162,11 @@ fn (ed mut Editor) Paint(th theme.Theme, x f64, y f64, w f64, h f64, scene mut m
 		let row = ed.Scroll + n
 		let line = b.Lines[row]
 		let top = y + ed.rowTop(n)
-		mut raw = false
+		mut state = 0
 		if row < len(ed.rawRows) {
-			raw = ed.rawRows[row]
+			state = ed.rawRows[row]
 		}
-		let cells = cellsOf(line, raw)
+		let cells = cellsOf(line, state, ed.rawLang)
 		if row == b.Row && !b.HasSel {
 			render.Fill(mut scene, x, top, w, lh, th.LineHighlight)
 		}
@@ -366,7 +367,7 @@ fn (ed mut Editor) cpuFrame() {
 	mut n = 0
 	for n <= ed.rows() && ed.Scroll + n < len(ed.Buf.Lines) {
 		let row = ed.Scroll + n
-		cellsOf(ed.Buf.Lines[row], ed.rawRows[row])
+		cellsOf(ed.Buf.Lines[row], ed.rawRows[row], ed.rawLang)
 		n += 1
 	}
 }
