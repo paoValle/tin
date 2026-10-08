@@ -18,6 +18,9 @@ import "../workspace"
 fn Run(paths []str) bool {
 	// the workspace is a local of this function: an arena may use a local but not a mut parameter
 	mut ws = workspace.New(theme.Dark(), editor.New(textedit.New()))
+	if len(paths) == 0 {
+		ws.RestoreSession()
+	}
 	for p in paths {
 		if quarry.IsDir(p) {
 			ws.OpenFolder(p)
@@ -31,13 +34,26 @@ fn Run(paths []str) bool {
 		return false
 	}
 	render.Init(gpu, appkit.Scale(win.Win), ws.CodeSize)
-	ws.Ed.UseFont()
+	ws.UseFont()
 	BuildMenus(win)
+	mut idle = 0
 	for !ws.Quit {
 		let pool = appkit.PoolPush()
-		// wait for the next event: the caret blinks twice a second, so an idle window wakes at that pace and no faster
-		mut got = gpuwin.Pump(win, 0.5)
-		if !got {
+		// wait for the next event: the caret blinks twice a second, so an idle window wakes at that pace; with a shell running it
+		// looks at its output twenty times a second
+		mut wait = 0.5
+		if ws.TermUp {
+			wait = 0.05
+		}
+		mut got = gpuwin.Pump(win, wait)
+		if ws.PollTerminal() {
+			got = true
+		}
+		idle += 1
+		if got {
+			idle = 0
+		}
+		if !got && (wait == 0.5 || idle % 10 == 0) {
 			ws.Ed.Blink = !ws.Ed.Blink
 			ws.Ed.Redraw = true
 		}
@@ -49,7 +65,7 @@ fn Run(paths []str) bool {
 		let scale = appkit.Scale(win.Win)
 		if scale != render.Scale() {
 			render.Init(gpu, scale, ws.CodeSize)
-			ws.Ed.UseFont()
+			ws.UseFont()
 			ws.Dirty = true
 		}
 		let (cw, ch) = appkit.ContentSize(win.Win)
@@ -67,6 +83,8 @@ fn Run(paths []str) bool {
 		}
 		appkit.PoolPop(pool)
 	}
+	ws.SaveSession()
+	ws.StopTerminal()
 	ws.Ed.Cleanup()
 	return true
 }
@@ -85,8 +103,7 @@ fn take(ws mut workspace.Workspace, win gpuwin.Window) {
 		} else if kind == gpuwin.KindCommand {
 			ws.Perform(payload)
 		} else if kind == gpuwin.KindQuit {
-			ws.Ed.Perform(editor.CmdQuit)
-			ws.Quit = ws.Ed.Quit
+			ws.RequestQuit()
 		}
 		let (k, p) = gpuwin.Next()
 		kind = k

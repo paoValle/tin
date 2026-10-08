@@ -5,7 +5,9 @@ import "../../project"
 import "../../theme"
 import "../../workspace"
 import "quarry"
+import "appkit"
 import "say"
+import "twine"
 import "textedit"
 import "trail"
 
@@ -23,6 +25,16 @@ fn typeText(ws mut workspace.Workspace, text str) {
 	for i in 0..len(text) {
 		key(mut ws, -1, text[i:i + 1])
 	}
+}
+
+// screenHas reports whether any row of the terminal screen holds the text.
+fn screenHas(ws workspace.Workspace, text str) bool {
+	for y in 0..ws.Term.Rows {
+		if twine.Contains(ws.Term.Text(y), text) {
+			return true
+		}
+	}
+	return false
 }
 
 // The workspace without a window: the picker, the project search and the file operations.
@@ -82,6 +94,62 @@ fn main2() {}
 	ws.OpenPicker(workspace.PickRename)
 	say.Line("rename starts with", ws.Picker.Query)
 	key(mut ws, 53, "")
+	// split panes
+	ws.OpenFile(root + "/main.tin")
+	ws.Split()
+	say.Line("split", len(ws.Panes), ws.Active, ws.Ed.Name())
+	ws.OpenFile(root + "/notes.md")
+	say.Line("right pane", ws.Panes[1].Name(), "left pane", ws.Panes[0].Name())
+	ws.SetActive(0)
+	say.Line("active", ws.Ed.Name())
+	ws.CloseSplit()
+	say.Line("closed split", len(ws.Panes), ws.Active)
+	// keyboard in the project panel
+	ws.Focus = workspace.FocusProject
+	ws.Proj.Select(0)
+	ws.Key(126, 0, "")
+	ws.Key(125, 0, "")
+	ws.Key(125, 0, "")
+	say.Line("selected", ws.Proj.Entries[ws.Proj.Selected].Name)
+	ws.Key(36, 0, "")
+	say.Line("opened by Return", ws.Ed.Name(), ws.Focus)
+	// git: the marks in the gutter and the panel's list of changed files
+	appkit.RunCapture("git -C '" + root + "' init -q && git -C '" + root + "' add -A && git -C '" + root + "' -c user.email=t@t -c user.name=t commit -qm first")
+	put(root + "/main.tin", `package changed
+fn main() {}
+added
+`)
+	ws.OpenFile(root + "/main.tin")
+	ws.RefreshMarks()
+	say.Line("marks", ws.Ed.Marks)
+	ws.RefreshGit()
+	say.Line("git", ws.Git)
+	// the session: the folder and open files come back in a new workspace
+	quarry.Setenv("HOME", root) catch _ {
+	}
+	ws.OpenFile(root + "/notes.md")
+	ws.SaveSession()
+	mut again = workspace.New(theme.Dark(), editor.New(textedit.New()))
+	say.Line("restored", again.RestoreSession(), again.HasProj, again.Ed.Name(), len(again.Panes[0].Tabs))
+	// the terminal: a shell on a pseudo terminal, its output in the screen
+	quarry.Setenv("SHELL", "/bin/sh") catch _ {
+	}
+	ws.ToggleTerminal()
+	say.Line("shell running", ws.TermUp, ws.Bottom, ws.Focus)
+	appkit.RunCapture("sleep 0.5")
+	ws.PollTerminal()
+	ws.Pty.Type("echo pty-ok-$((20+22))\n")
+	mut found = false
+	for i in 0..60 {
+		if !found {
+			appkit.RunCapture("sleep 0.05")
+			ws.PollTerminal()
+			found = screenHas(ws, "pty-ok-42")
+		}
+	}
+	say.Line("terminal output seen", found)
+	ws.StopTerminal()
+	say.Line("shell stopped", ws.TermUp)
 	quarry.RemoveAll(root) catch _ {
 	}
 }

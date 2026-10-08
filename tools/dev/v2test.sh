@@ -6,4 +6,6 @@ python3 tools/ci/suite.py "$compiler" || exit $?
 # Diagnostic codes: the compiler, toolchain/docs/ERRORS.md and the .err files agree; examples compile as shown.
 python3 tools/ci/diagnostics_check.py "$compiler" || exit $?
 toolchain/tests/darwin.sh "$compiler" || exit $?
+# Tinland: the portable parts (ui layout, project, terminal screen) everywhere, the editor and window on macOS
+sh products/tinland/tests/run.sh "$compiler" || exit $?
 exec toolchain/tests/edition1.sh "$compiler"

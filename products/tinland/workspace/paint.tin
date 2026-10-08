@@ -6,7 +6,13 @@ import "../ui"
 
 // NeedsFrame reports whether anything changed since the last frame (the workspace's own state or the editor's).
 fn (ws Workspace) NeedsFrame() bool {
-	return ws.Dirty || ws.Ed.Redraw
+	mut redraw = false
+	for p in ws.Panes {
+		if p.Redraw {
+			redraw = true
+		}
+	}
+	return ws.Dirty || redraw
 }
 
 // Resize tells the workspace the window's size in points and reports whether it changed.
@@ -22,7 +28,18 @@ fn (ws mut Workspace) Resize(w f64, h f64) bool {
 // Prepare does the part of a frame that stores new memory in the state (the editor's per-line highlighting state); call it before
 // the frame's arena starts.
 fn (ws mut Workspace) Prepare() {
-	ws.Ed.Prepare()
+	// the output of a run opens the dock on its Output tab
+	if ws.Ed.OutputOpen {
+		ws.Ed.OutputOpen = false
+		ws.Bottom = BottomOutput
+	}
+	ws.termFit()
+	if ws.HasProj && (ws.Ed.Buf.Path != ws.Ed.MarksPath || ws.Ed.Saves != ws.Ed.MarksSaves) {
+		ws.RefreshMarks()
+	}
+	for i in 0..len(ws.Panes) {
+		ws.Panes[i].Prepare()
+	}
 }
 
 // Paint lays the window out for its size (ws.W by ws.H points) and draws it into the scene. It records where everything is for
@@ -35,23 +52,25 @@ fn (ws mut Workspace) Paint(scene mut metal.Scene) {
 	t.Layout(ws.W, ws.H, mut ws.Scrolls)
 	t.Record(mut ws.Hits)
 	let cmds = t.Paint()
-	// the editor paints its own area: draw what comes before it, then the text, then what comes after
-	mut at = -1
+	// the editor and the terminal paint their own areas: draw what comes before each, then it, then the rest
+	mut from = 0
 	for i in 0..len(cmds) {
-		if cmds[i].Kind == ui.CmdCustom && cmds[i].Arg == idEditor {
-			at = i
+		if cmds[i].Kind == ui.CmdCustom && (cmds[i].Arg == idEditor || cmds[i].Arg == idEditor2 || cmds[i].Arg == idTerminal) {
+			render.Draw(cmds[from:i], t.Texts, mut scene, noCustom)
+			let c = cmds[i]
+			if c.Arg == idEditor || c.Arg == idEditor2 {
+				ws.Panes[paneOf(c.Arg)].Paint(th, c.X, c.Y, c.W, c.H, mut scene)
+			} else {
+				ws.paintTerminal(c.X, c.Y, c.W, c.H, mut scene)
+			}
+			from = i + 1
 		}
 	}
-	if at < 0 {
-		render.Draw(cmds, t.Texts, mut scene, noCustom)
-	} else {
-		render.Draw(cmds[0:at], t.Texts, mut scene, noCustom)
-		let c = cmds[at]
-		ws.Ed.Paint(th, c.X, c.Y, c.W, c.H, mut scene)
-		render.Draw(cmds[at + 1:len(cmds)], t.Texts, mut scene, noCustom)
-	}
+	render.Draw(cmds[from:len(cmds)], t.Texts, mut scene, noCustom)
 	ws.Dirty = false
-	ws.Ed.Redraw = false
+	for i in 0..len(ws.Panes) {
+		ws.Panes[i].Redraw = false
+	}
 	ws.Frames += 1
 }
 

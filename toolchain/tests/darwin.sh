@@ -21,8 +21,6 @@ for name in display objc number bitmap callbacks metal; do
 	cmp "$tmp/$name.out" "toolchain/tests/darwin/$name.out" || { echo "FAIL darwin $name"; exit 1; }
 	echo "PASS darwin $name"
 done
-# the Tinland editor (products/tinland/tests/run.sh): its scripted run and a snapshot of its pixels
-sh products/tinland/tests/run.sh "$compiler"
 # lldb with the Tin summaries: a program built with -g stops at a breakpoint and shows its str and slice parameters (skipped
 # where lldb cannot launch a process, such as a machine without debugger permission)
 if command -v lldb >/dev/null 2>&1; then

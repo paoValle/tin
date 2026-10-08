@@ -129,38 +129,49 @@ type Scene struct {
 	clip []f64
 }
 
-// add appends one instance: rectangle, atlas rectangle, color (not premultiplied), corner radius, border width.
-fn (q mut Scene) add(x f64, y f64, w f64, h f64, sx f64, sy f64, sw f64, sh f64, r f64, g f64, b f64, a f64, radius f64, border f64) {
-	mut c0 = 0.0
-	mut c1 = 0.0
-	mut c2 = 1000000.0
-	mut c3 = 1000000.0
-	if len(q.clip) >= 4 {
-		let n = len(q.clip)
-		c0 = q.clip[n - 4]
-		c1 = q.clip[n - 3]
-		c2 = q.clip[n - 2]
-		c3 = q.clip[n - 1]
+// A color is one integer, 0xRRGGBBAA (straight alpha, not premultiplied); RGBA packs four components from 0 to 1, and the scene
+// methods below unpack them. (They take few floating point arguments on purpose: a call with more than eight of them passes
+// the rest on the stack, and that was read back wrong.)
+fn RGBA(r f64, g f64, b f64, a f64) i64 {
+	return (i64(r * 255.0 + 0.5) << 24) | (i64(g * 255.0 + 0.5) << 16) | (i64(b * 255.0 + 0.5) << 8) | i64(a * 255.0 + 0.5)
+}
+
+fn chan(color i64, shift i64) f32 {
+	return f32(f64((color >> shift) & 255) / 255.0)
+}
+
+// clipAt is component k (0 to 3) of the clipping rectangle in force (x0, y0, x1, y1).
+fn (q Scene) clipAt(k i64) f32 {
+	let n = len(q.clip)
+	if n >= 4 {
+		return f32(q.clip[n - 4 + k])
 	}
-	q.Data = append(q.Data, f32(x), f32(y), f32(w), f32(h), f32(sx), f32(sy), f32(sw), f32(sh), f32(r * a), f32(g * a), f32(b * a), f32(a), f32(radius), f32(border), f32(0), f32(0), f32(c0), f32(c1), f32(c2), f32(c3))
+	if k >= 2 {
+		return f32(1000000.0)
+	}
+	return f32(0.0)
+}
+
+// Rect adds a solid rectangle (pixels from the top left) of the color with corners rounded by radius pixels (0 for square ones).
+fn (q mut Scene) Rect(x f64, y f64, w f64, h f64, color i64, radius f64) {
+	let a = chan(color, 0)
+	q.Data = append(q.Data, f32(x), f32(y), f32(w), f32(h), f32(0.5), f32(0.5), f32(0), f32(0), chan(color, 24) * a, chan(color, 16) * a, chan(color, 8) * a, a, f32(radius), f32(0), f32(0), f32(0), q.clipAt(0), q.clipAt(1), q.clipAt(2), q.clipAt(3))
 	q.N += 1
 }
 
-// Rect adds a solid rectangle (pixels from the top left) of the color (components 0 to 1, not premultiplied) with
-// corners rounded by radius pixels (0 for square ones).
-fn (q mut Scene) Rect(x f64, y f64, w f64, h f64, r f64, g f64, b f64, a f64, radius f64) {
-	q.add(x, y, w, h, 0.5, 0.5, 0.0, 0.0, r, g, b, a, radius, 0.0)
-}
-
 // Outline adds the edge of a rounded rectangle, border pixels wide, inside the rectangle.
-fn (q mut Scene) Outline(x f64, y f64, w f64, h f64, r f64, g f64, b f64, a f64, radius f64, border f64) {
-	q.add(x, y, w, h, 0.5, 0.5, 0.0, 0.0, r, g, b, a, radius, border)
+fn (q mut Scene) Outline(x f64, y f64, w f64, h f64, color i64, radius f64, border f64) {
+	let a = chan(color, 0)
+	q.Data = append(q.Data, f32(x), f32(y), f32(w), f32(h), f32(0.5), f32(0.5), f32(0), f32(0), chan(color, 24) * a, chan(color, 16) * a, chan(color, 8) * a, a, f32(radius), f32(border), f32(0), f32(0), q.clipAt(0), q.clipAt(1), q.clipAt(2), q.clipAt(3))
+	q.N += 1
 }
 
-// Sprite adds the w by h pixels of the atlas that start at (sx, sy) at (x, y), in the color (a glyph is white
-// coverage the color is applied to).
-fn (q mut Scene) Sprite(x f64, y f64, w f64, h f64, sx f64, sy f64, r f64, g f64, b f64, a f64) {
-	q.add(x, y, w, h, sx, sy, w, h, r, g, b, a, 0.0, 0.0)
+// Sprite adds the w by h pixels of the atlas that start at (sx, sy) at (x, y), in the color (a glyph is white coverage the color is
+// applied to).
+fn (q mut Scene) Sprite(x f64, y f64, w f64, h f64, sx f64, sy f64, color i64) {
+	let a = chan(color, 0)
+	q.Data = append(q.Data, f32(x), f32(y), f32(w), f32(h), f32(sx), f32(sy), f32(w), f32(h), chan(color, 24) * a, chan(color, 16) * a, chan(color, 8) * a, a, f32(0), f32(0), f32(0), f32(0), q.clipAt(0), q.clipAt(1), q.clipAt(2), q.clipAt(3))
+	q.N += 1
 }
 
 // PushClip limits what is added from now on to the rectangle (inside the clip already in force); PopClip restores the last one.

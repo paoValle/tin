@@ -202,7 +202,7 @@ fn (a mut Atlas) Upload() {
 // Text adds the text to the scene with the left end of its baseline at (x, y) (device pixels, y down) in the color, and returns
 // the x where the next character would start. A font whose characters are all one width keeps them aligned: pass its Advance
 // as cell to place each at a multiple of it, or 0 to use each character's own advance.
-fn (a mut Atlas) Text(scene mut Scene, font i64, x f64, y f64, text str, cell f64, r f64, g f64, b f64, al f64) f64 {
+fn (a mut Atlas) Text(scene mut Scene, font i64, x f64, y f64, text str, cell f64, color i64) f64 {
 	let f = a.Fonts[font]
 	mut pen = x
 	mut i = 0
@@ -220,7 +220,7 @@ fn (a mut Atlas) Text(scene mut Scene, font i64, x f64, y f64, text str, cell f6
 		}
 		let gx = f64(i64(pen + 0.5)) - f64(edge)
 		let gy = f64(i64(y + 0.5)) - f64(i64(f.Ascent) + 1) - f64(edge)
-		scene.Sprite(gx, gy, f64(gl.W), f64(gl.H), f64(gl.X), f64(gl.Y), r, g, b, al)
+		scene.Sprite(gx, gy, f64(gl.W), f64(gl.H), f64(gl.X), f64(gl.Y), color)
 		if cell > 0.0 {
 			pen += cell
 		} else {

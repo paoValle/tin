@@ -5,6 +5,7 @@ import "mint"
 import "../render"
 import "say"
 import "textedit"
+import "twine"
 import "../theme"
 import "../ui"
 
@@ -184,6 +185,21 @@ fn (ed mut Editor) Paint(th theme.Theme, x f64, y f64, w f64, h f64, scene mut m
 				render.Fill(mut scene, x0, top, x1 - x0, lh, th.Selection)
 			}
 		}
+		// every place the find box's text occurs on this line
+		let needle = ed.activeNeedle()
+		if len(needle) > 0 {
+			mut from = 0
+			for from < len(line) {
+				let at = twine.Index(line[from:], needle)
+				if at < 0 {
+					break
+				}
+				let c0 = textedit.DisplayCol(line, from + at, 4)
+				let c1 = textedit.DisplayCol(line, from + at + len(needle), 4)
+				render.Fill(mut scene, textX + f64(c0 - ed.HScroll) * ed.CharW, top, f64(c1 - c0) * ed.CharW, lh, th.Match)
+				from = from + at + len(needle)
+			}
+		}
 		// the text, in runs of one syntax class
 		mut i = ed.HScroll
 		let last = ed.HScroll + ed.cols() + 2
@@ -228,6 +244,15 @@ fn (ed mut Editor) Paint(th theme.Theme, x f64, y f64, w f64, h f64, scene mut m
 				}
 			}
 		}
+		// what git says about this line: a bar in the gutter's edge
+		let mark = ed.markAt(row)
+		if mark == 1 {
+			render.Fill(mut scene, x + 2.0, top, 3.0, lh, ui.Hex(0x2ea043))
+		} else if mark == 2 {
+			render.Fill(mut scene, x + 2.0, top, 3.0, lh, ui.Hex(0x0078d4))
+		} else if mark == 3 {
+			render.Fill(mut scene, x + 2.0, top, 6.0, 2.0, th.Error)
+		}
 		// the line number, right aligned in the gutter (the current line brighter)
 		let label = mint.Itoa(row + 1)
 		let lx = x + gutter - ed.CharW * 1.5 - f64(len(label)) * ed.CharW
@@ -246,7 +271,14 @@ fn (ed mut Editor) Paint(th theme.Theme, x f64, y f64, w f64, h f64, scene mut m
 			render.Fill(mut scene, cx, y + ed.rowTop(cn), 1.5, lh, th.Cursor)
 		}
 	}
+	// the bracket next to the caret and its partner
+	let (mr, mc, found) = ed.matchBracket()
+	if found {
+		ed.markCell(th, textX, y, b.Row, caretBracketCol(ed), mut scene)
+		ed.markCell(th, textX, y, mr, mc, mut scene)
+	}
 	ed.scrollbar(th, x, y, w, h, mut scene)
+	ed.promptBox(th, x, y, w, mut scene)
 	ed.popups(th, x, y, w, h, mut scene)
 	render.Unclip(mut scene)
 }
@@ -355,5 +387,204 @@ fn (ed mut Editor) Snapshot(path str) {
 	render.Upload()
 	if !render.Snapshot(scene, i64(ed.AreaW * 2.0), i64(ed.AreaH * 2.0), th.Editor, path) {
 		say.Line("cannot write", path)
+	}
+}
+
+// activeNeedle is the text the find box is looking for now ("" when it is not open).
+fn (ed Editor) activeNeedle() str {
+	if ed.Mode == modeFind {
+		return ed.Prompt
+	}
+	if ed.Mode == modeReplace {
+		return ed.Needle
+	}
+	return ""
+}
+
+// markAt is what git says about line row: 0 nothing, 1 added, 2 changed, 3 lines were removed above it.
+fn (ed Editor) markAt(row i64) i64 {
+	for m in ed.Marks {
+		if m / 4 == row {
+			return m % 4
+		}
+	}
+	return 0
+}
+
+// markCell outlines the character at byte col of line row.
+fn (ed Editor) markCell(th theme.Theme, textX f64, y f64, row i64, col i64, scene mut metal.Scene) {
+	let n = row - ed.Scroll
+	if n < 0 || n > ed.rows() {
+		return
+	}
+	let line = ed.Buf.Lines[row]
+	let c0 = textedit.DisplayCol(line, col, 4)
+	render.Stroke(mut scene, textX + f64(c0 - ed.HScroll) * ed.CharW, y + ed.rowTop(n), ed.CharW, ed.LineH, 2.0, 1.0, th.Muted)
+}
+
+fn opener(c u8) bool {
+	return c == '(' || c == '[' || c == '{'
+}
+
+fn closer(c u8) bool {
+	return c == ')' || c == ']' || c == '}'
+}
+
+fn partner(c u8) u8 {
+	if c == '(' {
+		return ')'
+	}
+	if c == '[' {
+		return ']'
+	}
+	if c == '{' {
+		return '}'
+	}
+	if c == ')' {
+		return '('
+	}
+	if c == ']' {
+		return '['
+	}
+	return '{'
+}
+
+// caretBracketCol is the column of the bracket matchBracket looked at: the one after the caret, else the one before it.
+fn caretBracketCol(ed Editor) i64 {
+	let b = ed.Buf
+	let line = b.Lines[b.Row]
+	if b.Col < len(line) && (opener(line[b.Col]) || closer(line[b.Col])) {
+		return b.Col
+	}
+	return b.Col - 1
+}
+
+// matchBracket finds the partner of the bracket beside the caret (the one right after it, or else right before it), looking at
+// most 20000 characters away; it reports where and whether it found one.
+fn (ed Editor) matchBracket() (i64, i64, bool) {
+	let b = ed.Buf
+	let line = b.Lines[b.Row]
+	mut col = -1
+	if b.Col < len(line) && (opener(line[b.Col]) || closer(line[b.Col])) {
+		col = b.Col
+	} else if b.Col > 0 && b.Col <= len(line) && (opener(line[b.Col - 1]) || closer(line[b.Col - 1])) {
+		col = b.Col - 1
+	}
+	if col < 0 {
+		return 0, 0, false
+	}
+	let c = line[col]
+	let want = partner(c)
+	mut depth = 0
+	mut row = b.Row
+	mut at = col
+	mut budget = 20000
+	if opener(c) {
+		for row < len(b.Lines) && budget > 0 {
+			let l = b.Lines[row]
+			for at < len(l) {
+				budget -= 1
+				if l[at] == c {
+					depth += 1
+				} else if l[at] == want {
+					depth -= 1
+					if depth == 0 {
+						return row, at, true
+					}
+				}
+				at += 1
+			}
+			row += 1
+			at = 0
+		}
+	} else {
+		for row >= 0 && budget > 0 {
+			let l = b.Lines[row]
+			if row != b.Row {
+				at = len(l) - 1
+			}
+			for at >= 0 {
+				budget -= 1
+				if l[at] == c {
+					depth += 1
+				} else if l[at] == want {
+					depth -= 1
+					if depth == 0 {
+						return row, at, true
+					}
+				}
+				at -= 1
+			}
+			row -= 1
+		}
+	}
+	return 0, 0, false
+}
+
+// matchCount is how many times the find text occurs in the buffer (counting stops at 9999).
+fn (ed Editor) matchCount(needle str) i64 {
+	if len(needle) == 0 {
+		return 0
+	}
+	mut n = 0
+	for line in ed.Buf.Lines {
+		mut from = 0
+		for from < len(line) {
+			let at = twine.Index(line[from:], needle)
+			if at < 0 {
+				break
+			}
+			n += 1
+			from = from + at + len(needle)
+		}
+		if n >= 9999 {
+			return n
+		}
+	}
+	return n
+}
+
+// promptBox draws the find, replace or go-to-line box in the corner of the text area while one is open.
+fn (ed Editor) promptBox(th theme.Theme, x f64, y f64, w f64, scene mut metal.Scene) {
+	if ed.Mode == modeEdit {
+		return
+	}
+	mut label = "Find"
+	mut text = ed.Prompt
+	mut note = ""
+	if ed.Mode == modeGoto {
+		label = "Go to line"
+	} else if ed.Mode == modeReplace {
+		label = "Replace " + ed.Needle + " with"
+	}
+	let needle = ed.activeNeedle()
+	if len(needle) > 0 {
+		let n = ed.matchCount(needle)
+		if n == 0 {
+			note = "no results"
+		} else {
+			note = mint.Itoa(n) + " results"
+		}
+	}
+	let boxW = min(520.0, w - 20.0)
+	let bx = x + w - boxW - 14.0
+	let by = y + 8.0
+	render.FillRound(mut scene, bx, by, boxW, 34.0, 6.0, th.Panel)
+	render.Stroke(mut scene, bx, by, boxW, 34.0, 6.0, 1.0, th.Accent)
+	let lh = render.LineHeight(render.FontUI)
+	let ty = by + (34.0 - lh) / 2.0
+	render.Pen(mut scene, render.FontUI, bx + 12.0, ty, label, th.Faint)
+	let lx = bx + 12.0 + render.Width(render.FontUI, label) + 10.0
+	let end = render.Pen(mut scene, render.FontUI, lx, ty, text, th.Text)
+	if ed.Blink {
+		render.Fill(mut scene, end + 1.0, by + 8.0, 1.5, 18.0, th.Cursor)
+	}
+	if len(note) > 0 {
+		mut color = th.Muted
+		if note == "no results" {
+			color = th.Error
+		}
+		let nw = render.Width(render.FontSmall, note)
+		render.Pen(mut scene, render.FontSmall, bx + boxW - nw - 12.0, by + (34.0 - render.LineHeight(render.FontSmall)) / 2.0, note, color)
 	}
 }

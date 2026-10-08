@@ -1,0 +1,79 @@
+package workspace
+
+import "mint"
+import "quarry"
+import "twine"
+
+// The session is what Tinland remembers between runs: the project folder and the files that were open, in a small text file in
+// the user's configuration folder (one "folder PATH" line, then one "file PATH" line per open file of the left pane, then
+// "active N" for the tab that was showing).
+
+fn sessionFile() str {
+	return quarry.Getenv("HOME") + "/.config/tinland/session"
+}
+
+// SaveSession writes the folder and the open files down.
+fn (ws Workspace) SaveSession() {
+	mut text = ""
+	if ws.HasProj {
+		text = text + "folder " + ws.Proj.Root + "\n"
+	}
+	let pane = ws.Panes[0]
+	for i in 0..len(pane.Tabs) {
+		mut path = pane.Tabs[i].Buf.Path
+		if i == pane.Active {
+			path = pane.Buf.Path
+		}
+		if len(path) > 0 {
+			text = text + "file " + path + "\n"
+		}
+	}
+	text = text + "active " + intText(pane.Active) + "\n"
+	quarry.MkdirAll(quarry.Getenv("HOME") + "/.config/tinland") catch _ {
+		return
+	}
+	quarry.WriteFile(sessionFile(), text) catch _ {
+	}
+}
+
+fn intText(n i64) str {
+	return mint.Itoa(n)
+}
+
+// RestoreSession reopens what SaveSession wrote; it reports whether there was anything to restore.
+fn (ws mut Workspace) RestoreSession() bool {
+	let text = quarry.ReadFile(sessionFile()) catch _ {
+		return false
+	}
+	mut any = false
+	mut active = 0
+	for line in twine.Split(text, "\n") {
+		if twine.HasPrefix(line, "folder ") {
+			if quarry.IsDir(line[7:]) {
+				ws.OpenFolder(line[7:])
+				any = true
+			}
+		} else if twine.HasPrefix(line, "file ") {
+			if quarry.Exists(line[5:]) {
+				ws.OpenFile(line[5:])
+				any = true
+			}
+		} else if twine.HasPrefix(line, "active ") {
+			active = parseCount(line[7:])
+		}
+	}
+	if any && active < len(ws.Panes[0].Tabs) {
+		ws.Panes[0].Activate(active)
+	}
+	return any
+}
+
+fn parseCount(s str) i64 {
+	mut n = 0
+	for i in 0..len(s) {
+		if s[i] >= '0' && s[i] <= '9' {
+			n = n * 10 + i64(s[i] - '0')
+		}
+	}
+	return n
+}

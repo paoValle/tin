@@ -23,6 +23,9 @@ const CmdCollapseAll = 113
 const CmdZoomIn = 114
 const CmdZoomOut = 115
 const CmdZoomReset = 116
+const CmdToggleTerminal = 117
+const CmdSplit = 118
+const CmdCloseSplit = 119
 
 // Event kinds of an NSEvent that the workspace reads.
 const evMouseDown = 1
@@ -84,10 +87,23 @@ fn (ws mut Workspace) Event(e i64) {
 	}
 }
 
+// Key handles a key press (the events deliver keys here; tests call it directly).
+fn (ws mut Workspace) Key(code i64, flags i64, chars str) {
+	ws.key(code, flags, chars)
+}
+
 // key handles a key press: the workspace's own shortcuts first, then the editor.
 fn (ws mut Workspace) key(code i64, flags i64, chars str) {
 	if ws.Picker.Open {
 		ws.pickerKey(code, flags, chars)
+		return
+	}
+	if ws.Focus == FocusProject && (flags & appkit.ModCmd) == 0 {
+		ws.projectKey(code)
+		return
+	}
+	if ws.Focus == FocusTerminal && (flags & appkit.ModCmd) == 0 {
+		ws.termKey(code, flags, chars)
 		return
 	}
 	if ws.Focus == FocusSearch && (flags & appkit.ModCmd) == 0 {
@@ -107,8 +123,17 @@ fn (ws mut Workspace) scroll(dx f64, dy f64) {
 	let id = ws.Hits.ScrollAt(ws.MouseX, ws.MouseY)
 	if id == idLeftScroll || id == idOutputScroll || id == idSearchScroll || id == idPanelScroll {
 		ws.Scrolls.Scroll(id, 0.0 - dy)
+	} else if ws.Hits.At(ws.MouseX, ws.MouseY) == idTerminal {
+		ws.TermScroll = max(0, min(ws.TermScroll + i64(dy / ws.Ed.LineH), ws.Term.HistoryLines()))
 	} else {
-		ws.Ed.Wheel(dx, dy)
+		let over = ws.Hits.At(ws.MouseX, ws.MouseY)
+		if over == idEditor2 && len(ws.Panes) > 1 {
+			ws.Panes[1].Wheel(dx, dy)
+		} else if over == idEditor {
+			ws.Panes[0].Wheel(dx, dy)
+		} else {
+			ws.Ed.Wheel(dx, dy)
+		}
 	}
 	ws.Dirty = true
 }
@@ -117,8 +142,9 @@ fn (ws mut Workspace) scroll(dx f64, dy f64) {
 fn (ws mut Workspace) press(x f64, y f64, clicks i64, flags i64) {
 	let id = ws.Hits.At(x, y)
 	ws.Dirty = true
-	if id == idEditor {
-		let (ex, ey, ew, eh) = ws.Hits.Rect(idEditor)
+	if id == idEditor || id == idEditor2 {
+		ws.SetActive(paneOf(id))
+		let (ex, ey, ew, eh) = ws.Hits.Rect(id)
 		ws.Ed.MouseDown(x - ex, y - ey, clicks, flags)
 		ws.Drag = dragText
 		return
@@ -158,16 +184,26 @@ fn (ws mut Workspace) press(x f64, y f64, clicks i64, flags i64) {
 		ws.Drag = DragTitle
 	} else if id >= idRow && id < idOutputLine {
 		ws.clickRow(id - idRow)
-	} else if id >= idTabClose && id < idRow {
-		ws.Ed.CloseTab(id - idTabClose)
-	} else if id >= idTabBase && id < idTabClose {
-		ws.Ed.Activate(id - idTabBase)
+	} else if id >= idTabClose && id < idTabClose + 2 * tabsPerPane {
+		ws.SetActive((id - idTabClose) / tabsPerPane)
+		ws.Ed.CloseTab((id - idTabClose) % tabsPerPane)
+	} else if id >= idTabBase && id < idTabBase + 2 * tabsPerPane {
+		ws.SetActive((id - idTabBase) / tabsPerPane)
+		ws.Ed.Activate((id - idTabBase) % tabsPerPane)
 	} else if id >= idPanelBase && id < idTabBase {
 		ws.togglePanel(id - idPanelBase)
 	} else if id >= idOutputLine && id < idPickerItem {
 		ws.Ed.JumpTo(ws.Ed.Output[id - idOutputLine])
 	} else if id == idOutputClose {
-		ws.Ed.OutputOpen = false
+		ws.Bottom = BottomNone
+		ws.Focus = FocusEditor
+	} else if id == idBottomOutput {
+		ws.Bottom = BottomOutput
+	} else if id == idBottomTerminal {
+		ws.Bottom = BottomNone
+		ws.ToggleTerminal()
+	} else if id == idTerminal {
+		ws.Focus = FocusTerminal
 	} else if id == idNewFile {
 		ws.Perform(CmdNewFile)
 	} else if id == idRefresh {
@@ -188,7 +224,7 @@ fn (ws mut Workspace) drag(x f64, y f64) {
 		ws.LeftW = w
 		ws.Dirty = true
 	} else if ws.Drag == dragText {
-		let (ex, ey, ew, eh) = ws.Hits.Rect(idEditor)
+		let (ex, ey, ew, eh) = ws.Hits.Rect(paneId(ws.Active))
 		ws.Ed.MouseDrag(x - ex, y - ey)
 		ws.Dirty = true
 	}
@@ -201,6 +237,7 @@ fn (ws mut Workspace) clickRow(r i64) {
 	}
 	let i = ws.Proj.Rows[r]
 	ws.Proj.Select(i)
+	ws.Focus = FocusProject
 	if ws.Proj.Entries[i].Dir {
 		ws.Proj.Toggle(i)
 	} else {
@@ -212,6 +249,8 @@ fn (ws mut Workspace) clickRow(r i64) {
 fn (ws mut Workspace) togglePanel(k i64) {
 	if ws.LeftOpen && ws.Panel == k {
 		ws.LeftOpen = false
+	} else if k == PanelTerminal {
+		ws.ToggleTerminal()
 	} else {
 		ws.LeftOpen = true
 		ws.Panel = k
@@ -246,7 +285,19 @@ fn (ws mut Workspace) Perform(cmd i64) {
 		ws.Panel = PanelSearch
 		ws.Focus = FocusSearch
 	} else if cmd == CmdToggleOutput {
-		ws.Ed.OutputOpen = !ws.Ed.OutputOpen
+		if ws.Bottom == BottomOutput {
+			ws.Bottom = BottomNone
+		} else {
+			ws.Bottom = BottomOutput
+		}
+	} else if cmd == editor.CmdQuit {
+		ws.RequestQuit()
+	} else if cmd == CmdSplit {
+		ws.Split()
+	} else if cmd == CmdCloseSplit {
+		ws.CloseSplit()
+	} else if cmd == CmdToggleTerminal {
+		ws.ToggleTerminal()
 	} else if cmd == CmdRefresh {
 		if ws.HasProj {
 			ws.Proj.Refresh()
@@ -274,6 +325,8 @@ fn (ws mut Workspace) Perform(cmd i64) {
 			ws.LeftOpen = true
 			ws.Panel = PanelProject
 		}
+	} else if cmd == editor.CmdPaste && ws.Focus == FocusTerminal {
+		ws.Pty.Type(appkit.ClipboardText())
 	} else if cmd == editor.CmdOpen {
 		let path = appkit.OpenPanel()
 		if len(path) > 0 {
@@ -328,6 +381,88 @@ fn (ws mut Workspace) zoom(points f64) {
 	}
 	ws.CodeSize = p
 	render.SetCodeSize(p)
-	ws.Ed.UseFont()
+	ws.UseFont()
 	ws.Dirty = true
+}
+
+// paneOf is the pane an editor area id belongs to, and paneId the id of a pane's editor area.
+fn paneOf(id i64) i64 {
+	if id == idEditor2 {
+		return 1
+	}
+	return 0
+}
+
+fn paneId(pane i64) i64 {
+	if pane == 1 {
+		return idEditor2
+	}
+	return idEditor
+}
+
+// projectKey handles a key while the project panel has the keyboard: Up and Down move the selection, Right opens a folder, Left
+// closes it (or goes to the one above), Return opens the file or toggles the folder, Delete asks to delete, Escape gives the
+// keyboard back to the editor.
+fn (ws mut Workspace) projectKey(code i64) {
+	if !ws.HasProj {
+		ws.Focus = FocusEditor
+		return
+	}
+	mut row = -1
+	for r in 0..len(ws.Proj.Rows) {
+		if ws.Proj.Rows[r] == ws.Proj.Selected {
+			row = r
+		}
+	}
+	if code == keyEscape {
+		ws.Focus = FocusEditor
+	} else if code == keyDown {
+		if row + 1 < len(ws.Proj.Rows) {
+			ws.Proj.Select(ws.Proj.Rows[row + 1])
+			ws.showRow(row + 1)
+		}
+	} else if code == keyUp {
+		if row > 0 {
+			ws.Proj.Select(ws.Proj.Rows[row - 1])
+			ws.showRow(row - 1)
+		}
+	} else if code == 124 && row >= 0 {
+		let e = ws.Proj.Entries[ws.Proj.Selected]
+		if e.Dir && !e.Open {
+			ws.Proj.Toggle(ws.Proj.Selected)
+		}
+	} else if code == 123 && row >= 0 {
+		let e = ws.Proj.Entries[ws.Proj.Selected]
+		if e.Dir && e.Open && ws.Proj.Selected != 0 {
+			ws.Proj.Toggle(ws.Proj.Selected)
+		} else if e.Parent >= 0 {
+			ws.Proj.Select(e.Parent)
+			ws.Proj.Rebuild()
+			for r in 0..len(ws.Proj.Rows) {
+				if ws.Proj.Rows[r] == e.Parent {
+					ws.showRow(r)
+				}
+			}
+		}
+	} else if code == keyReturn && row >= 0 {
+		ws.clickRow(row)
+		if !ws.Proj.Entries[ws.Proj.Rows[row]].Dir {
+			ws.Focus = FocusEditor
+		}
+	} else if code == 117 || code == keyBackspace {
+		ws.deleteSelected()
+	}
+	ws.Dirty = true
+}
+
+// showRow scrolls the project panel so that row r is in view.
+fn (ws mut Workspace) showRow(r i64) {
+	let viewH = ws.H - titleH - statusH - 34.0
+	let top = f64(r) * rowH
+	let off = ws.Scrolls.Offset[idLeftScroll]
+	if top < off {
+		ws.Scrolls.Offset[idLeftScroll] = top
+	} else if top + rowH > off + viewH {
+		ws.Scrolls.Offset[idLeftScroll] = top + rowH - viewH
+	}
 }

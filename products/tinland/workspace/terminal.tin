@@ -1,0 +1,275 @@
+package workspace
+
+import "../render"
+import "../terminal"
+import "../ui"
+import "appkit"
+import "metal"
+import "quarry"
+import "glyph"
+
+// The bottom dock: the output of Run and a terminal with a shell in the project's folder.
+const BottomNone = 0
+const BottomOutput = 1
+const BottomTerminal = 2
+
+const idTerminal = 90
+const idBottomOutput = 91
+const idBottomTerminal = 92
+
+// termSize is how many columns and rows of characters fit in the panel at the window's size.
+fn (ws Workspace) termSize() (i64, i64) {
+	let cols = i64((ws.W - 24.0) / render.CodeCell())
+	let rows = i64((outputH + 60.0 - 28.0 - 8.0) / ws.Ed.LineH)
+	return max(cols, 20), max(rows, 5)
+}
+
+// ToggleTerminal shows the terminal (starting a shell the first time) or hides the dock.
+fn (ws mut Workspace) ToggleTerminal() {
+	if ws.Bottom == BottomTerminal {
+		ws.Bottom = BottomNone
+		ws.Focus = FocusEditor
+		return
+	}
+	ws.Bottom = BottomTerminal
+	if !ws.TermUp {
+		ws.startTerm()
+	}
+	ws.Focus = FocusTerminal
+}
+
+// startTerm runs a shell in the project folder (the home folder without a project).
+fn (ws mut Workspace) startTerm() {
+	let (cols, rows) = ws.termSize()
+	mut dir = quarry.Getenv("HOME")
+	if ws.HasProj {
+		dir = ws.Proj.Root
+	}
+	ws.Term = terminal.New(cols, rows)
+	ws.Pty = appkit.StartShell(dir, cols, rows)
+	ws.TermUp = ws.Pty.Alive
+	ws.TermScroll = 0
+}
+
+// StopTerminal ends the shell (when the window closes).
+fn (ws mut Workspace) StopTerminal() {
+	if ws.TermUp {
+		ws.Pty.Stop()
+		ws.TermUp = false
+	}
+}
+
+// PollTerminal takes what the shell printed into the screen; it reports whether there was anything.
+fn (ws mut Workspace) PollTerminal() bool {
+	if !ws.TermUp {
+		return false
+	}
+	mut got = false
+	for n in 0..16 {
+		let out = ws.Pty.Read()
+		if len(out) == 0 {
+			break
+		}
+		ws.Term.Write(out)
+		got = true
+	}
+	if !ws.Pty.Alive {
+		ws.TermUp = false
+		ws.Term.Write("\r\n[the shell ended: toggle the terminal to start another]\r\n")
+		got = true
+	}
+	if got {
+		ws.TermScroll = 0
+		ws.Dirty = true
+	}
+	return got
+}
+
+// termFit makes the screen and the shell's idea of the terminal match the panel.
+fn (ws mut Workspace) termFit() {
+	if !ws.TermUp {
+		return
+	}
+	let (cols, rows) = ws.termSize()
+	if cols != ws.Term.Cols || rows != ws.Term.Rows {
+		ws.Term.Resize(cols, rows)
+		ws.Pty.Resize(cols, rows)
+	}
+}
+
+// termKey sends a key press to the shell as the bytes a terminal sends.
+fn (ws mut Workspace) termKey(code i64, flags i64, chars str) {
+	if !ws.TermUp {
+		return
+	}
+	let alt = (flags & appkit.ModAlt) != 0
+	let shift = (flags & appkit.ModShift) != 0
+	let ctrl = (flags & appkit.ModCtrl) != 0
+	mut out = ""
+	if code == keyReturn {
+		out = "\r"
+	} else if code == keyTab {
+		out = "\t"
+		if shift {
+			out = "\x1b[Z"
+		}
+	} else if code == keyBackspace {
+		out = "\x7f"
+	} else if code == keyEscape {
+		out = "\x1b"
+	} else if code == 126 {
+		out = "\x1b[A"
+	} else if code == keyDown {
+		out = "\x1b[B"
+	} else if code == 124 {
+		out = "\x1b[C"
+		if alt {
+			out = "\x1bf"
+		}
+	} else if code == 123 {
+		out = "\x1b[D"
+		if alt {
+			out = "\x1bb"
+		}
+	} else if code == 115 {
+		out = "\x1b[H"
+	} else if code == 119 {
+		out = "\x1b[F"
+	} else if code == 116 {
+		out = "\x1b[5~"
+	} else if code == 121 {
+		out = "\x1b[6~"
+	} else if code == 117 {
+		out = "\x1b[3~"
+	} else if ctrl && len(chars) == 1 && i64(chars[0]) < 32 {
+		out = chars
+	} else {
+		out = typed(chars)
+		if alt && len(out) > 0 {
+			out = "\x1b" + out
+		}
+	}
+	ws.Pty.Type(out)
+}
+
+// bottomPanel is the dock's header (Output and Terminal tabs, a close button) and what the chosen tab shows.
+fn (ws Workspace) bottomPanel(t mut ui.Tree) {
+	let th = ws.Th
+	t.Leaf(ui.Box().High(1.0).Fill(th.Border), 0)
+	t.Open(ui.VBox().High(outputH + 60.0).Fill(th.Panel), 0)
+	t.Open(ui.HBox().High(28.0).Items(ui.Center).Spacing(14.0).PadXY(12.0, 0.0), 0)
+	ws.bottomTab(mut t, "Output", ws.Bottom == BottomOutput, idBottomOutput)
+	ws.bottomTab(mut t, "Terminal", ws.Bottom == BottomTerminal, idBottomTerminal)
+	t.Leaf(ui.Box().Flex(1.0), 0)
+	ws.iconButton(mut t, render.IconClose, idOutputClose)
+	t.Close()
+	if ws.Bottom == BottomTerminal {
+		t.Custom(ui.Box().Flex(1.0), idTerminal)
+	} else {
+		t.Open(ui.VBox().Flex(1.0).Scrolls().PadXY(12.0, 4.0), idOutputScroll)
+		for i in 0..len(ws.Ed.Output) {
+			t.Text(ws.Ed.Output[i], render.FontCode, th.Text, ui.Box().Hover(th.Hover))
+		}
+		t.Close()
+	}
+	t.Close()
+}
+
+fn (ws Workspace) bottomTab(t mut ui.Tree, label str, on bool, id i64) {
+	let th = ws.Th
+	mut color = th.Muted
+	if on {
+		color = th.Text
+	}
+	t.Open(ui.VBox().Items(ui.Center).PadXY(2.0, 0.0).Hover(th.Hover), id)
+	t.Text(label, render.FontUIBold, color, ui.Box().PadXY(0.0, 5.0))
+	if on {
+		t.Leaf(ui.Box().High(2.0).Fill(th.Accent), 0)
+	}
+	t.Close()
+}
+
+// colorOf is the color of a terminal cell's foreground or background (def when it has none of its own).
+fn colorOf(c i64, def i64) i64 {
+	if c < 0 {
+		return def
+	}
+	return ui.Hex(c)
+}
+
+// paintTerminal draws the screen (or, scrolled back, the history above it) into the rectangle (points).
+fn (ws Workspace) paintTerminal(x f64, y f64, w f64, h f64, scene mut metal.Scene) {
+	let th = ws.Th
+	if !ws.TermUp && ws.Term.Rows == 0 {
+		return
+	}
+	render.Clip(mut scene, x, y, w, h)
+	render.Fill(mut scene, x, y, w, h, th.Panel)
+	let cell = render.CodeCell()
+	let lh = ws.Ed.LineH
+	let pad = (lh - render.LineHeight(render.FontCode)) / 2.0
+	let ox = x + 12.0
+	let oy = y + 4.0
+	let hist = ws.Term.HistoryLines()
+	let first = hist - ws.TermScroll
+	for row in 0..ws.Term.Rows {
+		let v = first + row
+		let top = oy + f64(row) * lh
+		mut run = ""
+		mut runX = 0
+		mut runFg = th.Text
+		for col in 0..ws.Term.Cols {
+			mut c = terminal.Cell{Fg: -1, Bg: -1}
+			if v < hist {
+				c = ws.Term.HistoryAt(col, v)
+			} else if v - hist < ws.Term.Rows {
+				c = ws.Term.At(col, v - hist)
+			}
+			mut fg = colorOf(c.Fg, th.Text)
+			mut bg = colorOf(c.Bg, 0)
+			if (c.Attr & terminal.Inverse) != 0 {
+				let swap = fg
+				fg = colorOf(c.Bg, th.Panel)
+				bg = swap
+			}
+			if bg != 0 {
+				render.Fill(mut scene, ox + f64(col) * cell, top, cell, lh, bg)
+			}
+			if c.Ch == 0 {
+				if len(run) > 0 {
+					render.Pen(mut scene, render.FontCode, ox + f64(runX) * cell, top + pad, run, runFg)
+					run = ""
+				}
+				continue
+			}
+			if len(run) > 0 && fg != runFg {
+				render.Pen(mut scene, render.FontCode, ox + f64(runX) * cell, top + pad, run, runFg)
+				run = ""
+			}
+			if len(run) == 0 {
+				runX = col
+				runFg = fg
+			}
+			run = run + runeText(c.Ch)
+		}
+		if len(run) > 0 {
+			render.Pen(mut scene, render.FontCode, ox + f64(runX) * cell, top + pad, run, runFg)
+		}
+	}
+	if ws.TermScroll == 0 && ws.Term.ShowCursor {
+		let cx = ox + f64(ws.Term.CurX) * cell
+		let cy = oy + f64(ws.Term.CurY) * lh
+		if ws.Focus == FocusTerminal {
+			if ws.Ed.Blink {
+				render.Fill(mut scene, cx, cy, cell, lh, ui.HexA(0xcccccc, 0.8))
+			}
+		} else {
+			render.Stroke(mut scene, cx, cy, cell, lh, 0.0, 1.0, th.Muted)
+		}
+	}
+	render.Unclip(mut scene)
+}
+
+fn runeText(ch i64) str {
+	return glyph.RuneStr(i32(ch))
+}

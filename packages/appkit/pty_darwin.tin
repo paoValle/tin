@@ -1,0 +1,132 @@
+package appkit
+
+import "quarry"
+
+// A pseudo terminal with a shell on its other end, for the terminal panel: the shell thinks it talks to a terminal of Cols by Rows,
+// the program reads what it prints and types for it.
+
+@framework("/usr/lib/libSystem.B.dylib")
+extern fn forkpty(master i64, name i64, termp i64, winp i64) i64
+
+extern fn execv(path i64, argv i64) i64
+
+extern fn _exit(code i64)
+
+extern fn read(fd i64, buf i64, n i64) i64
+
+extern fn write(fd i64, buf i64, n i64) i64
+
+extern fn close(fd i64) i64
+
+extern fn chdir(path i64) i64
+
+extern fn poll(fds i64, n i64, timeout i64) i64
+
+extern fn kill(pid i64, sig i64) i64
+
+extern fn waitpid(pid i64, status i64, options i64) i64
+
+extern fn setenv(name i64, value i64, overwrite i64) i64
+
+// ioctl takes its third argument as a variadic one, which on Apple's arm64 goes on the stack: declared with nine parameters, the
+// ninth lands where ioctl looks for it.
+@symbol("ioctl")
+extern fn ioctl9(fd i64, req i64, a i64, b i64, c i64, d i64, e i64, f i64, arg i64) i64
+
+// Pty is a running shell: Master is the file descriptor to read and write, Pid the shell's process.
+type Pty struct {
+	Master i64
+	Pid i64
+	Alive bool
+	buf i64
+}
+
+// winsize makes the struct winsize ioctl and forkpty take: rows, columns, pixel width and height as four 16 bit numbers.
+fn winsize(cols i64, rows i64) i64 {
+	let w = calloc(1, 8)
+	store8(w, rows & 255)
+	store8(w + 1, (rows >> 8) & 255)
+	store8(w + 2, cols & 255)
+	store8(w + 3, (cols >> 8) & 255)
+	return w
+}
+
+// StartShell runs the user's shell (or /bin/zsh) in the folder, as an interactive terminal of cols by rows characters.
+fn StartShell(cwd str, cols i64, rows i64) Pty {
+	mut shell = quarry.Getenv("SHELL")
+	if len(shell) == 0 {
+		shell = "/bin/zsh"
+	}
+	let argv = calloc(3, 8)
+	argv[0] = rt_cstr(shell)
+	argv[1] = rt_cstr("-i")
+	argv[2] = 0
+	let path = rt_cstr(shell)
+	let dir = rt_cstr(cwd)
+	setenv(rt_cstr("TERM"), rt_cstr("xterm-256color"), 1)
+	setenv(rt_cstr("COLORTERM"), rt_cstr("truecolor"), 1)
+	let master = calloc(1, 8)
+	let win = winsize(cols, rows)
+	let pid = forkpty(master, 0, 0, win)
+	if pid == 0 {
+		chdir(dir)
+		execv(path, argv)
+		_exit(127)
+	}
+	let p = Pty{Master: master[0] & 0xffffffff, Pid: pid, Alive: pid > 0}
+	p.buf = calloc(65536, 1)
+	return p
+}
+
+// Read returns what the shell printed since the last call ("" when nothing). It does not wait.
+fn (p mut Pty) Read() str {
+	if !p.Alive {
+		return ""
+	}
+	// struct pollfd: the descriptor (4 bytes), the events wanted (POLLIN is 1) and the events found (2 bytes each)
+	let fds = calloc(1, 8)
+	store8(fds, p.Master & 255)
+	store8(fds + 1, (p.Master >> 8) & 255)
+	store8(fds + 2, (p.Master >> 16) & 255)
+	store8(fds + 3, (p.Master >> 24) & 255)
+	store8(fds + 4, 1)
+	let ready = poll(fds, 1, 0)
+	let revents = i64(load8(fds + 6))
+	free(fds)
+	if ready <= 0 {
+		return ""
+	}
+	let n = read(p.Master, p.buf, 65536)
+	if n <= 0 {
+		// the shell closed its end (POLLHUP): it is gone
+		p.Alive = false
+		return ""
+	}
+	return rt_str_from_raw(p.buf, n)
+}
+
+// Type sends the text to the shell as typed keys.
+fn (p Pty) Type(text str) {
+	if p.Alive && len(text) > 0 {
+		write(p.Master, rt_cstr(text), len(text))
+	}
+}
+
+// Resize tells the shell its terminal is now cols by rows (it gets SIGWINCH).
+fn (p Pty) Resize(cols i64, rows i64) {
+	let w = winsize(cols, rows)
+	// TIOCSWINSZ
+	ioctl9(p.Master, 0x80087467, 0, 0, 0, 0, 0, 0, w)
+	free(w)
+}
+
+// Stop ends the shell and closes the terminal.
+fn (p mut Pty) Stop() {
+	if p.Pid > 0 {
+		// SIGHUP, as closing a terminal window sends
+		kill(p.Pid, 1)
+		close(p.Master)
+		waitpid(p.Pid, 0, 1)
+		p.Alive = false
+	}
+}

@@ -4,15 +4,18 @@
 package workspace
 
 import "../editor"
+import "../terminal"
 import "../project"
 import "textedit"
 import "../theme"
 import "../ui"
+import "appkit"
 
 // Ids of the elements the mouse can reach.
 const idTitle = 1
 const idLeftScroll = 2
 const idEditor = 3
+const idEditor2 = 27
 const idDivider = 4
 const idOutputScroll = 5
 const idOutputClose = 6
@@ -22,6 +25,7 @@ const idRefresh = 9
 const idPanelBase = 10
 const idTabBase = 1000
 const idTabClose = 2000
+const tabsPerPane = 500
 const idSearchInput = 20
 const idSearchCase = 21
 const idSearchWord = 22
@@ -62,7 +66,10 @@ const outputH = 200.0
 // Workspace is the state of one window.
 type Workspace struct {
 	Th theme.Theme
+	// Ed is the editor of the active pane (the same object as Panes[Active]).
 	Ed editor.Editor
+	Panes []editor.Editor
+	Active i64
 	Proj project.Project
 	HasProj bool
 	Scrolls ui.Scrolls
@@ -92,6 +99,12 @@ type Workspace struct {
 	Menu i64
 	// CodeSize is the size of the code font in points.
 	CodeSize f64
+	// The bottom dock: which panel shows, and the terminal: its screen, its shell, whether the shell runs, how far it is scrolled back.
+	Bottom i64
+	Term terminal.Screen
+	Pty appkit.Pty
+	TermUp bool
+	TermScroll i64
 }
 
 const MenuNone = 0
@@ -101,16 +114,19 @@ const MenuTree = 1
 const FocusEditor = 0
 const FocusSearch = 1
 const FocusPicker = 2
+const FocusTerminal = 3
+const FocusProject = 4
 
 // New makes a workspace around an editor.
 fn New(th theme.Theme, ed editor.Editor) Workspace {
-	let ws = Workspace{Th: th, Ed: ed, Proj: project.Project{Selected: -1}, Scrolls: ui.NewScrolls(64), Hits: ui.NewHitList(6000), Picker: Picker{Items: []str{}}, Search: Search{Matches: []project.Match{}}, Git: []str{}}
+	let ws = Workspace{Th: th, Ed: ed, Proj: project.Project{Selected: -1}, Scrolls: ui.NewScrolls(64), Hits: ui.NewHitList(6000), Picker: Picker{Items: []str{}}, Search: Search{Matches: []project.Match{}}, Git: []str{}, Term: terminal.New(80, 10), Pty: appkit.Pty{}}
 	ws.LeftOpen = true
 	ws.LeftW = 260.0
 	ws.W = 1100.0
 	ws.H = 720.0
 	ws.Dirty = true
 	ws.CodeSize = 13.0
+	ws.Panes = []editor.Editor{ed}
 	return ws
 }
 
@@ -148,4 +164,63 @@ fn (ws Workspace) Title() str {
 		t = t + " - " + ws.Proj.Name
 	}
 	return t + " - Tinland"
+}
+
+// SetActive makes pane i the one typing goes to.
+fn (ws mut Workspace) SetActive(i i64) {
+	if i >= 0 && i < len(ws.Panes) && i != ws.Active {
+		ws.Active = i
+		ws.Ed = ws.Panes[i]
+		ws.Dirty = true
+	}
+}
+
+// Split opens a second pane to the right showing the active file.
+fn (ws mut Workspace) Split() {
+	if len(ws.Panes) > 1 {
+		return
+	}
+	let pane = editor.New(textedit.New())
+	pane.UseFont()
+	if len(ws.Ed.Buf.Path) > 0 {
+		pane.Load(ws.Ed.Buf.Path)
+	}
+	ws.Panes = append(ws.Panes, pane)
+	ws.SetActive(1)
+	ws.Dirty = true
+}
+
+// CloseSplit closes the right pane (asking about unsaved changes in it).
+fn (ws mut Workspace) CloseSplit() {
+	if len(ws.Panes) < 2 {
+		return
+	}
+	let pane = ws.Panes[1]
+	pane.Perform(editor.CmdQuit)
+	if !pane.Quit {
+		return
+	}
+	ws.Panes = ws.Panes[0:1]
+	ws.Active = 0
+	ws.Ed = ws.Panes[0]
+	ws.Dirty = true
+}
+
+// UseFont tells every editor the size of a character cell.
+fn (ws mut Workspace) UseFont() {
+	for i in 0..len(ws.Panes) {
+		ws.Panes[i].UseFont()
+	}
+}
+
+// RequestQuit asks every pane about its unsaved files and reports whether the program may end (and sets Quit when it may).
+fn (ws mut Workspace) RequestQuit() bool {
+	for i in 0..len(ws.Panes) {
+		ws.Panes[i].Perform(editor.CmdQuit)
+		if !ws.Panes[i].Quit {
+			return false
+		}
+	}
+	ws.Quit = true
+	return true
 }

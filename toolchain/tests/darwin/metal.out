@@ -1,4 +1,4 @@
 red: 0 0 255 255
 blue: 255 0 0 255
-green over blue: 128 128 0 255
+green over blue: 127 128 0 255
 text pixels: true pen: true

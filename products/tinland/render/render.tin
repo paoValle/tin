@@ -81,12 +81,19 @@ fn Width(font i64, text str) f64 {
 
 // LineHeight is the height of a line of the font, in points.
 fn LineHeight(font i64) f64 {
+	if font >= len(cv.Atlas.Fonts) {
+		// no GPU was opened (a test): a plausible line
+		return 16.0
+	}
 	let f = cv.Atlas.Fonts[font]
 	return f.Line / cv.Scale
 }
 
 // CodeCell is the width of one character of the code font, in points.
 fn CodeCell() f64 {
+	if len(cv.Atlas.Fonts) <= FontCode {
+		return 7.8
+	}
 	return cv.Atlas.Fonts[FontCode].Advance / cv.Scale
 }
 
@@ -98,7 +105,7 @@ fn Pen(scene mut metal.Scene, font i64, x f64, y f64, text str, c i64) f64 {
 	if font == FontCode {
 		cell = f.Advance
 	}
-	let end = cv.Atlas.Text(mut scene, font, x * s, y * s + f.Ascent, text, cell, ui.R(c), ui.G(c), ui.B(c), ui.A(c))
+	let end = cv.Atlas.Text(mut scene, font, x * s, y * s + f.Ascent, text, cell, c)
 	return end / s
 }
 
@@ -108,9 +115,9 @@ fn Draw(cmds []ui.Cmd, texts []str, scene mut metal.Scene, custom fn(i64, f64, f
 	let s = cv.Scale
 	for c in cmds {
 		if c.Kind == ui.CmdRect {
-			scene.Rect(c.X * s, c.Y * s, c.W * s, c.H * s, ui.R(c.Col), ui.G(c.Col), ui.B(c.Col), ui.A(c.Col), c.Radius * s)
+			scene.Rect(c.X * s, c.Y * s, c.W * s, c.H * s, c.Col, c.Radius * s)
 		} else if c.Kind == ui.CmdBorder {
-			scene.Outline(c.X * s, c.Y * s, c.W * s, c.H * s, ui.R(c.Col), ui.G(c.Col), ui.B(c.Col), ui.A(c.Col), c.Radius * s, c.Border * s)
+			scene.Outline(c.X * s, c.Y * s, c.W * s, c.H * s, c.Col, c.Radius * s, c.Border * s)
 		} else if c.Kind == ui.CmdText {
 			let f = cv.Atlas.Fonts[c.Font]
 			let top = c.Y + (c.H - f.Line / s) / 2.0
@@ -118,7 +125,7 @@ fn Draw(cmds []ui.Cmd, texts []str, scene mut metal.Scene, custom fn(i64, f64, f
 		} else if c.Kind == ui.CmdIcon {
 			let px = i64(c.W * s + 0.5)
 			let g = cv.Atlas.Icon(c.Arg, px)
-			scene.Sprite(f64(i64(c.X * s + 0.5)) - 1.0, f64(i64(c.Y * s + 0.5)) - 1.0, f64(g.W), f64(g.H), f64(g.X), f64(g.Y), ui.R(c.Col), ui.G(c.Col), ui.B(c.Col), ui.A(c.Col))
+			scene.Sprite(f64(i64(c.X * s + 0.5)) - 1.0, f64(i64(c.Y * s + 0.5)) - 1.0, f64(g.W), f64(g.H), f64(g.X), f64(g.Y), c.Col)
 		} else if c.Kind == ui.CmdClip {
 			scene.PushClip(c.X * s, c.Y * s, c.W * s, c.H * s)
 		} else if c.Kind == ui.CmdUnclip {
@@ -142,19 +149,19 @@ fn Present(layer i64, w i64, h i64, scene metal.Scene, bg i64) {
 // Fill paints a solid rectangle (points).
 fn Fill(scene mut metal.Scene, x f64, y f64, w f64, h f64, c i64) {
 	let s = cv.Scale
-	scene.Rect(x * s, y * s, w * s, h * s, ui.R(c), ui.G(c), ui.B(c), ui.A(c), 0.0)
+	scene.Rect(x * s, y * s, w * s, h * s, c, 0.0)
 }
 
 // FillRound paints a rectangle with rounded corners.
 fn FillRound(scene mut metal.Scene, x f64, y f64, w f64, h f64, radius f64, c i64) {
 	let s = cv.Scale
-	scene.Rect(x * s, y * s, w * s, h * s, ui.R(c), ui.G(c), ui.B(c), ui.A(c), radius * s)
+	scene.Rect(x * s, y * s, w * s, h * s, c, radius * s)
 }
 
 // Stroke paints the edge of a rectangle, width points wide, inside it.
 fn Stroke(scene mut metal.Scene, x f64, y f64, w f64, h f64, radius f64, width f64, c i64) {
 	let s = cv.Scale
-	scene.Outline(x * s, y * s, w * s, h * s, ui.R(c), ui.G(c), ui.B(c), ui.A(c), radius * s, width * s)
+	scene.Outline(x * s, y * s, w * s, h * s, c, radius * s, width * s)
 }
 
 // Clip limits what is drawn next to a rectangle (points) until Unclip.

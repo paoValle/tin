@@ -66,6 +66,8 @@ The window is built the way Zed's is, with one difference that comes from Tin's 
 - **`workspace`**: the title bar, the left dock (project, git, outline, search, problems), tabs, the editor, the output panel,
   the status bar, the picker (go to file, command palette) and the project search. **`project`** is the folder tree with ignore
   rules, file operations, fuzzy matching and the search itself; it is portable.
+- **`terminal`**: the screen model of a VT100 style terminal (the grid, colors, scroll back); with `appkit.StartShell` (a
+  shell on a pseudo terminal) it is the terminal panel. The screen model is portable and tested.
 - **`editor`**: the text area (the buffer is `textedit`), its keys, completion, diagnostics, navigation and running a file.
 
 Where Zed keeps its state in `Rc` cells that live as long as they are referenced, Tin's request pool and ingot heap make a
@@ -75,4 +77,4 @@ and draws each frame in an `arena`, so a frame leaves nothing behind (memory sta
 resident size by nothing). The loop waits for the next AppKit event with `gpuwin.Pump`; AppKit calls the callbacks while it
 handles the event.
 
-Still to build: a terminal panel, tab splits, a settings file and keymaps, completion popups from a language server.
+Still to build: more than two panes, a settings file and keymaps, completion popups from a language server.

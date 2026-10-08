@@ -93,13 +93,19 @@ type Editor struct {
 	accX     f64
 	// Follow asks the next frame to scroll the caret into view (after typing or moving it, not after a wheel).
 	Follow   bool
+	// Marks are the lines git says differ from the last commit (line * 4 + 1 added, 2 changed, 3 lines removed above), for the file named
+	// MarksPath as it was when MarksSaves saves had happened; Saves counts the saves.
+	Marks    []i64
+	MarksPath str
+	MarksSaves i64
+	Saves    i64
 	dragging bool
 	clicks   i64
 	lastClick f64
 }
 
 fn New(buf textedit.Buffer) Editor {
-	let ed = Editor{Buf: buf, FindFrom: textedit.Pos{}, AreaW: 800.0, AreaH: 500.0, CharW: 7.8, LineH: 17.0, Redraw: true, Blink: true}
+	let ed = Editor{Buf: buf, FindFrom: textedit.Pos{}, Marks: []i64{}, AreaW: 800.0, AreaH: 500.0, CharW: 7.8, LineH: 17.0, Redraw: true, Blink: true}
 	ed.rawFor = -1
 	ed.Diags = []tinsym.Diag{}
 	ed.DiagFor = -1
@@ -232,13 +238,16 @@ fn (ed mut Editor) Load(path str) bool {
 	return true
 }
 
-// closeTab closes the active tab (asking about unsaved changes); closing the last one quits.
+// closeTab closes the active tab (asking about unsaved changes); closing the last one leaves an empty tab.
 fn (ed mut Editor) closeTab() {
 	if !ed.confirm() {
 		return
 	}
 	if len(ed.Tabs) == 1 {
-		ed.Quit = true
+		// the last tab closes into an empty one
+		ed.Tabs = []Tab{Tab{Buf: textedit.New()}}
+		ed.Active = -1
+		ed.activate(0)
 		return
 	}
 	let at = ed.Active
@@ -285,6 +294,7 @@ fn (ed mut Editor) save(asNew bool) bool {
 	}
 	ed.Buf.Path = path
 	ed.Buf.Dirty = false
+	ed.Saves += 1
 	ed.Say("saved " + path)
 	return true
 }
@@ -435,6 +445,9 @@ fn (ed mut Editor) handleKey(k Key) {
 		if alt && !b.HasSel {
 			b.WordLeft(true)
 		}
+		if !b.HasSel && ed.insidePair() {
+			b.Delete()
+		}
 		b.Backspace()
 	} else if k.Code == keyForwardDelete {
 		b.Delete()
@@ -464,7 +477,9 @@ fn (ed mut Editor) handleKey(k Key) {
 	} else if ctrl {
 		ed.controlKey(k)
 	} else if typeable(k.Chars) {
-		b.Insert(k.Chars)
+		if !ed.autoPair(k.Chars) {
+			b.Insert(k.Chars)
+		}
 		if k.Chars == "." && len(ed.Syms) > 0 {
 			ed.openCompletion()
 		}
@@ -799,14 +814,81 @@ fn (ed Editor) Cleanup() {
 // StatusLine is what the status bar says on the left: the find, replace or go-to-line prompt while one is open, otherwise the last
 // message (empty when there is none).
 fn (ed Editor) StatusLine() str {
-	if ed.Mode == modeFind {
-		return "Find: " + ed.Prompt + "_"
-	}
 	if ed.Mode == modeReplace {
-		return "Find: " + ed.Needle + "   Replace with: " + ed.Prompt + "_   (Return replaces, Cmd+Return all, Tab switches)"
+		return "Return replaces, Cmd+Return replaces all, Tab switches to the search text"
+	}
+	if ed.Mode == modeFind {
+		return "Return finds the next, Shift+Cmd+G the previous, Escape closes"
 	}
 	if ed.Mode == modeGoto {
-		return "Go to line: " + ed.Prompt + "_"
+		return "Type a line number and press Return"
 	}
 	return ed.Message
+}
+
+// closerOf is the character that closes an opening one ("" for a character that opens nothing).
+fn closerOf(ch str) str {
+	if ch == "(" {
+		return ")"
+	}
+	if ch == "[" {
+		return "]"
+	}
+	if ch == "{{" {
+		return "}}"
+	}
+	if ch == "\"" || ch == "'" || ch == "`" {
+		return ch
+	}
+	return ""
+}
+
+// charAt is the character at byte col of the line as a string ("" past the end or in the middle of a character).
+fn charAt(line str, col i64) str {
+	if col < 0 || col >= len(line) {
+		return ""
+	}
+	return line[col:col + 1]
+}
+
+// autoPair types a bracket or quote the way editors do: an opening one brings its closing one (with the caret between, and a
+// selection wrapped), and a closing one typed in front of the same one steps over it. It reports whether it handled the key.
+fn (ed mut Editor) autoPair(ch str) bool {
+	let b = ed.Buf
+	let line = b.Lines[b.Row]
+	let next = charAt(line, b.Col)
+	let prev = charAt(line, b.Col - 1)
+	if !b.HasSel && next == ch && (ch == ")" || ch == "]" || ch == "}}" || ch == "\"" || ch == "'" || ch == "`") {
+		b.Right(false)
+		return true
+	}
+	let close = closerOf(ch)
+	if len(close) == 0 {
+		return false
+	}
+	if b.HasSel {
+		let text = b.SelectedText()
+		b.Insert(ch + text + close)
+		return true
+	}
+	// a quote after a word character is an apostrophe or a closing quote, not a new pair
+	if (ch == "\"" || ch == "'" || ch == "`") && len(prev) > 0 && wordByte(prev[0]) {
+		return false
+	}
+	// only open a pair in front of nothing, a space or a closing character
+	if len(next) > 0 && next != " " && next != "\t" && next != ")" && next != "]" && next != "}}" {
+		return false
+	}
+	b.Insert(ch + close)
+	b.Left(false)
+	return true
+}
+
+// insidePair reports whether the caret sits between an opening character and its closing one ("()" with the caret in the middle).
+fn (ed Editor) insidePair() bool {
+	let b = ed.Buf
+	let line = b.Lines[b.Row]
+	let prev = charAt(line, b.Col - 1)
+	let next = charAt(line, b.Col)
+	return len(prev) > 0 && closerOf(prev) == next && len(next) > 0
 }

@@ -4,6 +4,7 @@ import "../render"
 import "../ui"
 import "appkit"
 import "mint"
+import "mint"
 import "twine"
 
 // The smaller panels of the left dock: the outline of the file, the problems the compiler found, and the files git says changed.
@@ -139,4 +140,57 @@ fn (ws mut Workspace) openDiag(i i64) {
 	let d = ws.Ed.Diags[i]
 	ws.Ed.Buf.MoveTo(max(d.Line - 1, 0), max(d.Col - 1, 0), false)
 	ws.Ed.Follow = true
+}
+
+// RefreshMarks asks git how the active file differs from the last commit (git diff with no context) and keeps the changed lines for
+// the editor's gutter.
+fn (ws mut Workspace) RefreshMarks() {
+	ws.Ed.MarksPath = ws.Ed.Buf.Path
+	ws.Ed.MarksSaves = ws.Ed.Saves
+	mut marks = []i64{}
+	if ws.HasProj && len(ws.Ed.Buf.Path) > 0 && twine.HasPrefix(ws.Ed.Buf.Path, ws.Proj.Root + "/") {
+		let (code, out) = appkit.RunCapture("git -C '" + ws.Proj.Root + "' diff -U0 --no-color -- '" + ws.Ed.Buf.Path + "'")
+		if code == 0 {
+			for line in twine.Split(out, "\n") {
+				if !twine.HasPrefix(line, "@@ ") {
+					continue
+				}
+				// @@ -a,b +c,d @@ (a count of 1 is left out)
+				let parts = twine.Split(line, " ")
+				if len(parts) < 3 {
+					continue
+				}
+				let (oldStart, oldCount) = hunkRange(parts[1])
+				let (start, newCount) = hunkRange(parts[2])
+				if newCount == 0 {
+					marks = append(marks, start * 4 + 3)
+				} else {
+					mut kind = 2
+					if oldCount == 0 {
+						kind = 1
+					}
+					for k in 0..newCount {
+						marks = append(marks, (start - 1 + k) * 4 + kind)
+					}
+				}
+			}
+		}
+	}
+	ws.Ed.Marks = marks
+}
+
+// hunkRange reads "-3,2" or "+4" (a count left out is one): the first line and the number of lines.
+fn hunkRange(tok str) (i64, i64) {
+	let body = twine.TrimLeft(tok, "+-")
+	let (first, count, found) = twine.Cut(body, ",")
+	let start = mint.Atoi(first) catch _ {
+		0
+	}
+	if !found {
+		return start, 1
+	}
+	let n = mint.Atoi(count) catch _ {
+		0
+	}
+	return start, n
 }
