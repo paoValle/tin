@@ -1583,17 +1583,37 @@ fn x_gen_elem_addr(e ElemExpr, d i64) {
 		mm_off = first + c * size
 		return
 	}
-	let idx = x_gen_val(ix, d1)
+	mut idx = 0
+	mut lenr = XSCR2
+	mut base_r = XSCR
+	if d1 >= t_count {
+		// No temp is left for the index (an amd64 leaf has five, and the header holds the
+		// last one): keep the header on the stack while the index is computed, then hold the
+		// index in the second scratch. h is a temp or a local register, never a scratch, so
+		// the pop cannot clobber the index, and h is the temp at depth d, whose header is dead
+		// once the base is read, so the base goes back into it: neither scratch may hold both
+		// (x_gen_dyn_addr moves the base out of XSCR) (#460). Without this the index landed in
+		// register 0 and a nested access clobbered it: a[b[c[d[e[f[g[h[i]]]]]]]] faulted.
+		x_push(h)
+		idx = x_gen_val(ix, d)
+		x_mov(XSCR2, idx)
+		x_pop(h)
+		idx = XSCR2
+		lenr = XSCR
+		base_r = h
+	} else {
+		idx = x_gen_val(ix, d1)
+	}
 	if e.safe == 0 {
-		x_ld(XSCR2, x_mem1(h, 0), 3)
-		emit2(X_CMP, idx, XSCR2)
-		emit2(X_JCC, XC_AE, trap_at(idx, XSCR2, 0))
+		x_ld(lenr, x_mem1(h, 0), 3)
+		emit2(X_CMP, idx, lenr)
+		emit2(X_JCC, XC_AE, trap_at(idx, lenr, 0))
 	}
 	if e.str != 0 {
 		mm_base = h
 	} else {
-		x_ld(XSCR, x_mem1(h, 16), 3)
-		mm_base = XSCR
+		x_ld(base_r, x_mem1(h, 16), 3)
+		mm_base = base_r
 	}
 	// Set after generating the index, which may itself be an element or field access.
 	mm_index = idx

@@ -1,0 +1,21 @@
+package main
+
+import "say"
+
+// A chain of element accesses whose index is the access inside it: on amd64 five temporaries run
+// out at the fifth level, and the index used to land in register 0, so the next nested access
+// clobbered the slice header it needed and this faulted (#460). The arrays hold the identity, so
+// every index stays in range and the answer is a[0].
+
+fn main() {
+	let a = []i64{7, 8, 9, 10, 11}
+	let b = []i64{0, 1, 2, 3, 4}
+	let c = []i64{0, 1, 2, 3, 4}
+	let d = []i64{0, 1, 2, 3, 4}
+	let e = []i64{0, 1, 2, 3, 4}
+	let f = []i64{0, 1, 2, 3, 4}
+	let g = []i64{0, 1, 2, 3, 4}
+	let h = []i64{0, 1, 2, 3, 4}
+	let i = 0
+	say.Line(a[b[c[d[e[f[g[h[i]]]]]]]])
+}

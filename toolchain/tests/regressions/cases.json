@@ -1103,5 +1103,15 @@
       "stdout": "[{0 0} {1 1} {2 4}]\n",
       "stderr": ""
     }
+  },
+  {
+    "source": "deep-index.tin",
+    "issue": 460,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "7\n",
+      "stderr": ""
+    }
   }
 ]
