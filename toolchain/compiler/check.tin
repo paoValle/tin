@@ -9541,6 +9541,15 @@ fn lower_match(m i64, mode i64, rec []Sym) i64 {
 				buf_str(u, " is already handled by the arm on line ")
 				buf_int(u, line)
 				err_end(cast([]u8, u))
+			} else if mt_lit == 3 && mt_le(mt_hi, mt_lo, unsigned) != 0 {
+				// lo..hi holds lo up to but not including hi: 10..0 and 5..5 hold nothing (#718).
+				let u = err_code(cast(Pattern, p).pos, "E292 MATCH_UNREACHABLE")
+				buf_str(u, "this pattern is never reached: the range ")
+				buf_int(u, mt_lo)
+				buf_str(u, "..")
+				buf_int(u, mt_hi)
+				buf_str(u, " is empty (a range includes its start and stops before its end)")
+				err_end(cast([]u8, u))
 			} else if mt_lit != 0 {
 				let line = mt_seen_line(seen_lits, seen_texts, unsigned)
 				if line != 0 {

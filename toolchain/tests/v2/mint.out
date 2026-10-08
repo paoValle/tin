@@ -45,6 +45,7 @@ parsefloat ".5" 0.5 false
 parsefloat "5." 5 false
 formatfloat 3.14 3.142e+00 3.14159
 formatfloat2 1e+21 -0.000123 100 1e-01
+formatfloat bx 6755399441055744p-52 0p-1074 -0x1.999999999999ap-04 0X1.000P+00 0x1.0p+01 0x1p-1074 %q
 quote "hi\n\"x\" é\x01\\" '☺' '\''
 unquote "a\tb" "a\tb" false
 unquote 'x' "x" false

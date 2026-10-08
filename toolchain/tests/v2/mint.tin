@@ -59,6 +59,8 @@ fn main() {
 	}
 	say.Line("formatfloat", mint.FormatFloat(3.14159, 'f', 2), mint.FormatFloat(3.14159, 'e', 3), mint.FormatFloat(3.14159, 'g', -1))
 	say.Line("formatfloat2", mint.FormatFloat(1e21, 'g', -1), mint.FormatFloat(-0.0001234, 'g', 3), mint.FormatFloat(100, 'f', -1), mint.FormatFloat(0.1, 'e', -1))
+	// 'b' and 'x' as Go writes them (#718).
+	say.Line("formatfloat bx", mint.FormatFloat(1.5, 'b', -1), mint.FormatFloat(0.0, 'b', -1), mint.FormatFloat(-0.1, 'x', -1), mint.FormatFloat(1.0, 'X', 3), mint.FormatFloat(1.96875, 'x', 1), mint.FormatFloat(5e-324, 'x', -1), mint.FormatFloat(1.5, 'q', -1))
 	say.Line("quote", mint.Quote("hi\n\"x\" é\x01\\"), mint.QuoteRune('☺'), mint.QuoteRune('\''))
 	let uqs = []str{"\"a\\tb\"", "'x'", "`raw\\n`", "\"bad", "\"\\u00e9\\x41\"", "'ab'", "\"\\q\""}
 	for _, s in uqs {

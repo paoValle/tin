@@ -2157,7 +2157,8 @@ Every arm can be reached: an arm after one that matches every value, a variant t
 earlier arm already handles, or an integer, `str` or `bool` constant that an earlier arm (or
 the same arm's list) already names or that an earlier constant range holds, never runs (#642).
 A guarded arm handles nothing for this rule, since its guard can fail. Ranges may overlap, the
-first arm winning; a range wholly inside an earlier one is unreachable.
+first arm winning; a range wholly inside an earlier one is unreachable, and so is an empty
+constant range (`10..0`, `5..5`: a range stops before its end, #718).
 
 ```tin edition=1
 package main

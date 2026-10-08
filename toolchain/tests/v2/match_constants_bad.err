@@ -5,3 +5,6 @@ toolchain/tests/v2/match_constants_bad.tin:34:3: error E292 MATCH_UNREACHABLE: t
 toolchain/tests/v2/match_constants_bad.tin:35:3: error E292 MATCH_UNREACHABLE: this pattern is never reached: the range is already handled by the arm on line 33
 toolchain/tests/v2/match_constants_bad.tin:37:3: error E292 MATCH_UNREACHABLE: this pattern is never reached: -1 is already handled by the arm on line 36
 toolchain/tests/v2/match_constants_bad.tin:46:3: error E292 MATCH_UNREACHABLE: this pattern is never reached: true is already handled by the arm on line 44
+toolchain/tests/v2/match_constants_bad.tin:53:3: error E292 MATCH_UNREACHABLE: this pattern is never reached: the range 10..0 is empty (a range includes its start and stops before its end)
+toolchain/tests/v2/match_constants_bad.tin:54:3: error E292 MATCH_UNREACHABLE: this pattern is never reached: the range 5..5 is empty (a range includes its start and stops before its end)
+toolchain/tests/v2/match_constants_bad.tin:59:3: error E292 MATCH_UNREACHABLE: this pattern is never reached: the range 250..10 is empty (a range includes its start and stops before its end)

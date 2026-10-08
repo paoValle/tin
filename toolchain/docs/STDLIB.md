@@ -535,7 +535,7 @@ Package mint converts numbers and quoted strings to and from text (like Go's str
 - `ParseBool(s str) !bool`: ParseBool parses 1 t T TRUE true True and 0 f F FALSE false False.
 - `ParseFloat(s str) !f64`: ParseFloat parses a Go float literal (decimal or 0x hex with p exponent, underscores, inf/infinity/nan) with exact nearest-even rounding; a finite literal beyond the largest f64 is a fault caused by ErrRange (with 0, where Go returns ±Inf).
 - `F64frombits(b u64) f64`: F64frombits returns the f64 with bit pattern b.
-- `FormatFloat(f f64, fmt u8, prec i64) str`: FormatFloat formats f as 'f' (ddd.ddd), 'e' (d.ddde±dd) or 'g' (shortest of the two); prec -1 is the shortest text that reads back exactly.
+- `FormatFloat(f f64, fmt u8, prec i64) str`: FormatFloat formats f as 'f' (ddd.ddd), 'e' (d.ddde±dd), 'g' (shortest of the two), 'b' (ddddp±ddd, a binary exponent) or 'x' (0x1.hhhhp±dd, hex mantissa); 'E', 'G' and 'X' are the upper-case forms, and any other byte gives "%" and the byte, as in Go. prec -1 is the shortest text that reads back exactly ('b' ignores it).
 - `Quote(s str) str`: Quote returns s as a Go double-quoted literal with \n-style, \x, \u and \U escapes.
 - `AppendQuote(b mut []u8, s str) []u8`: AppendQuote appends Quote(s) to b and returns b.
 - `QuoteRune(r i32) str`: QuoteRune returns r as a Go single-quoted rune literal (invalid runes become U+FFFD).
@@ -809,7 +809,7 @@ Package quarry is the operating system interface (like Go's os): arguments, envi
 
 ## spawn
 
-Package spawn starts child processes, like Go's os/exec: Run a program and collect its output, or Start it, talk to it through pipes, signal it or kill it. A program is never run through a shell: write []str{"sh", "-c", script} for one. On Linux the child is a clone that execs, and waits block on a pidfd; on macOS it is posix_spawn with file actions (POSIX_SPAWN_CLOEXEC_DEFAULT keeps the runtime's descriptors out of it) and waits block on a kqueue EVFILT_PROC, both through the scheduler's deadlines (#576).
+Package spawn starts child processes, like Go's os/exec: Run a program and collect its output, or Start it, talk to it through pipes, signal it or kill it. A program is never run through a shell: write []str{"sh", "-c", script} for one. On Linux the child is a clone that execs and waits block on a pidfd; on macOS it is posix_spawn with file actions (POSIX_SPAWN_CLOEXEC_DEFAULT keeps the runtime's descriptors out of it) and the wait sleeps through the scheduler, which carries the task's deadline on both (#576).
 
 - `type Stdio enum`: Stdio says where a child's standard descriptor points.
 - `type Env enum`: Env says which environment a child gets. A Tin slice has no nil, so where Go's exec.Cmd says "nil inherits and an empty list is empty", this package says so with a variant.

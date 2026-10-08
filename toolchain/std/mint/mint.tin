@@ -476,7 +476,10 @@ fn F64frombits(b u64) f64 {
 	return cast(f64, i64(b))
 }
 
-// FormatFloat formats f as 'f' (ddd.ddd), 'e' (d.ddde±dd) or 'g' (shortest of the two); prec -1 is the shortest text that reads back exactly.
+// FormatFloat formats f as 'f' (ddd.ddd), 'e' (d.ddde±dd), 'g' (shortest of the two), 'b'
+// (ddddp±ddd, a binary exponent) or 'x' (0x1.hhhhp±dd, hex mantissa); 'E', 'G' and 'X' are the
+// upper-case forms, and any other byte gives "%" and the byte, as in Go. prec -1 is the shortest
+// text that reads back exactly ('b' ignores it).
 fn FormatFloat(f f64, fmt u8, prec i64) str {
 	if f != f {
 		return "NaN"
@@ -486,6 +489,9 @@ fn FormatFloat(f f64, fmt u8, prec i64) str {
 	}
 	if f < -1.7976931348623157e308 {
 		return "-Inf"
+	}
+	if fmt == 'b' || fmt == 'x' || fmt == 'X' {
+		return formatBinary(f, fmt, prec)
 	}
 	if fmt != 'f' && fmt != 'e' && fmt != 'g' && fmt != 'E' && fmt != 'G' {
 		return "%" + str(fmt)
@@ -504,6 +510,90 @@ fn FormatFloat(f f64, fmt u8, prec i64) str {
 	}
 	let n = rt_number_format(buf, f, i64(fmt), prec)
 	return rt_str_from_raw(buf, n)
+}
+
+// formatBinary is FormatFloat's 'b', 'x' and 'X' for a finite f: Go's fmtB and fmtX (#718).
+fn formatBinary(f f64, fmt u8, prec i64) str {
+	let bits = u64(cast(i64, f))
+	let neg = bits >> 63 != 0
+	mut exp = i64((bits >> 52) & 0x7ff)
+	mut mant = bits & 0xfffffffffffff
+	if exp == 0 {
+		exp = 1
+	} else {
+		mant |= u64(1) << 52
+	}
+	exp -= 1023
+	mut out = ""
+	if neg {
+		out = "-"
+	}
+	if fmt == 'b' {
+		// -ddddp±ddd: the mantissa as an integer and the power of two it is scaled by.
+		let e = exp - 52
+		out += FormatUint(mant, 10) + "p"
+		if e >= 0 {
+			out += "+"
+		}
+		return out + Itoa(e)
+	}
+	// -0x1.hhhhp±dd, or -0x0p+00 for zero: the leading 1 shifted to bit 60.
+	if mant == 0 {
+		exp = 0
+	}
+	mant <<= 8
+	for mant != 0 && mant & (u64(1) << 60) == 0 {
+		mant <<= 1
+		exp -= 1
+	}
+	if prec >= 0 && prec < 15 {
+		// Round to prec hex digits, half to even.
+		let shift = prec * 4
+		let extra = (mant << shift) & ((u64(1) << 60) - 1)
+		mant >>= 60 - shift
+		if extra | (mant & 1) > u64(1) << 59 {
+			mant += 1
+		}
+		mant <<= 60 - shift
+		if mant & (u64(1) << 61) != 0 {
+			mant >>= 1
+			exp += 1
+		}
+	}
+	mut digits = "0123456789abcdef"
+	if fmt == 'X' {
+		digits = "0123456789ABCDEF"
+	}
+	out += "0" + str(fmt) + str('0' + i64((mant >> 60) & 1))
+	mant <<= 4
+	if prec < 0 && mant != 0 {
+		out += "."
+		for mant != 0 {
+			out += digits[i64((mant >> 60) & 15):i64((mant >> 60) & 15) + 1]
+			mant <<= 4
+		}
+	} else if prec > 0 {
+		out += "."
+		for i in 0..prec {
+			out += digits[i64((mant >> 60) & 15):i64((mant >> 60) & 15) + 1]
+			mant <<= 4
+		}
+	}
+	if fmt == 'X' {
+		out += "P"
+	} else {
+		out += "p"
+	}
+	if exp < 0 {
+		out += "-"
+		exp = -exp
+	} else {
+		out += "+"
+	}
+	if exp < 10 {
+		out += "0"
+	}
+	return out + Itoa(exp)
 }
 
 // shortest lays out the fewest digits that read back as f (taken from say.Str) in Go's 'e', 'f' or 'g' shape.

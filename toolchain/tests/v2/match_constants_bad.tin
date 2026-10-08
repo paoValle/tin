@@ -47,6 +47,21 @@ fn flag(b bool) i64 {
 	}
 }
 
+// An empty range holds nothing (#718).
+fn empty(n i64, u u8) str {
+	let a = match n {
+		10..0 => "never"
+		5..5 => "never"
+		0..10 => "small"
+		_ => "other"
+	}
+	let b = match u {
+		250..10 => "never"
+		_ => "any"
+	}
+	return a + b
+}
+
 fn main() {
-	say.Line(code(2), word("a"), list(1), status(404), flag(true))
+	say.Line(code(2), word("a"), list(1), status(404), flag(true), empty(1, 2))
 }
