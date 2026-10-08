@@ -13,7 +13,9 @@ bin/tinc -o tinland products/tinland/main.tin
 ```
 
 For an application with its own Dock icon and name in the menu bar, `tools/dev/tinland_app.sh` builds `bin/Tinland.app`
-(`open -a bin/Tinland.app --args /path/to/folder`).
+(`open -a bin/Tinland.app --args /path/to/folder`). The icon (a copper T with a text caret on slate, `icon/Tinland.icns`) is drawn by
+`tools/dev/tinland_icon.sh` with the same GPU scene the editor uses. Every release carries `Tinland-VERSION-darwin-arm64.zip`: unzip it and
+open it (it is signed ad hoc, not with a developer identity, so the first time use right click > Open).
 
 ## Keys
 

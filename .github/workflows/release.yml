@@ -91,6 +91,16 @@ jobs:
           else
             python3 tools/ci/distribution_check.py "bin/dist/tin-$VERSION-$TARGET.tar.gz"
           fi
+      - name: Build Tinland.app (macOS)
+        if: runner.os == 'macOS'
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          tools/dev/tinland_app.sh bin/app
+          zip_name="Tinland-$VERSION-$TARGET.zip"
+          (cd bin/app && ditto -c -k --keepParent Tinland.app "../dist/$zip_name")
+          (cd bin/dist && shasum -a 256 "$zip_name" > "$zip_name.sha256")
       - name: Publish the tested native image
         if: runner.os == 'Linux'
         env:
@@ -137,7 +147,7 @@ jobs:
           docker buildx imagetools inspect "$image:$VERSION" --raw | python3 -c 'import json,sys; d=json.load(sys.stdin); assert sorted(m["platform"]["architecture"] for m in d["manifests"]) == ["amd64","arm64"]'
           if [ "${VERSION#*-}" = "$VERSION" ]; then
             docker buildx imagetools create -t "$image:latest" "$image:$VERSION"
-            gh release create "v$VERSION" release/*.tar.gz release/SHA256SUMS release/install.sh --verify-tag --title "Tin $VERSION" --generate-notes
+            gh release create "v$VERSION" release/*.tar.gz release/*.zip release/SHA256SUMS release/install.sh --verify-tag --title "Tin $VERSION" --generate-notes
           else
-            gh release create "v$VERSION" release/*.tar.gz release/SHA256SUMS release/install.sh --verify-tag --title "Tin $VERSION" --generate-notes --prerelease
+            gh release create "v$VERSION" release/*.tar.gz release/*.zip release/SHA256SUMS release/install.sh --verify-tag --title "Tin $VERSION" --generate-notes --prerelease
           fi

@@ -1,0 +1,49 @@
+package main
+
+import "metal"
+import "quarry"
+import "say"
+
+// Draws the Tinland icon with the GPU scene (rounded rectangles only) at every size an .icns needs and writes them as PNGs into the
+// directory given, named as `iconutil` wants them. tools/dev/tinland_icon.sh runs it and builds products/tinland/icon/Tinland.icns.
+
+// col packs a color the scene takes (0xRRGGBB and an alpha from 0 to 1).
+fn col(rgb i64, a f64) i64 {
+	return (rgb << 8) | i64(a * 255.0 + 0.5)
+}
+
+// draw paints the icon into a scene of size by size pixels: coordinates are written for 1024 and scaled.
+fn draw(size i64) metal.Scene {
+	let k = f64(size) / 1024.0
+	mut s = metal.Scene{}
+	// the plate: a slate rounded square with a faint edge
+	s.Rect(100.0 * k, 100.0 * k, 824.0 * k, 824.0 * k, col(0x1b2029, 1.0), 185.0 * k)
+	s.Outline(100.0 * k, 100.0 * k, 824.0 * k, 824.0 * k, col(0x3a4556, 0.9), 185.0 * k, 7.0 * k)
+	// the T in copper: the bar, the stem, a lighter edge along the top of the bar
+	s.Rect(272.0 * k, 290.0 * k, 480.0 * k, 104.0 * k, col(0xe0955a, 1.0), 52.0 * k)
+	s.Rect(464.0 * k, 290.0 * k, 104.0 * k, 450.0 * k, col(0xe0955a, 1.0), 52.0 * k)
+	s.Rect(310.0 * k, 306.0 * k, 404.0 * k, 22.0 * k, col(0xf4bd8c, 0.55), 11.0 * k)
+	// the caret of a text cursor, in mint, beside the stem
+	s.Rect(640.0 * k, 560.0 * k, 44.0 * k, 180.0 * k, col(0x8fd1b0, 1.0), 22.0 * k)
+	return s
+}
+
+fn main() {
+	let dir = quarry.Args()[1]
+	let g = metal.Open()
+	if g.Device == 0 {
+		say.Line("no GPU: cannot draw the icon")
+		return
+	}
+	let atlas = metal.NewAtlas(g, 64)
+	atlas.Upload()
+	let names = []str{"icon_16x16", "icon_16x16@2x", "icon_32x32", "icon_32x32@2x", "icon_128x128", "icon_128x128@2x", "icon_256x256", "icon_256x256@2x", "icon_512x512", "icon_512x512@2x"}
+	let sizes = []i64{16, 32, 32, 64, 128, 256, 256, 512, 512, 1024}
+	for i in 0..len(names) {
+		let t = metal.NewTarget(g, sizes[i], sizes[i])
+		metal.Draw(g, t.Texture, sizes[i], sizes[i], draw(sizes[i]), atlas, 0.0, 0.0, 0.0, 0.0)
+		if !metal.SavePNG(t, dir + "/" + names[i] + ".png") {
+			say.Line("cannot write", names[i])
+		}
+	}
+}
