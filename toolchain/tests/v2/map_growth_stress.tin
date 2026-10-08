@@ -1,0 +1,62 @@
+package main
+
+import "say"
+
+// Incremental growth of a chunked map (#484): a lookup that runs while the index is being
+// migrated must still find every key inserted before the doubling began. The benchmark that
+// caught the one-off linux-amd64 miss (bench/v2/hashmap.tin) inserts everything first, so it
+// only ever looks up during the migration by accident; this fixture looks up earlier keys on
+// every insert, across whole migrations, and then checks every key once more when they are
+// over. The value of a key is the index it was inserted at, so a lookup that returns the
+// wrong entry is as loud as one that misses.
+
+@wrap fn lcg(k i64) i64 {
+	return k*6364136223846793005 + 1442695040888963407
+}
+
+fn main() {
+	// Past the 2^21 and 2^22 slot doublings, which is where the report's missing value
+	// (2^22 + 16) sits.
+	let n = i64(4200000)
+	let m = make(map[i64]i64)
+	// The last four keys inserted, re-checked on every step so lookups run through the whole
+	// migration (sixteen entries move per operation).
+	mut k1 = i64(0)
+	mut k2 = i64(0)
+	mut k3 = i64(0)
+	mut k4 = i64(0)
+	mut k = i64(12345)
+	mut bad = i64(0)
+	for i in i64(0)..n {
+		k = lcg(k)
+		m[k] = i
+		if i > 4 {
+			if m[k4] != i-4 {
+				bad += 1
+			}
+			if m[k3] != i-3 {
+				bad += 1
+			}
+			if m[k2] != i-2 {
+				bad += 1
+			}
+			if m[k1] != i-1 {
+				bad += 1
+			}
+		}
+		k4 = k3
+		k3 = k2
+		k2 = k1
+		k1 = k
+	}
+	// Every key once more, from the same sequence, with the map no longer growing.
+	mut kk = i64(12345)
+	mut after = i64(0)
+	for i in i64(0)..n {
+		kk = lcg(kk)
+		if m[kk] != i {
+			after += 1
+		}
+	}
+	say.Line(len(m), bad, after)
+}
