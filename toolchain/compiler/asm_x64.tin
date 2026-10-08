@@ -85,6 +85,7 @@ const X_ADC = 83 // a=rd b=rs: rd += rs + CF (an add's carry, #488)
 const X_ADCI = 84 // a=rd b=imm32: rd += imm + CF
 const X_ROLI = 85 // a=rd b=imm8: rotate left (#488)
 const X_ALIGN = 86 // a=boundary (a power of two) b=fill (0 int3, 1 nops): pads pc up to the boundary
+const X_LINE = 87 // a=source position: marks where a statement starts for the debug line table (-g); no code (dwarf.tin)
 
 const XK_SIGNED = 4
 
@@ -381,6 +382,9 @@ fn x64_fits32(v i64) i64 {
 // x64_size returns the encoded length of ins at pc without recording relocations; branch
 // sizes follow from their form alone, so labels still being placed are never range-checked.
 fn x64_size(ins i64, pc i64) i64 {
+	if ins[0] == X_LINE {
+		return 0
+	}
 	if ins[0] == X_JMP || ins[0] == X_JCC {
 		if ins[4] != 0 {
 			return 2
@@ -809,6 +813,9 @@ fn x64_rel(out []u8, target i64, short i64) {
 
 // x64_encode appends the machine code of ins at address pc to out and returns its length.
 fn x64_encode(ins i64, pc i64, out []u8) i64 {
+	if ins[0] == X_LINE {
+		return 0
+	}
 	let start = len(out)
 	x64_base = pc - start
 	let op = ins[0]

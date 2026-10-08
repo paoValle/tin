@@ -242,13 +242,24 @@ fn write_executable(path str) {
 		extra_cmds = extra_cmds + 24 + align_up(len(lk_dylibs[di]) + 1, 8)
 		di = di + 1
 	}
-	let ncmds = NCMDS + len(lk_dylibs) - 1
-	let cmds_size = CMDS_SIZE + extra_cmds
+	// -g adds a __DWARF segment with three sections: 72 + 3 * 80 bytes of load command.
+	mut dwarf_cmds = 0
+	mut dwarf_n = 0
+	if debug_lines != 0 {
+		dwarf_cmds = 72 + 3 * 80
+		dwarf_n = 1
+	}
+	let ncmds = NCMDS + len(lk_dylibs) - 1 + dwarf_n
+	let cmds_size = CMDS_SIZE + extra_cmds + dwarf_cmds
 
 	// Addresses: code, stubs, strings, then the data segment.
 	let text_off = align_up(32 + cmds_size, 16)
 	let text_addr = TEXT_BASE + text_off
 	relax_branches()
+	if debug_lines != 0 {
+		dwarf_extract(text_addr)
+		dwarf_build()
+	}
 	lk_labels = slice_filled(g_labels + 1, 0)
 	mut pc = text_addr
 	i = 0
@@ -292,7 +303,17 @@ fn write_executable(path str) {
 	lk_data = data_vm + 8 * nimp
 	lk_fndescs = lk_data + 8 * nvars
 	let data_size = align_up(8 * (nimp + nvars) + 16 * len(prog_fns) + 8, PAGE)
-	let link_off = text_size + data_size
+	// the DWARF sections, in a segment of their own between __DATA and __LINKEDIT
+	let dwarf_off = text_size + data_size
+	mut dwarf_bytes = 0
+	if debug_lines != 0 {
+		dwarf_bytes = dwarf_size()
+	}
+	mut dwarf_vmsize = 0
+	if debug_lines != 0 {
+		dwarf_vmsize = align_up(dwarf_bytes, PAGE)
+	}
+	let link_off = dwarf_off + dwarf_vmsize
 
 	// Linkedit contents: bind opcodes, then function symbols and their names.
 	let bind_ = buf_new()
@@ -374,7 +395,13 @@ fn write_executable(path str) {
 	p = w_segment(p, "__DATA", data_vm, data_size, text_size, data_size, 3, 2)
 	p = w_section(p, "__got", "__DATA", lk_got, 8 * nimp, 3, 0)
 	p = w_section(p, "__data", "__DATA", lk_data, 8 * nvars + 16 * len(prog_fns), 3, 0)
-	p = w_segment(p, "__LINKEDIT", data_vm + data_size, align_up(link_size, PAGE), link_off, link_size, 1, 0)
+	if debug_lines != 0 {
+		p = w_segment(p, "__DWARF", TEXT_BASE + dwarf_off, dwarf_vmsize, dwarf_off, dwarf_bytes, 1, 3)
+		p = w_section(p, "__debug_line", "__DWARF", TEXT_BASE + dwarf_off, len(dw_sec_line), 0, 0x02000000)
+		p = w_section(p, "__debug_info", "__DWARF", TEXT_BASE + dwarf_off + len(dw_sec_line), len(dw_sec_info), 0, 0x02000000)
+		p = w_section(p, "__debug_abbrev", "__DWARF", TEXT_BASE + dwarf_off + len(dw_sec_line) + len(dw_sec_info), len(dw_sec_abbrev), 0, 0x02000000)
+	}
+	p = w_segment(p, "__LINKEDIT", TEXT_BASE + link_off, align_up(link_size, PAGE), link_off, link_size, 1, 0)
 	put32(p, 0x80000022)
 	put32(p + 4, 48)
 	put32(p + 16, link_off)
@@ -429,6 +456,22 @@ fn write_executable(path str) {
 	put32(p + 4, 16)
 	put32(p + 8, sig_off)
 	put32(p + 12, sig_size)
+
+	if debug_lines != 0 {
+		mut at = mo + dwarf_off
+		for x in dw_sec_line {
+			store8(at, x)
+			at = at + 1
+		}
+		for x in dw_sec_info {
+			store8(at, x)
+			at = at + 1
+		}
+		for x in dw_sec_abbrev {
+			store8(at, x)
+			at = at + 1
+		}
+	}
 
 	// Machine code, then the import stubs: adrp x16, got; ldr x16, [x16, got]; br x16.
 	mut q = mo + text_off

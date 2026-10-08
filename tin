@@ -3,7 +3,7 @@
 #
 #   tin FILE.tin [ARGS...]          compile and run
 #   tin run [--polls] FILE.tin... [-- ARGS]   compile and run several files as one program
-#   tin build FILE.tin... [-o OUT] [--target T] [--polls]  executable (darwin-arm64, linux-arm64, linux-amd64)
+#   tin build FILE.tin... [-o OUT] [--target T] [--polls] [-g]  executable (darwin-arm64, linux-arm64, linux-amd64)
 #   tin asm FILE.tin...             print the generated ARM64 assembly
 #   tin audit secrets [-edition 1] FILE.tin...  list every reveal and secret library argument
 #   tin fix -edition 1 FILES...    rewrite legacy syntax to edition 1
@@ -28,9 +28,10 @@ export TIN_ROOT="$root"
 target=
 polls=
 strip=
+debug=
 compile() { # out files...
   out=$1; shift
-  "$tinc" $polls $strip ${target:+-target} ${target:+"$target"} -o "$out" "$@"
+  "$tinc" $polls $strip $debug ${target:+-target} ${target:+"$target"} -o "$out" "$@"
 }
 
 cache=${TMPDIR:-/tmp}/tin-$(id -u)
@@ -59,6 +60,7 @@ case $1 in
         --polls|-polls) polls=-polls ;;
         --nopolls|-nopolls) polls=-nopolls ;;
         --strip|-strip) strip=-strip ;;
+        --debug|-g) debug=-g ;;
         *) files="$files \"\${$i}\""; [ -n "$first" ] || first=$a ;;
       esac
     done

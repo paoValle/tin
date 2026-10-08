@@ -1,0 +1,650 @@
+// DWARF for the executables (tinc -g): a line table and the functions' names and extents, so a debugger and perf show
+// source lines and names (#409 macOS, #370 Linux). Code generation puts an I_LINE marker (the position of the
+// statement) before each statement; once branches are relaxed and the addresses are known, dwarf_extract reads the
+// addresses off, takes the markers out of the code, and dwarf_sections writes .debug_line, .debug_info and
+// .debug_abbrev (DWARF 4; addresses are the final virtual addresses, so there is nothing to relocate).
+shared mut debug_lines i64 // -g
+shared mut dw_addr []i64 // address of each marker
+shared mut dw_pos []i64 // and the source position it stands for
+shared mut dw_fname []str // each function: name, start, end and position of its declaration
+shared mut dw_flow []i64
+shared mut dw_fend []i64
+shared mut dw_fpos []i64
+shared mut dw_fns []Fn // the functions themselves, for their parameters and locals
+shared mut dw_lo i64 // the code's first and last address
+shared mut dw_hi i64
+shared mut dw_sec_line []u8 // the sections, built by dwarf_build
+shared mut dw_sec_info []u8
+shared mut dw_sec_abbrev []u8
+
+fn dwarf_reset() {
+	dw_addr = []i64{}
+	dw_pos = []i64{}
+	dw_fname = []str{}
+	dw_flow = []i64{}
+	dw_fend = []i64{}
+	dw_fpos = []i64{}
+	dw_fns = []Fn{}
+}
+
+// dwarf_extract takes the I_LINE markers out of the ARM64 code, which starts at address base, and records where they were
+// and where each function starts and ends.
+fn dwarf_extract(base i64) {
+	dwarf_reset()
+	mut out = []Fn{}
+	mut pc = base
+	mut cur = -1
+	mut i = 0
+	for i < len(code) {
+		let op = cast(i64, code[i])
+		if op == I_LINE {
+			dw_addr = append(dw_addr, pc)
+			dw_pos = append(dw_pos, cast(i64, code[i + 1]))
+			i = i + 5
+			continue
+		}
+		if op == I_FUNC {
+			if cur >= 0 {
+				dw_fend[cur] = pc
+			}
+			let f = cast(Fn, code[i + 1])
+			dw_fname = append(dw_fname, f.qname)
+			dw_flow = append(dw_flow, pc)
+			dw_fend = append(dw_fend, pc)
+			dw_fpos = append(dw_fpos, f.pos)
+			dw_fns = append(dw_fns, f)
+			cur = len(dw_fname) - 1
+		} else if op != I_LABEL {
+			pc = pc + 4
+		}
+		out = relax_put(out, op, cast(i64, code[i + 1]), cast(i64, code[i + 2]), cast(i64, code[i + 3]), cast(i64, code[i + 4]))
+		i = i + 5
+	}
+	if cur >= 0 {
+		dw_fend[cur] = pc
+	}
+	dw_lo = base
+	dw_hi = pc
+	code = out
+}
+
+fn dw_u16(b []u8, v i64) {
+	buf_byte(b, v & 255)
+	buf_byte(b, (v >> 8) & 255)
+}
+
+fn dw_u32(b []u8, v i64) {
+	dw_u16(b, v & 0xffff)
+	dw_u16(b, (v >> 16) & 0xffff)
+}
+
+fn dw_u64(b []u8, v i64) {
+	dw_u32(b, v & 0xffffffff)
+	dw_u32(b, (v >> 32) & 0xffffffff)
+}
+
+fn dw_uleb(b []u8, v_in i64) {
+	mut v = v_in
+	for v >= 128 {
+		buf_byte(b, (v & 127) | 128)
+		v = v >> 7
+	}
+	buf_byte(b, v)
+}
+
+fn dw_sleb(b []u8, v_in i64) {
+	mut v = v_in
+	mut more = 1
+	for more != 0 {
+		let byte = v & 127
+		v = v >> 7
+		if (v == 0 && (byte & 64) == 0) || (v == -1 && (byte & 64) != 0) {
+			more = 0
+			buf_byte(b, byte)
+		} else {
+			buf_byte(b, byte | 128)
+		}
+	}
+}
+
+fn dw_cstr(b []u8, s str) {
+	buf_str(b, s)
+	buf_byte(b, 0)
+}
+
+// dw_line builds .debug_line: the header with every loaded file, then one sequence over all the code.
+fn dw_line() []u8 {
+	let hdr = buf_new()
+	buf_byte(hdr, 1) // minimum instruction length
+	buf_byte(hdr, 1) // maximum operations per instruction
+	buf_byte(hdr, 1) // default is_stmt
+	buf_byte(hdr, 251) // line base -5
+	buf_byte(hdr, 14) // line range
+	buf_byte(hdr, 13) // opcode base
+	let lens = []i64{0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1}
+	for l in lens {
+		buf_byte(hdr, l)
+	}
+	buf_byte(hdr, 0) // no include directories: file names are as loaded, relative to the compilation directory
+	for f in files {
+		dw_cstr(hdr, f)
+		buf_byte(hdr, 0)
+		buf_byte(hdr, 0)
+		buf_byte(hdr, 0)
+	}
+	buf_byte(hdr, 0)
+	let prog = buf_new()
+	buf_byte(prog, 0)
+	dw_uleb(prog, 9)
+	buf_byte(prog, 2)
+	dw_u64(prog, dw_lo)
+	mut addr = dw_lo
+	mut line = 1
+	mut file = 1
+	mut col = 0
+	mut k = 0
+	for k < len(dw_addr) {
+		let pos = dw_pos[k]
+		let f = (pos >> 48) + 1
+		let l = (pos >> 16) & 0xffffffff
+		let c = pos & 0xffff
+		// the last marker at an address wins: the statement that really starts there
+		if k + 1 < len(dw_addr) && dw_addr[k + 1] == dw_addr[k] {
+			k = k + 1
+			continue
+		}
+		if f != file {
+			buf_byte(prog, 4)
+			dw_uleb(prog, f)
+			file = f
+		}
+		if c != col {
+			buf_byte(prog, 5)
+			dw_uleb(prog, c)
+			col = c
+		}
+		if l != line {
+			buf_byte(prog, 3)
+			dw_sleb(prog, l - line)
+			line = l
+		}
+		if dw_addr[k] != addr {
+			buf_byte(prog, 2)
+			dw_uleb(prog, dw_addr[k] - addr)
+			addr = dw_addr[k]
+		}
+		buf_byte(prog, 1)
+		k = k + 1
+	}
+	buf_byte(prog, 2)
+	dw_uleb(prog, dw_hi - addr)
+	buf_byte(prog, 0)
+	dw_uleb(prog, 1)
+	buf_byte(prog, 1)
+	let b = buf_new()
+	dw_u32(b, 2 + 4 + len(hdr) + len(prog))
+	dw_u16(b, 4)
+	dw_u32(b, len(hdr))
+	for x in hdr {
+		buf_byte(b, i64(x))
+	}
+	for x in prog {
+		buf_byte(b, i64(x))
+	}
+	return b
+}
+
+// The abbreviations: 1 compile unit, 2 subprogram, 3 parameter, 4 variable, 5 base type, 6 pointer, 7 structure, 8 member.
+fn dw_abbrev_entry(b []u8, code i64, tag i64, children i64, attrs []i64) {
+	dw_uleb(b, code)
+	dw_uleb(b, tag)
+	buf_byte(b, children)
+	for x in attrs {
+		dw_uleb(b, x)
+	}
+	buf_byte(b, 0)
+	buf_byte(b, 0)
+}
+
+// dw_abbrev builds .debug_abbrev.
+fn dw_abbrev() []u8 {
+	let b = buf_new()
+	dw_abbrev_entry(b, 1, 0x11, 1, []i64{0x25, 0x08, 0x13, 0x05, 0x03, 0x08, 0x1b, 0x08, 0x11, 0x01, 0x12, 0x07, 0x10, 0x17})
+	dw_abbrev_entry(b, 2, 0x2e, 1, []i64{0x03, 0x08, 0x11, 0x01, 0x12, 0x07, 0x3f, 0x19, 0x3a, 0x05, 0x3b, 0x06})
+	dw_abbrev_entry(b, 3, 0x05, 0, []i64{0x03, 0x08, 0x49, 0x13, 0x02, 0x18})
+	dw_abbrev_entry(b, 4, 0x34, 0, []i64{0x03, 0x08, 0x49, 0x13, 0x02, 0x18})
+	dw_abbrev_entry(b, 5, 0x24, 0, []i64{0x03, 0x08, 0x0b, 0x0b, 0x3e, 0x0b})
+	dw_abbrev_entry(b, 6, 0x0f, 0, []i64{0x0b, 0x0b, 0x49, 0x13})
+	dw_abbrev_entry(b, 7, 0x13, 1, []i64{0x03, 0x08, 0x0b, 0x06})
+	dw_abbrev_entry(b, 8, 0x0d, 0, []i64{0x03, 0x08, 0x49, 0x13, 0x38, 0x06})
+	buf_byte(b, 0)
+	return b
+}
+
+// ---- types ----
+// A type becomes a unit of DIEs: a base type, or a pointer followed by the structure it points to (a str, a slice or a
+// struct is a pointer to its fields; a value struct is the structure alone). References between units are patched once
+// every unit's offset is known.
+shared mut dwt_ty []i64 // the Ty of each unit
+shared mut dwt_off []i64 // its offset in .debug_info
+shared mut dwt_units [][]u8
+shared mut dwt_fix_unit []i64 // fixups: the unit and position of a 4-byte reference, the unit it refers to and the delta into it
+shared mut dwt_fix_pos []i64
+shared mut dwt_fix_tgt []i64
+shared mut dwt_fix_delta []i64
+
+// dwt_reg registers a type (and the types it refers to) and returns its unit's index, or -1 when it has no usable type.
+fn dwt_reg(t i64) i64 {
+	if t < 65536 {
+		return -1
+	}
+	let ty = cast(Ty, t)
+	if ty.under != 0 && ty.kind != K_STRUCT {
+		return dwt_reg(ty.under)
+	}
+	if ty.kind == K_OPT && opt_scalar(ty) == 0 && ty.elem >= 65536 && cast(Ty, ty.elem).kind == K_STRUCT {
+		return dwt_reg(ty.elem)
+	}
+	mut i = 0
+	for i < len(dwt_ty) {
+		if dwt_ty[i] == t {
+			return i
+		}
+		i = i + 1
+	}
+	let idx = len(dwt_ty)
+	dwt_ty = append(dwt_ty, t)
+	if ty.kind == K_SLICE {
+		dwt_reg(ty.elem)
+	} else if ty.kind == K_STRUCT {
+		mut j = 0
+		for j < len(ty.fields) {
+			dwt_reg(cast(Field, ty.fields[j]).ty)
+			j = j + 1
+		}
+	}
+	return idx
+}
+
+fn dwt_fixup(unit i64, b []u8, target i64, delta i64) {
+	dwt_fix_unit = append(dwt_fix_unit, unit)
+	dwt_fix_pos = append(dwt_fix_pos, len(b))
+	dwt_fix_tgt = append(dwt_fix_tgt, target)
+	dwt_fix_delta = append(dwt_fix_delta, delta)
+	dw_u32(b, 0)
+}
+
+fn dwt_base(b []u8, name str, size i64, enc i64) {
+	dw_uleb(b, 5)
+	dw_cstr(b, name)
+	buf_byte(b, size)
+	buf_byte(b, enc)
+}
+
+// dwt_member writes a member DIE of a structure: its name, the unit its type is in (-1: the unit's own pointer-to-elem
+// DIE at self_delta) and its offset.
+fn dwt_member(b []u8, unit i64, name str, ty i64, delta i64, off i64) {
+	dw_uleb(b, 8)
+	dw_cstr(b, name)
+	dwt_fixup(unit, b, ty, delta)
+	dw_u32(b, off)
+}
+
+// dwt_pointer_to_self writes a pointer DIE whose target is the next DIE of the unit.
+fn dwt_pointer_to_self(b []u8, unit i64, size_of_pointer_die i64) {
+	dw_uleb(b, 6)
+	buf_byte(b, 8)
+	dwt_fixup(unit, b, unit, size_of_pointer_die)
+}
+
+// dwt_unit builds the DIEs of unit i.
+fn dwt_unit(i i64) []u8 {
+	let b = buf_new()
+	let t = cast(Ty, dwt_ty[i])
+	let k = t.kind
+	let tname = buf_new()
+	type_name(tname, t)
+	let name = str(tname)
+	let int_unit = dwt_reg(ty_int)
+	let byte_unit = dwt_reg(ty_byte)
+	if k == K_INT {
+		mut size = t.width
+		if size == 0 {
+			size = 8
+		}
+		mut enc = 7
+		if t.signed != 0 {
+			enc = 5
+		}
+		dwt_base(b, name, size, enc)
+	} else if k == K_BOOL {
+		dwt_base(b, name, 1, 2)
+	} else if k == K_BYTE {
+		dwt_base(b, name, 1, 8)
+	} else if k == K_FLOAT {
+		mut size = t.width
+		if size == 0 {
+			size = 8
+		}
+		dwt_base(b, name, size, 4)
+	} else if k == K_STRING {
+		dwt_pointer_to_self(b, i, 6)
+		dw_uleb(b, 7)
+		dw_cstr(b, "str")
+		dw_u32(b, 9)
+		dwt_member(b, i, "len", int_unit, 0, 0)
+		dwt_member(b, i, "data", byte_unit, 0, 8)
+		buf_byte(b, 0)
+	} else if k == K_SLICE {
+		// pointer, structure {len, cap, data, region}, pointer to the element type
+		dwt_pointer_to_self(b, i, 6)
+		let struct_at = len(b)
+		dw_uleb(b, 7)
+		dw_cstr(b, name)
+		dw_u32(b, 32)
+		dwt_member(b, i, "len", int_unit, 0, 0)
+		dwt_member(b, i, "cap", int_unit, 0, 8)
+		let elem = dwt_reg(t.elem)
+		dwt_member(b, i, "data", i, 0, 16)
+		dwt_member(b, i, "region", int_unit, 0, 24)
+		buf_byte(b, 0)
+		// the data member points at this pointer-to-element DIE, which comes last
+		let at = len(b)
+		dw_uleb(b, 6)
+		buf_byte(b, 8)
+		if elem >= 0 {
+			dwt_fixup(i, b, elem, 0)
+		} else {
+			dwt_fixup(i, b, int_unit, 0)
+		}
+		// patch "data" to refer to it (a unit-relative delta)
+		let n = len(dwt_fix_unit)
+		mut f = n - 1
+		for f >= 0 {
+			if dwt_fix_unit[f] == i && dwt_fix_tgt[f] == i && dwt_fix_delta[f] == 0 && dwt_fix_pos[f] > struct_at {
+				dwt_fix_delta[f] = at
+				break
+			}
+			f = f - 1
+		}
+	} else if k == K_STRUCT {
+		if t.value == 0 {
+			dwt_pointer_to_self(b, i, 6)
+		}
+		dw_uleb(b, 7)
+		dw_cstr(b, name)
+		dw_u32(b, t.size)
+		mut j = 0
+		for j < len(t.fields) {
+			let f = cast(Field, t.fields[j])
+			let ft = dwt_reg(f.ty)
+			if ft >= 0 && f.arr == 0 {
+				dwt_member(b, i, f.name, ft, 0, f.off)
+			}
+			j = j + 1
+		}
+		buf_byte(b, 0)
+	} else {
+		// anything else (a map, a function, an enum, ...): its word, shown as a number
+		dwt_base(b, name, 8, 7)
+	}
+	return b
+}
+
+// dwt_layout builds every unit and gives each its offset, the first at base, then patches the references.
+fn dwt_layout(base i64) {
+	dwt_units = [][]u8{}
+	dwt_fix_unit = []i64{}
+	dwt_fix_pos = []i64{}
+	dwt_fix_tgt = []i64{}
+	dwt_fix_delta = []i64{}
+	dwt_off = []i64{}
+	mut i = 0
+	// units registered while building (a member's type) are built in turn, so the loop runs to the end
+	for i < len(dwt_ty) {
+		dwt_units = append(dwt_units, dwt_unit(i))
+		i = i + 1
+	}
+	mut off = base
+	i = 0
+	for i < len(dwt_units) {
+		dwt_off = append(dwt_off, off)
+		off = off + len(dwt_units[i])
+		i = i + 1
+	}
+	i = 0
+	for i < len(dwt_fix_unit) {
+		let at = dwt_fix_pos[i]
+		let v = dwt_off[dwt_fix_tgt[i]] + dwt_fix_delta[i]
+		let u = dwt_units[dwt_fix_unit[i]]
+		u[at] = u8(v & 255)
+		u[at + 1] = u8((v >> 8) & 255)
+		u[at + 2] = u8((v >> 16) & 255)
+		u[at + 3] = u8((v >> 24) & 255)
+		i = i + 1
+	}
+}
+
+// ---- variables ----
+
+// dw_reg is the DWARF number of a register the backend names r (arm64: the same; x86-64: its own order).
+fn dw_reg(r i64) i64 {
+	if tgt_x64 == 0 {
+		return r
+	}
+	if r >= XMM {
+		return 17 + r - XMM
+	}
+	// Tin x86-64 numbers rax rcx rdx rbx rsp rbp rsi rdi r8..r15; DWARF rax rdx rcx rbx rsi rdi rbp rsp r8..r15
+	if r == 1 {
+		return 2
+	}
+	if r == 2 {
+		return 1
+	}
+	if r == 4 {
+		return 7
+	}
+	if r == 5 {
+		return 6
+	}
+	if r == 6 {
+		return 4
+	}
+	if r == 7 {
+		return 5
+	}
+	return r
+}
+
+// dw_frame_reg is the DWARF number of the frame pointer slots are addressed from.
+fn dw_frame_reg() i64 {
+	if tgt_x64 != 0 {
+		return 6
+	}
+	return 29
+}
+
+// dw_location is the location expression of a local variable or parameter ("" when it has no place to show).
+fn dw_location(s Sym) str {
+	let t = cast(Ty, s.type_)
+	if s.captured != 0 || s.cell != 0 || is_dyn_value(t) != 0 || s.view != 0 {
+		return ""
+	}
+	let b = buf_new()
+	let value_struct = is_value_struct(t) != 0
+	if s.reg >= 0 {
+		let r = dw_reg(s.reg)
+		if value_struct {
+			buf_byte(b, 0x70 + r)
+			dw_sleb(b, 0)
+		} else if r < 32 {
+			buf_byte(b, 0x50 + r)
+		} else {
+			buf_byte(b, 0x90)
+			dw_uleb(b, r)
+		}
+	} else if s.reg == REG_SLOT {
+		buf_byte(b, 0x70 + dw_frame_reg())
+		dw_sleb(b, s.off)
+		if value_struct && s.addr == 0 {
+			// the slot holds the address of the struct (a mut parameter)
+			buf_byte(b, 0x06)
+		}
+	} else {
+		return ""
+	}
+	return str(b)
+}
+
+// dw_vars writes the parameter and variable DIEs of function f.
+fn dw_vars(body []u8, f Fn) {
+	mut i = 0
+	for i < len(f.locals) {
+		let s = f.locals[i]
+		i = i + 1
+		if cast(i64, s) < 65536 || len(s.name) == 0 || s.name[0] == '$' || s.kind != SYM_LOCAL {
+			continue
+		}
+		let loc = dw_location(s)
+		let ty = dwt_reg(s.type_)
+		if len(loc) == 0 || ty < 0 {
+			continue
+		}
+		mut param = false
+		if i - 1 < len(f.params) && f.params[i - 1] == s.name {
+			param = true
+		}
+		if param {
+			dw_uleb(body, 3)
+		} else {
+			dw_uleb(body, 4)
+		}
+		dw_cstr(body, s.name)
+		dw_u32(body, dwt_off[ty])
+		dw_uleb(body, len(loc))
+		buf_str(body, loc)
+	}
+}
+
+// dw_info builds .debug_info: one compilation unit holding the types, and a subprogram for each function with its
+// parameters and variables.
+fn dw_info() []u8 {
+	// the types first: every parameter and variable of every function registers its own
+	dwt_ty = []i64{}
+	dwt_reg(ty_int)
+	dwt_reg(ty_byte)
+	let probe = buf_new()
+	let cu = buf_new()
+	dw_uleb(cu, 1)
+	dw_cstr(cu, "tinc")
+	dw_u16(cu, 0x0c)
+	mut name = ""
+	if len(files) > 0 {
+		name = files[0]
+	}
+	dw_cstr(cu, name)
+	let pwd = host_getenv("PWD")
+	if pwd != 0 {
+		dw_cstr(cu, host_str(pwd))
+	} else {
+		dw_cstr(cu, "")
+	}
+	dw_u64(cu, dw_lo)
+	dw_u64(cu, dw_hi - dw_lo)
+	dw_u32(cu, 0)
+	mut i = 0
+	for i < len(dw_fns) {
+		let f = dw_fns[i]
+		mut k = 0
+		for k < len(f.locals) {
+			let s = f.locals[k]
+			if cast(i64, s) >= 65536 && s.kind == SYM_LOCAL && len(s.name) > 0 && len(dw_location(s)) > 0 {
+				dwt_reg(s.type_)
+			}
+			k = k + 1
+		}
+		i = i + 1
+	}
+	dwt_layout(11 + len(cu))
+	let body = buf_new()
+	for u in dwt_units {
+		for x in u {
+			buf_byte(body, i64(x))
+		}
+	}
+	i = 0
+	for i < len(dw_fname) {
+		dw_uleb(body, 2)
+		dw_cstr(body, dw_fname[i])
+		dw_u64(body, dw_flow[i])
+		dw_u64(body, dw_fend[i] - dw_flow[i])
+		dw_u16(body, (dw_fpos[i] >> 48) + 1)
+		dw_u32(body, (dw_fpos[i] >> 16) & 0xffffffff)
+		if cast(i64, dw_fns[i]) >= 65536 {
+			dw_vars(body, dw_fns[i])
+		}
+		buf_byte(body, 0)
+		i = i + 1
+	}
+	buf_byte(body, 0)
+	let b = buf_new()
+	dw_u32(b, 2 + 4 + 1 + len(cu) + len(body))
+	dw_u16(b, 4)
+	dw_u32(b, 0)
+	buf_byte(b, 8)
+	for x in cu {
+		buf_byte(b, i64(x))
+	}
+	for x in body {
+		buf_byte(b, i64(x))
+	}
+	return b
+}
+
+// dwarf_build makes the three sections from what dwarf_extract recorded; the executable writers lay them out.
+fn dwarf_build() {
+	dw_sec_line = dw_line()
+	dw_sec_info = dw_info()
+	dw_sec_abbrev = dw_abbrev()
+}
+
+// dwarf_size is the bytes of the three sections together.
+fn dwarf_size() i64 {
+	return len(dw_sec_line) + len(dw_sec_info) + len(dw_sec_abbrev)
+}
+
+// dwarf_collect_x64 records the markers of the x86-64 code, laid out from base (x64_layout has fixed every size): each
+// marker's address, and where each function in own starts and ends (end is where the code ends). The markers stay in the
+// code: they encode to nothing.
+fn dwarf_collect_x64(base i64, own []Fn, end i64) {
+	dwarf_reset()
+	mut pc = base
+	mut i = 0
+	for i < len(code) {
+		let ins = slice_data(code) + 8 * i
+		if ins[0] == X_LINE {
+			dw_addr = append(dw_addr, pc)
+			dw_pos = append(dw_pos, ins[1])
+		} else {
+			pc = pc + x64_size(ins, pc)
+		}
+		i = i + 5
+	}
+	i = 0
+	for i < len(own) {
+		let f = own[i]
+		dw_fname = append(dw_fname, f.qname)
+		dw_flow = append(dw_flow, f.addr)
+		if i + 1 < len(own) {
+			dw_fend = append(dw_fend, own[i + 1].addr)
+		} else {
+			dw_fend = append(dw_fend, end)
+		}
+		dw_fpos = append(dw_fpos, f.pos)
+		dw_fns = append(dw_fns, f)
+		i = i + 1
+	}
+	dw_lo = base
+	dw_hi = end
+}

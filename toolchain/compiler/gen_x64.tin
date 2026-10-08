@@ -2759,6 +2759,9 @@ fn x_result_reg(f Fn) i64 {
 
 fn x_gen_stmt(s i64) {
 	let k = cast(Node, s).kind
+	if debug_lines != 0 && k != ST_BLOCK && cast(Node, s).pos != NO_POS {
+		emit1(X_LINE, cast(Node, s).pos)
+	}
 	if k == ST_BLOCK {
 		x_gen_stmts(cast(Block, s).stmts)
 	} else if k == ST_LET {

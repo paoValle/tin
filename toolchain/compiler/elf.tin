@@ -29,8 +29,18 @@ fn el_extra(data_end i64, nfn i64) i64 {
 	if link_strip != 0 {
 		return 0
 	}
-	let sh = align_up(align_up(data_end, 8) + 24 * (nfn + 1) + 39, 8)
-	return sh + 64 * 6 - data_end
+	mut names = 39
+	mut dwb = 0
+	mut shnum = 6
+	if debug_lines != 0 {
+		// -g: .debug_line, .debug_info and .debug_abbrev, with their names and three more section headers
+		names = 77
+		dwb = dwarf_size()
+		shnum = 9
+	}
+	let dw_off = align_up(align_up(data_end, 8) + 24 * (nfn + 1) + names, 8)
+	let sh = align_up(dw_off + dwb, 8)
+	return sh + 64 * shnum - data_end
 }
 
 fn el_shdr(p i64, name i64, typ i64, flags i64, addr i64, off i64, size i64) {
@@ -86,8 +96,26 @@ fn el_symbols(img i64, own []Fn, name_off []i64, lay []i64) {
 	buf_byte(names, 0)
 	buf_str(names, ".shstrtab")
 	buf_byte(names, 0)
+	mut shnum = 6
+	mut dwb = 0
+	if debug_lines != 0 {
+		buf_str(names, ".debug_line")
+		buf_byte(names, 0)
+		buf_str(names, ".debug_info")
+		buf_byte(names, 0)
+		buf_str(names, ".debug_abbrev")
+		buf_byte(names, 0)
+		shnum = 9
+		dwb = dwarf_size()
+	}
 	memcpy(img + shstr, slice_data(names), len(names))
-	let sh = align_up(shstr + 39, 8)
+	let dw_off = align_up(shstr + len(names), 8)
+	if debug_lines != 0 {
+		memcpy(img + dw_off, slice_data(dw_sec_line), len(dw_sec_line))
+		memcpy(img + dw_off + len(dw_sec_line), slice_data(dw_sec_info), len(dw_sec_info))
+		memcpy(img + dw_off + len(dw_sec_line) + len(dw_sec_info), slice_data(dw_sec_abbrev), len(dw_sec_abbrev))
+	}
+	let sh = align_up(dw_off + dwb, 8)
 	mut p = img + sh + 64
 	el_shdr(p, 1, 1, 6, lay[3], lay[3], lay[5] - lay[3])
 	el_shdr_link(p, 0, 0, 16, 0)
@@ -101,10 +129,21 @@ fn el_symbols(img i64, own []Fn, name_off []i64, lay []i64) {
 	el_shdr(p, 21, 3, 0, 0, lay[1], lay[2])
 	el_shdr_link(p, 0, 0, 1, 0)
 	p = p + 64
-	el_shdr(p, 29, 3, 0, 0, shstr, 39)
+	el_shdr(p, 29, 3, 0, 0, shstr, len(names))
 	el_shdr_link(p, 0, 0, 1, 0)
+	if debug_lines != 0 {
+		p = p + 64
+		el_shdr(p, 39, 1, 0, 0, dw_off, len(dw_sec_line))
+		el_shdr_link(p, 0, 0, 1, 0)
+		p = p + 64
+		el_shdr(p, 51, 1, 0, 0, dw_off + len(dw_sec_line), len(dw_sec_info))
+		el_shdr_link(p, 0, 0, 1, 0)
+		p = p + 64
+		el_shdr(p, 63, 1, 0, 0, dw_off + len(dw_sec_line) + len(dw_sec_info), len(dw_sec_abbrev))
+		el_shdr_link(p, 0, 0, 1, 0)
+	}
 	put64(img + 40, sh)
-	put32(img + 60, 6 | (5 << 16))
+	put32(img + 60, shnum | (5 << 16))
 }
 
 // el_check_static stops the link when the program would import a function: a Linux
@@ -177,6 +216,10 @@ fn write_elf(path str) {
 	let start_addr = text_addr
 	mut pc = text_addr + 4 * E_START_WORDS
 	relax_branches()
+	if debug_lines != 0 {
+		dwarf_extract(pc)
+		dwarf_build()
+	}
 	lk_labels = slice_filled(g_labels + 1, 0)
 	i = 0
 	for i < len(code) {

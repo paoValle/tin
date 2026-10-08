@@ -123,6 +123,7 @@ const I_EXTR = 118 // a=rd b=rn c=rm d=lsb: 64 bits of rn:rm from bit lsb; ror r
 const I_ADDISH = 119 // a=rd b=rn c=imm12: add rd, rn, #imm12, lsl #12
 const I_SUBISH = 120 // sub rd, rn, #imm12, lsl #12
 const I_FPARG = 121 // a=rt b=incoming byte offset: the caller's stack argument, expanded once the frame is known
+const I_LINE = 122 // a=source position: marks where a statement starts for the debug line table (-g); no code, taken out before linking (dwarf.tin)
 const MK_SIGNED = 4
 const MK_FLOAT = 8
 const MK_SCALED = 16
@@ -1237,7 +1238,7 @@ fn relax_branches() {
 			let op = cast(i64, code[i])
 			if op == I_LABEL {
 				labels[cast(i64, code[i + 1])] = pc
-			} else if op != I_FUNC {
+			} else if op != I_FUNC && op != I_LINE {
 				pc = pc + 4
 			}
 			i = i + 5
@@ -1276,7 +1277,7 @@ fn relax_branches() {
 			} else {
 				out = relax_put(out, op, cast(i64, code[i + 1]), cast(i64, code[i + 2]), cast(i64, code[i + 3]), cast(i64, code[i + 4]))
 			}
-			if op != I_LABEL && op != I_FUNC {
+			if op != I_LABEL && op != I_FUNC && op != I_LINE {
 				addr = addr + 4
 			}
 			i = i + 5

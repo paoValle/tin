@@ -125,6 +125,10 @@ fn write_elf_x64(path str) {
 	}
 	mut pc = code_addr + code_size
 	lk_stubs = pc // the end of the code: there are no import stubs
+	if debug_lines != 0 {
+		dwarf_collect_x64(code_addr, cast([]Fn, cast([]i64, own)), lk_stubs)
+		dwarf_build()
+	}
 	lk_strs = []i64{}
 	i = 0
 	for i < len(g_str_ptrs) {

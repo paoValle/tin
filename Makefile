@@ -1,6 +1,6 @@
 SELF = toolchain/compiler/entry.tin toolchain/compiler/records.tin toolchain/compiler/util.tin toolchain/compiler/lex.tin toolchain/compiler/types.tin toolchain/compiler/secret.tin toolchain/compiler/parse.tin \
        toolchain/compiler/check.tin toolchain/compiler/lower.tin toolchain/compiler/generics.tin toolchain/compiler/region.tin toolchain/compiler/inline.tin toolchain/compiler/opt.tin toolchain/compiler/asm.tin toolchain/compiler/gen.tin toolchain/compiler/asm_x64.tin toolchain/compiler/gen_x64.tin \
-       toolchain/compiler/memory_fast.tin toolchain/compiler/syscall_fast.tin toolchain/compiler/sha256.tin toolchain/compiler/aes_hw.tin toolchain/compiler/macho.tin toolchain/compiler/elf.tin toolchain/compiler/elf_x64.tin toolchain/compiler/caps.tin toolchain/compiler/fixes.tin toolchain/compiler/main.tin \
+       toolchain/compiler/memory_fast.tin toolchain/compiler/syscall_fast.tin toolchain/compiler/sha256.tin toolchain/compiler/aes_hw.tin toolchain/compiler/macho.tin toolchain/compiler/elf.tin toolchain/compiler/elf_x64.tin toolchain/compiler/caps.tin toolchain/compiler/fixes.tin toolchain/compiler/dwarf.tin toolchain/compiler/main.tin \
        toolchain/compiler/host_$(HOST_OS).tin
 
 .PHONY: all bootstrap seed test bench clean install dist linux-bootstrap linux-amd64-bootstrap linux-test
