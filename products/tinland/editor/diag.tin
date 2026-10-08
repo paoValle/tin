@@ -1,6 +1,6 @@
-package main
+package editor
 
-import "appkit"
+import "language"
 import "mint"
 import "quarry"
 import "tinsym"
@@ -9,17 +9,9 @@ import "twine"
 // Diagnostics: the compiler checks the text being edited (tinc -check -json with the buffer as an overlay) when typing
 // pauses, and the errors are underlined where they are, marked in the gutter, and explained in the status line.
 
-// tinRoot is the tree the compiler belongs to when it is <root>/bin/tinc ("" otherwise).
-fn tinRoot(compiler str) str {
-	if twine.HasSuffix(compiler, "/bin/tinc") {
-		return compiler[:len(compiler) - 9]
-	}
-	return ""
-}
-
-// checkNow runs the compiler on the active buffer (tinc -symbols -json, with the unsaved text as an overlay) and keeps
-// the errors and the declarations it reports.
-fn (ed mut Editor) checkNow() {
+// CheckNow has the compiler check the active buffer (the unsaved text is an overlay) and keeps the errors and the
+// declarations it reports.
+fn (ed mut Editor) CheckNow() {
 	ed.DiagFor = ed.Buf.Version
 	if !twine.HasSuffix(ed.Buf.Path, ".tin") {
 		ed.Diags = []tinsym.Diag{}
@@ -33,27 +25,10 @@ fn (ed mut Editor) checkNow() {
 	quarry.WriteFile(overlay, ed.Buf.Text()) catch _ {
 		return
 	}
-	let compiler = compilerPath()
-	mut env = ""
-	let root = tinRoot(compiler)
-	if len(root) > 0 {
-		env = "TIN_ROOT=" + quoted(root) + " "
-	}
-	let (code, out) = appkit.RunCapture(env + quoted(compiler) + " -symbols -json -overlay " + quoted(ed.Buf.Path + "=" + overlay) + " " + quoted(ed.Buf.Path))
-	if code == 127 || code == -1 {
-		ed.Diags = []tinsym.Diag{}
-		return
-	}
-	let (syms, all) = tinsym.Parse(out)
-	mut mine = []tinsym.Diag{}
-	for d in all {
-		if d.File == ed.Buf.Path {
-			mine = append(mine, d)
-		}
-	}
-	ed.Diags = mine
+	let (syms, diags, ok) = language.Check(ed.Buf.Path, overlay)
+	ed.Diags = diags
 	// a file that does not parse gives no declarations: keep the last ones
-	if len(syms) > 0 || code == 0 {
+	if ok {
 		ed.Syms = syms
 	}
 	ed.Redraw = true

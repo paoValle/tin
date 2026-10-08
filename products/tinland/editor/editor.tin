@@ -1,4 +1,4 @@
-package main
+package editor
 
 import "appkit"
 import "mint"
@@ -98,7 +98,7 @@ type Editor struct {
 	lastClick f64
 }
 
-fn newEditor(buf textedit.Buffer) Editor {
+fn New(buf textedit.Buffer) Editor {
 	let ed = Editor{Buf: buf, Win: appkit.Window{}, Bmp: appkit.Bitmap{}, FindFrom: textedit.Pos{}, FontSize: 13.0, Scale: 2.0, PtW: 900.0, PtH: 600.0, Redraw: true, Blink: true}
 	ed.rawFor = -1
 	ed.Diags = []tinsym.Diag{}
@@ -110,7 +110,7 @@ fn newEditor(buf textedit.Buffer) Editor {
 }
 
 // name is the file's name for the title and the status line.
-fn (ed Editor) name() str {
+fn (ed Editor) Name() str {
 	if len(ed.Buf.Path) == 0 {
 		return "untitled"
 	}
@@ -177,7 +177,7 @@ fn nameOf(b textedit.Buffer) str {
 
 // load opens the file at path in a tab (switching to the tab that already has it, and reusing an untouched
 // empty tab).
-fn (ed mut Editor) load(path str) bool {
+fn (ed mut Editor) Load(path str) bool {
 	ed.stash()
 	mut i = 0
 	for i < len(ed.Tabs) {
@@ -249,7 +249,7 @@ fn (ed mut Editor) save(asNew bool) bool {
 			ed.say("no file name")
 			return false
 		}
-		path = appkit.SavePanel(ed.name())
+		path = appkit.SavePanel(ed.Name())
 		if len(path) == 0 {
 			return false
 		}
@@ -606,7 +606,7 @@ fn (ed mut Editor) openFile() {
 	}
 	let path = appkit.OpenPanel()
 	if len(path) > 0 {
-		ed.load(path)
+		ed.Load(path)
 	}
 }
 
@@ -615,7 +615,7 @@ fn (ed mut Editor) confirm() bool {
 	if !ed.Buf.Dirty || ed.Headless {
 		return true
 	}
-	let answer = appkit.Alert("Save changes to " + ed.name() + "?", "Your changes will be lost if you don't save them.", []str{"Save", "Don't Save", "Cancel"})
+	let answer = appkit.Alert("Save changes to " + ed.Name() + "?", "Your changes will be lost if you don't save them.", []str{"Save", "Don't Save", "Cancel"})
 	if answer == 2 {
 		return false
 	}
@@ -777,7 +777,7 @@ fn (ed mut Editor) tmp(name str) str {
 }
 
 // cleanup removes the private temporary directory.
-fn (ed Editor) cleanup() {
+fn (ed Editor) Cleanup() {
 	if len(ed.TmpDir) > 0 {
 		quarry.RemoveAll(ed.TmpDir) catch _ {
 		}

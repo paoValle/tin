@@ -1,0 +1,71 @@
+package app
+
+import "appkit"
+import "editor"
+
+// item adds a menu item: its title, the key shown beside it (with Shift when shift is set) and its command.
+fn item(m appkit.Menu, menu i64, title str, key str, shift bool, cmd i64) {
+	mut mods = appkit.ModCmd
+	if shift {
+		mods = mods | appkit.ModShift
+	}
+	appkit.AddItem(m, menu, title, key, mods, cmd)
+}
+
+// BuildMenus installs the menu bar: the application, File, Edit, Find and Window menus.
+fn BuildMenus(win appkit.Window) appkit.Menu {
+	let m = appkit.NewMenuBar(win)
+	let app = appkit.AddMenu(m, "Tinland")
+	appkit.AddSystemItem(app, "About Tinland", "orderFrontStandardAboutPanel:", "", 0)
+	appkit.AddSeparator(app)
+	appkit.AddSystemItem(app, "Hide Tinland", "hide:", "h", appkit.ModCmd)
+	appkit.AddSystemItem(app, "Hide Others", "hideOtherApplications:", "h", appkit.ModCmd | appkit.ModAlt)
+	appkit.AddSystemItem(app, "Show All", "unhideAllApplications:", "", 0)
+	appkit.AddSeparator(app)
+	item(m, app, "Quit Tinland", "q", false, editor.CmdQuit)
+
+	let file = appkit.AddMenu(m, "File")
+	item(m, file, "New", "n", false, editor.CmdNew)
+	item(m, file, "Open...", "o", false, editor.CmdOpen)
+	appkit.AddSeparator(file)
+	item(m, file, "Save", "s", false, editor.CmdSave)
+	item(m, file, "Save As...", "s", true, editor.CmdSaveAs)
+	appkit.AddSeparator(file)
+	item(m, file, "Close Tab", "w", false, editor.CmdClose)
+	item(m, file, "Run", "r", false, editor.CmdRun)
+
+	let edit = appkit.AddMenu(m, "Edit")
+	item(m, edit, "Undo", "z", false, editor.CmdUndo)
+	item(m, edit, "Redo", "z", true, editor.CmdRedo)
+	appkit.AddSeparator(edit)
+	item(m, edit, "Cut", "x", false, editor.CmdCut)
+	item(m, edit, "Copy", "c", false, editor.CmdCopy)
+	item(m, edit, "Paste", "v", false, editor.CmdPaste)
+	item(m, edit, "Select All", "a", false, editor.CmdSelectAll)
+	appkit.AddSeparator(edit)
+	item(m, edit, "Toggle Comment", "/", false, editor.CmdComment)
+	item(m, edit, "Duplicate Line", "d", false, editor.CmdDuplicate)
+	item(m, edit, "Delete Line", "k", true, editor.CmdDeleteLine)
+	item(m, edit, "Indent", "]", false, editor.CmdIndent)
+	item(m, edit, "Unindent", "[", false, editor.CmdUnindent)
+	item(m, edit, "Format Document", "i", true, editor.CmdFormat)
+
+	let find = appkit.AddMenu(m, "Find")
+	item(m, find, "Find and Replace...", "f", false, editor.CmdFind)
+	item(m, find, "Find Next", "g", false, editor.CmdFindNext)
+	item(m, find, "Find Previous", "g", true, editor.CmdFindPrev)
+	item(m, find, "Go to Line...", "l", false, editor.CmdGoto)
+
+	let navigate = appkit.AddMenu(m, "Navigate")
+	item(m, navigate, "Go to Declaration", "b", false, editor.CmdDefinition)
+	appkit.AddItem(m, navigate, "Back", "\xef\x9c\x82", appkit.ModCmd | appkit.ModAlt, editor.CmdBack)
+	appkit.AddItem(m, navigate, "Quick Info", "q", appkit.ModCtrl, editor.CmdInfo)
+	appkit.AddItem(m, navigate, "Complete", " ", appkit.ModCtrl, editor.CmdComplete)
+
+	let window = appkit.AddMenu(m, "Window")
+	appkit.AddSystemItem(window, "Minimize", "performMiniaturize:", "m", appkit.ModCmd)
+	appkit.AddSystemItem(window, "Zoom", "performZoom:", "", 0)
+	appkit.SetWindowsMenu(win, window)
+	appkit.HookCloseButton(win, m, editor.CmdQuit)
+	return m
+}

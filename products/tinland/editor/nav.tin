@@ -1,4 +1,4 @@
-package main
+package editor
 
 import "textedit"
 import "tinsym"
@@ -23,7 +23,7 @@ fn (ed mut Editor) gotoDefinition() {
 	}
 	let sym = found[0]
 	let here = Place{Path: ed.Buf.Path, Row: ed.Buf.Row, Col: ed.Buf.Col}
-	if sym.File != ed.Buf.Path && !ed.load(sym.File) {
+	if sym.File != ed.Buf.Path && !ed.Load(sym.File) {
 		return
 	}
 	ed.Back = append(ed.Back, here)
@@ -39,7 +39,7 @@ fn (ed mut Editor) goBack() {
 	}
 	let at = ed.Back[len(ed.Back) - 1]
 	ed.Back = ed.Back[:len(ed.Back) - 1]
-	if at.Path != ed.Buf.Path && !ed.load(at.Path) {
+	if at.Path != ed.Buf.Path && !ed.Load(at.Path) {
 		return
 	}
 	ed.Buf.MoveTo(at.Row, at.Col, false)

@@ -1,33 +1,8 @@
-package main
+package editor
 
 import "appkit"
-import "mint"
-import "quarry"
 import "textedit"
 import "twine"
-
-// Tinland: a text editor written in Tin. With a path it opens that file; with TINLAND_SCRIPT set it runs the
-// script without a window (see script.tin); with TINLAND_SMOKE=N the window closes itself after N seconds.
-fn main() {
-	mut ed = newEditor(textedit.New())
-	let args = quarry.Args()
-	mut a = 1
-	for a < len(args) {
-		ed.load(args[a])
-		a += 1
-	}
-	let script = quarry.Getenv("TINLAND_SCRIPT")
-	if len(script) > 0 {
-		ed.Headless = true
-		ed.Scale = 1.0
-		ed.fontFor()
-		runScript(mut ed, script)
-		ed.cleanup()
-		return
-	}
-	run(mut ed)
-	ed.cleanup()
-}
 
 // pointToCell moves the caret to where the mouse is (x and y in points from the window's bottom left).
 fn (ed mut Editor) mouseTo(x f64, y f64, extend bool) {
@@ -52,8 +27,8 @@ fn (ed mut Editor) mouseTo(x f64, y f64, extend bool) {
 	ed.Redraw = true
 }
 
-// handleEvent acts on one window event; the ones the editor does not use go to AppKit.
-fn (ed mut Editor) handleEvent(e i64) {
+// HandleEvent acts on one window event; the ones the editor does not use go to AppKit.
+fn (ed mut Editor) HandleEvent(e i64) {
 	let t = appkit.EventType(e)
 	if t == appkit.EventKeyDown {
 		mut chars = appkit.EventChars(e)
@@ -110,64 +85,4 @@ fn (ed mut Editor) handleEvent(e i64) {
 		return
 	}
 	appkit.Dispatch(ed.Win, e)
-}
-
-// run opens the window and handles events until it is closed.
-fn run(ed mut Editor) {
-	let win = appkit.OpenWindow("Tinland", ed.PtW, ed.PtH)
-	ed.Win = win
-	ed.Scale = appkit.Scale(win)
-	ed.fontFor()
-	let menu = buildMenus(win)
-	let smoke = quarry.Getenv("TINLAND_SMOKE")
-	mut ticks = 0
-	mut limitTicks = -1
-	if len(smoke) > 0 {
-		let seconds = mint.Atoi(smoke) catch _ {
-			0
-		}
-		limitTicks = seconds * 2
-	}
-	for !ed.Quit && appkit.IsOpen(win) && (limitTicks < 0 || ticks < limitTicks) {
-		let pool = appkit.PoolPush()
-		mut e = appkit.WaitEvent(win, 0.5)
-		if e == 0 {
-			// nothing happened for half a second: check what was typed, and blink the caret
-			if ed.DiagFor != ed.Buf.Version {
-				ed.checkNow()
-			}
-			ed.Blink = !ed.Blink
-			ed.Redraw = true
-			ticks += 1
-		}
-		for e != 0 {
-			ed.handleEvent(e)
-			e = appkit.WaitEvent(win, 0.0)
-		}
-		mut cmd = appkit.NextCommand(menu)
-		for cmd >= 0 {
-			ed.perform(cmd)
-			cmd = appkit.NextCommand(menu)
-		}
-		let (w, h) = appkit.ContentSize(win)
-		if w > 0.0 && (w != ed.PtW || h != ed.PtH) {
-			ed.PtW = w
-			ed.PtH = h
-			ed.Redraw = true
-		}
-		if ed.Redraw {
-			ed.render()
-			appkit.Present(win, ed.Bmp)
-			ed.Redraw = false
-			mut title = ed.name()
-			if ed.Buf.Dirty {
-				title = title + " (edited)"
-			}
-			if title != ed.Title {
-				ed.Title = title
-				appkit.SetTitle(win, title + " - Tinland")
-			}
-		}
-		appkit.PoolPop(pool)
-	}
 }

@@ -1,4 +1,4 @@
-package main
+package editor
 
 import "appkit"
 import "mint"
@@ -36,7 +36,7 @@ fn colorOf(kind i64) (f64, f64, f64) {
 }
 
 // fontFor sets the metrics from the font size and the screen's scale: Menlo's advance is 0.602 em.
-fn (ed mut Editor) fontFor() {
+fn (ed mut Editor) FontFor() {
 	let px = ed.FontSize * ed.Scale
 	ed.CharW = px * 0.602
 	ed.LineH = px * 1.4
@@ -142,7 +142,7 @@ fn (ed mut Editor) ensureBitmap() {
 		appkit.FreeBitmap(ed.Bmp)
 	}
 	ed.Bmp = appkit.NewBitmap(w, h)
-	ed.fontFor()
+	ed.FontFor()
 	appkit.SetFont(ed.Bmp, "Menlo-Regular", ed.FontSize * ed.Scale)
 	ed.Redraw = true
 }
@@ -171,7 +171,7 @@ fn (ed Editor) drawUnicode(x f64, top f64, text str, r f64, g f64, b f64) {
 }
 
 // render draws the whole editor into the bitmap.
-fn (ed mut Editor) render() {
+fn (ed mut Editor) Render() {
 	ed.ensureBitmap()
 	ed.updateRaw()
 	ed.ensureVisible()
@@ -307,7 +307,7 @@ fn (ed mut Editor) statusBar() {
 		ed.draw(ed.CharW, ty, "Go to line: " + ed.Prompt + "_", 0.95, 0.85, 0.5)
 		return
 	}
-	mut left = ed.name()
+	mut left = ed.Name()
 	if ed.Buf.Dirty {
 		left = left + " *"
 	}

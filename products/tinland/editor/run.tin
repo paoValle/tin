@@ -1,38 +1,10 @@
-package main
+package editor
 
-import "appkit"
-import "mint"
-import "quarry"
+import "language"
 import "twine"
 
 // output is what the last Run printed, shown in a panel above the status line until Escape.
 const outputRows = 10
-
-// compilerPath is the Tin compiler to run files with: TINLAND_TINC, else tinc from the PATH.
-fn compilerPath() str {
-	let c = quarry.Getenv("TINLAND_TINC")
-	if len(c) > 0 {
-		return c
-	}
-	return "tinc"
-}
-
-// quoted is s as one word for sh.
-fn quoted(s str) str {
-	return "'" + twine.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
-// capture runs a program (standard error folded into the output) for at most ten seconds and returns its exit
-// code and everything it printed. The time limit is perl's alarm, which is on every Mac.
-fn capture(argv []str) (i64, str) {
-	mut words = []str{}
-	mut i = 0
-	for i < len(argv) {
-		words = append(words, quoted(argv[i]))
-		i += 1
-	}
-	return appkit.RunCapture("exec perl -e 'alarm 10; exec @ARGV' " + twine.Join(words, " "))
-}
 
 // runFile compiles the active file with tinc and runs it, collecting the output into the panel.
 fn (ed mut Editor) runFile() {
@@ -48,16 +20,7 @@ fn (ed mut Editor) runFile() {
 		ed.say("no private temporary directory")
 		return
 	}
-	let (code, text) = capture([]str{compilerPath(), "-o", exe, ed.Buf.Path})
-	mut shown = text
-	mut title = "compile failed"
-	if code == 0 {
-		let (rc, out) = capture([]str{exe})
-		shown = out
-		title = "exit " + mint.Itoa(rc)
-	}
-	let lines = twine.Split(twine.TrimSpace(shown), "\n")
-	ed.Output = append([]str{"-- " + ed.name() + ": " + title}, lines...)
+	ed.Output = language.Run(ed.Buf.Path, exe, ed.Name())
 	ed.OutputOpen = true
 	ed.Redraw = true
 }
@@ -73,7 +36,7 @@ fn (ed mut Editor) jumpTo(text str) bool {
 	if row < 1 || len(parts[0]) == 0 {
 		return false
 	}
-	if parts[0] != ed.Buf.Path && !ed.load(parts[0]) {
+	if parts[0] != ed.Buf.Path && !ed.Load(parts[0]) {
 		return false
 	}
 	let at = row - 1

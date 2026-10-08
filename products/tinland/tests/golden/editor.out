@@ -1,4 +1,4 @@
---- editor_sample.txt row 4 col 11 dirty true
+--- sample.txt row 4 col 11 dirty true
 package main
 
 fn main() {
@@ -7,7 +7,7 @@ fn main() {
 	say.Line(x)
 }
 
---- editor_sample.txt row 4 col 2 dirty true
+--- sample.txt row 4 col 2 dirty true
 package main
 
 fn main() {
@@ -16,7 +16,7 @@ fn main() {
 	say.Line(x)
 }
 
---- editor_sample.txt row 4 col 14 dirty true
+--- sample.txt row 4 col 14 dirty true
 package main
 
 fn main() {
@@ -25,7 +25,7 @@ fn main() {
 	say.Line(x)
 }
 
---- editor_sample.txt row 4 col 14 dirty true
+--- sample.txt row 4 col 14 dirty true
 package main
 
 fn main() {
@@ -36,7 +36,7 @@ fn main() {
 }
 
 prompt: 1 say 
---- editor_sample.txt row 7 col 5 dirty true
+--- sample.txt row 7 col 5 dirty true
 selection: say
 package main
 
@@ -47,7 +47,7 @@ fn main() {
 	say.Line(x)
 }
 
---- editor_sample.txt row 2 col 1 dirty true
+--- sample.txt row 2 col 1 dirty true
 package main
 
 fn main() {
@@ -57,9 +57,9 @@ fn main() {
 	say.Line(x)
 }
 
---- editor_sample.txt row 1 col 1 dirty true
+--- sample.txt row 1 col 1 dirty true
 
---- editor_sample.txt row 16 col 1 dirty true
+--- sample.txt row 16 col 1 dirty true
 selection: }
 
 package main
@@ -79,25 +79,25 @@ fn main() {
 	say.Line(x)
 }
 
---- editor_sample.txt row 1 col 1 dirty true
+--- sample.txt row 1 col 1 dirty true
 let yy = 1
 say.Line(yy)
 let é = "ü"
---- editor_sample.txt row 1 col 1 dirty true
+--- sample.txt row 1 col 1 dirty true
 let yy = 1
 say.Line(yy)
 let é = "ü"
 --- untitled row 1 col 8 dirty true
 scratch
---- editor_sample.txt row 1 col 1 dirty true
+--- sample.txt row 1 col 1 dirty true
 let yy = 1
 say.Line(yy)
 let é = "ü"
 output: true
--- editor_run.tin: exit 0
+-- run.tin: exit 0
 run from the editor 42
 jumped: true
---- editor_sample.txt row 3 col 5 dirty true
+--- sample.txt row 3 col 5 dirty true
 let yy = 1
 say.Line(yy)
 let é = "ü"
@@ -105,7 +105,7 @@ diag: 1 1 1 9 E001 edition 1 files start with a package declaration
 diags: 1
 info: E001 edition 1 files start with a package declaration | Fix: start the file with `package main` (or the package's name), and keep only one.
 diags: 0
---- editor_run.tin row 9 col 12 dirty true
+--- run.tin row 9 col 12 dirty true
 package main
 
 import "say"
@@ -116,7 +116,7 @@ fn main() {
 
 let z = 2, 3
 
---- editor_run.tin row 9 col 12 dirty true
+--- run.tin row 9 col 12 dirty true
 package main
 
 import "say"
@@ -127,7 +127,7 @@ fn main() {
 
   let z=2,3
 diags: 0
---- editor_nav.tin row 7 col 4 dirty false
+--- nav.tin row 7 col 4 dirty false
 package main
 
 import "say"
@@ -144,7 +144,7 @@ fn main() {
 }
 
 info: fn helper(x i64) i64 | helper doubles its argument.
---- editor_nav.tin row 13 col 13 dirty false
+--- nav.tin row 13 col 13 dirty false
 package main
 
 import "say"
@@ -164,7 +164,7 @@ complete Split true true
 complete Join true true
 complete NoSuchName false true
 complete Join true true
---- editor_nav.tin row 14 col 13 dirty true
+--- nav.tin row 14 col 13 dirty true
 package main
 
 import "say"
@@ -182,7 +182,7 @@ fn main() {
 }
 
 in twine.tin
-at editor_nav.tin 12 22
+at nav.tin 12 22
 budget render ok
 budget type ok
 budget scroll ok

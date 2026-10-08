@@ -1,0 +1,66 @@
+package app
+
+import "appkit"
+import "editor"
+import "mint"
+import "quarry"
+
+// Run opens the window and handles events until it is closed.
+fn Run(ed mut editor.Editor) {
+	let win = appkit.OpenWindow("Tinland", ed.PtW, ed.PtH)
+	ed.Win = win
+	ed.Scale = appkit.Scale(win)
+	ed.FontFor()
+	let menu = BuildMenus(win)
+	let smoke = quarry.Getenv("TINLAND_SMOKE")
+	mut ticks = 0
+	mut limitTicks = -1
+	if len(smoke) > 0 {
+		let seconds = mint.Atoi(smoke) catch _ {
+			0
+		}
+		limitTicks = seconds * 2
+	}
+	for !ed.Quit && appkit.IsOpen(win) && (limitTicks < 0 || ticks < limitTicks) {
+		let pool = appkit.PoolPush()
+		mut e = appkit.WaitEvent(win, 0.5)
+		if e == 0 {
+			// nothing happened for half a second: check what was typed, and blink the caret
+			if ed.DiagFor != ed.Buf.Version {
+				ed.CheckNow()
+			}
+			ed.Blink = !ed.Blink
+			ed.Redraw = true
+			ticks += 1
+		}
+		for e != 0 {
+			ed.HandleEvent(e)
+			e = appkit.WaitEvent(win, 0.0)
+		}
+		mut cmd = appkit.NextCommand(menu)
+		for cmd >= 0 {
+			ed.Perform(cmd)
+			cmd = appkit.NextCommand(menu)
+		}
+		let (w, h) = appkit.ContentSize(win)
+		if w > 0.0 && (w != ed.PtW || h != ed.PtH) {
+			ed.PtW = w
+			ed.PtH = h
+			ed.Redraw = true
+		}
+		if ed.Redraw {
+			ed.Render()
+			appkit.Present(win, ed.Bmp)
+			ed.Redraw = false
+			mut title = ed.Name()
+			if ed.Buf.Dirty {
+				title = title + " (edited)"
+			}
+			if title != ed.Title {
+				ed.Title = title
+				appkit.SetTitle(win, title + " - Tinland")
+			}
+		}
+		appkit.PoolPop(pool)
+	}
+}

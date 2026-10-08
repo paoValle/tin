@@ -1,0 +1,87 @@
+package language
+
+import "appkit"
+import "mint"
+import "quarry"
+import "tinsym"
+import "twine"
+
+// Package language is what Tinland knows about the Tin language: it asks the Tin compiler (tinc) what a file declares and
+// where it is wrong, builds and runs a file, and formats it. It has no idea of windows or editors: a caller gives it paths
+// and text and gets declarations, errors and output back, so the same calls serve the editor, a project panel and, later,
+// a language server client.
+
+// CompilerPath is the Tin compiler to use: $TINLAND_TINC, else tinc from the PATH.
+fn CompilerPath() str {
+	let c = quarry.Getenv("TINLAND_TINC")
+	if len(c) > 0 {
+		return c
+	}
+	return "tinc"
+}
+
+// Quoted is s as one word for sh.
+fn Quoted(s str) str {
+	return "'" + twine.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// TinRoot is the tree the compiler belongs to when it is <root>/bin/tinc ("" otherwise).
+fn TinRoot(compiler str) str {
+	if twine.HasSuffix(compiler, "/bin/tinc") {
+		return compiler[:len(compiler) - 9]
+	}
+	return ""
+}
+
+// Capture runs a program (standard error folded into the output) for at most ten seconds and returns its exit code and
+// everything it printed. The time limit is perl's alarm, which is on every Mac.
+fn Capture(argv []str) (i64, str) {
+	mut words = []str{}
+	for a in argv {
+		words = append(words, Quoted(a))
+	}
+	return appkit.RunCapture("exec perl -e 'alarm 10; exec @ARGV' " + twine.Join(words, " "))
+}
+
+// Check has the compiler read path with text as its contents (overlay is a file the caller wrote the text to) and returns
+// the declarations of the program and the errors in path. ran is false when the compiler could not be started.
+fn Check(path str, overlay str) ([]tinsym.Sym, []tinsym.Diag, bool) {
+	let compiler = CompilerPath()
+	mut env = ""
+	let root = TinRoot(compiler)
+	if len(root) > 0 {
+		env = "TIN_ROOT=" + Quoted(root) + " "
+	}
+	let (code, out) = appkit.RunCapture(env + Quoted(compiler) + " -symbols -json -overlay " + Quoted(path + "=" + overlay) + " " + Quoted(path))
+	if code == 127 || code == -1 {
+		return []tinsym.Sym{}, []tinsym.Diag{}, false
+	}
+	let (syms, all) = tinsym.Parse(out)
+	mut mine = []tinsym.Diag{}
+	for d in all {
+		if d.File == path {
+			mine = append(mine, d)
+		}
+	}
+	// a file that does not parse gives no declarations: the caller keeps the last ones when the list is empty and the
+	// exit status says there were errors
+	if len(syms) == 0 && code != 0 {
+		return syms, mine, false
+	}
+	return syms, mine, true
+}
+
+// Run builds path into the executable exe with the compiler and runs it: a title (its exit status, or that it did not
+// compile) and the lines the build or the program printed.
+fn Run(path str, exe str, name str) []str {
+	let (code, text) = Capture([]str{CompilerPath(), "-o", exe, path})
+	mut shown = text
+	mut title = "compile failed"
+	if code == 0 {
+		let (rc, out) = Capture([]str{exe})
+		shown = out
+		title = "exit " + mint.Itoa(rc)
+	}
+	let lines = twine.Split(twine.TrimSpace(shown), "\n")
+	return append([]str{"-- " + name + ": " + title}, lines...)
+}

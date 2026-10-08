@@ -3,10 +3,10 @@
 A text editor written entirely in Tin: the editing engine (`packages/textedit`), the window and drawing
 (`packages/appkit`, which reaches AppKit and CoreGraphics through `@framework` externs, with no C and no
 callbacks: events are polled, and a menu item or the close button appends itself to an `NSMutableArray` the
-loop reads), and the application (`app/`). It runs on macOS: per AGENTS.md the editor is a development tool, and Linux is the deployment platform for servers, not for this.
+loop reads), and the application (`app/`, `editor/`, `language/`; ARCHITECTURE.md says what each package is for). It runs on macOS: per AGENTS.md the editor is a development tool, and Linux is the deployment platform for servers, not for this.
 
 ```
-bin/tinc -o tinland products/tinland/app/*.tin
+bin/tinc -o tinland products/tinland/main.tin
 ./tinland [file...]
 ```
 
@@ -39,4 +39,5 @@ Double click selects a word, triple click a line; the wheel scrolls; Escape clos
 
 `TINLAND_SCRIPT` runs a sequence of steps against the editor with no window, printing what a test needs to see
 (the script language is at the top of `app/script.tin`); `snap:path.png` draws the editor and writes the pixels.
-`toolchain/tests/darwin/editor.script` is the test that runs in CI on macOS.
+`tests/scripts/editor.script` is the test that runs in CI on macOS (`tests/run.sh`). How the packages fit together is in
+[ARCHITECTURE.md](ARCHITECTURE.md).

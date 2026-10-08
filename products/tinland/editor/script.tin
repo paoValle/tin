@@ -1,4 +1,4 @@
-package main
+package editor
 
 import "appkit"
 import "say"
@@ -61,7 +61,7 @@ fn keyFor(spec str) Key {
 // dump prints the text and the cursor (and the selection when there is one).
 fn (ed Editor) dump() {
 	let b = ed.Buf
-	say.Line("---", ed.name(), "row", b.Row + 1, "col", b.Col + 1, "dirty", b.Dirty)
+	say.Line("---", ed.Name(), "row", b.Row + 1, "col", b.Col + 1, "dirty", b.Dirty)
 	if b.HasSel {
 		say.Line("selection:", b.SelectedText())
 	}
@@ -84,7 +84,7 @@ fn (ed Editor) dump() {
 //   open:PATH        loads a file
 //   snap:PATH        draws the editor and writes it as a PNG
 //   view:W,H         sets the window size in points
-fn runScript(ed mut Editor, script str) {
+fn RunScript(ed mut Editor, script str) {
 	let steps = twine.Split(script, "|")
 	mut i = 0
 	for i < len(steps) {
@@ -125,13 +125,13 @@ fn runScript(ed mut Editor, script str) {
 		} else if step == "accept" {
 			ed.acceptCompletion()
 		} else if step == "whereFile" {
-			say.Line("in", ed.name())
+			say.Line("in", ed.Name())
 		} else if step == "where" {
-			say.Line("at", ed.name(), ed.Buf.Row + 1, ed.Buf.Col + 1)
+			say.Line("at", ed.Name(), ed.Buf.Row + 1, ed.Buf.Col + 1)
 		} else if step == "info" {
 			say.Line("info:", twine.Join(ed.Info, " | "))
 		} else if step == "check" {
-			ed.checkNow()
+			ed.CheckNow()
 			mut d = 0
 			for d < len(ed.Diags) {
 				let x = ed.Diags[d]
@@ -152,13 +152,13 @@ fn runScript(ed mut Editor, script str) {
 				for r < reps {
 					if what == "render" {
 						ed.Buf.Version += 1
-						ed.render()
+						ed.Render()
 					} else if what == "type" {
 						ed.Buf.Insert("x")
-						ed.render()
+						ed.Render()
 					} else if what == "scroll" {
 						ed.Scroll = (ed.Scroll + 37) % len(ed.Buf.Lines)
-						ed.render()
+						ed.Render()
 					}
 					r += 1
 				}
@@ -175,9 +175,9 @@ fn runScript(ed mut Editor, script str) {
 		} else if step == "prompt" {
 			say.Line("prompt:", ed.Mode, ed.Prompt, ed.Message)
 		} else if twine.HasPrefix(step, "open:") {
-			ed.load(step[5:])
+			ed.Load(step[5:])
 		} else if twine.HasPrefix(step, "snap:") {
-			ed.render()
+			ed.Render()
 			if !appkit.SavePNG(ed.Bmp, step[5:]) {
 				say.Line("cannot write", step[5:])
 			}

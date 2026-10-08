@@ -1,0 +1,114 @@
+package editor
+
+// The menu commands, each the same action as a key: perform turns one into the key press that does it.
+const CmdNew = 1
+const CmdOpen = 2
+const CmdSave = 3
+const CmdSaveAs = 4
+const CmdClose = 5
+const CmdQuit = 6
+const CmdUndo = 7
+const CmdRedo = 8
+const CmdCut = 9
+const CmdCopy = 10
+const CmdPaste = 11
+const CmdSelectAll = 12
+const CmdFind = 13
+const CmdFindNext = 14
+const CmdFindPrev = 15
+const CmdGoto = 16
+const CmdComment = 17
+const CmdDuplicate = 18
+const CmdDeleteLine = 19
+const CmdIndent = 20
+const CmdUnindent = 21
+const CmdRun = 22
+const CmdFormat = 23
+const CmdDefinition = 24
+const CmdBack = 25
+const CmdInfo = 26
+const CmdComplete = 27
+
+// Perform does a menu command by pressing the key that does the same.
+fn (ed mut Editor) Perform(cmd i64) {
+	if cmd == CmdBack {
+		ed.handleKey(Key{Code: keyLeft, Flags: flagCmd | flagAlt, Chars: ""})
+		return
+	}
+	if cmd == CmdInfo {
+		ed.handleKey(Key{Code: -1, Flags: flagCtrl, Chars: "q"})
+		return
+	}
+	if cmd == CmdComplete {
+		ed.handleKey(Key{Code: 49, Flags: flagCtrl, Chars: " "})
+		return
+	}
+	mut chars = ""
+	mut shift = false
+	if cmd == CmdDefinition {
+		chars = "b"
+	} else if cmd == CmdNew {
+		chars = "n"
+	} else if cmd == CmdOpen {
+		chars = "o"
+	} else if cmd == CmdSave {
+		chars = "s"
+	} else if cmd == CmdSaveAs {
+		chars = "s"
+		shift = true
+	} else if cmd == CmdClose {
+		chars = "w"
+	} else if cmd == CmdQuit {
+		chars = "q"
+	} else if cmd == CmdUndo {
+		chars = "z"
+	} else if cmd == CmdRedo {
+		chars = "z"
+		shift = true
+	} else if cmd == CmdCut {
+		chars = "x"
+	} else if cmd == CmdCopy {
+		chars = "c"
+	} else if cmd == CmdPaste {
+		chars = "v"
+	} else if cmd == CmdSelectAll {
+		chars = "a"
+	} else if cmd == CmdFind {
+		chars = "f"
+	} else if cmd == CmdFindNext {
+		chars = "g"
+	} else if cmd == CmdFindPrev {
+		chars = "g"
+		shift = true
+	} else if cmd == CmdGoto {
+		chars = "l"
+	} else if cmd == CmdComment {
+		chars = "/"
+	} else if cmd == CmdDuplicate {
+		chars = "d"
+	} else if cmd == CmdDeleteLine {
+		chars = "k"
+		shift = true
+	} else if cmd == CmdIndent {
+		chars = "]"
+	} else if cmd == CmdUnindent {
+		chars = "["
+	} else if cmd == CmdRun {
+		chars = "r"
+	} else if cmd == CmdFormat {
+		chars = "i"
+		shift = true
+	}
+	if len(chars) == 0 {
+		return
+	}
+	mut flags = flagCmd
+	if shift {
+		flags = flags | flagShift
+	}
+	if ed.Mode != modeEdit {
+		// leave a prompt first so the command acts on the text
+		ed.Mode = modeEdit
+	}
+	ed.handleKey(Key{Code: -1, Flags: flags, Chars: chars})
+}
