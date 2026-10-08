@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """argo.Get and argo.GetStrict against encoding/json, case by case (#354). Where Go decides, Tin
 agrees (type errors, ranges, trailing garbage, unknown members under DisallowUnknownFields); Tin is
-stricter on purpose for duplicate members (GetStrict), invalid UTF-8 and lone surrogates (both)."""
+stricter on purpose for duplicate members (GetStrict), invalid UTF-8 and lone surrogates (both),
+and null for a value that cannot be nil (GetStrict)."""
 import os
 import shutil
 import subprocess
@@ -14,6 +15,11 @@ STRICTER = {
     'duplicate': ('ok', 'fault'),
     'bad_utf8': ('fault', 'fault'),
     'lone_surrogate': ('fault', 'fault'),
+    # null for a value that cannot be nil: Get reads it as Go does (#715), GetStrict refuses it.
+    'null_scalars': ('ok', 'fault'),
+    'null_slice': ('ok', 'fault'),
+    'null_element': ('ok', 'fault'),
+    'null_top': ('ok', 'fault'),
 }
 
 

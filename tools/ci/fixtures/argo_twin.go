@@ -41,6 +41,10 @@ var cases = []struct{ name, in string }{
 	{"bad_utf8", "{\"name\":\"a\xffb\"}"},
 	{"lone_surrogate", `{"name":"\ud800"}`},
 	{"valid_pair", `{"name":"😀"}`},
+	{"null_scalars", `{"n":null,"name":null}`},
+	{"null_slice", `{"tags":null}`},
+	{"null_element", `{"tags":["a",null]}`},
+	{"null_top", `null`},
 }
 
 func decode(in string, strict bool) string {

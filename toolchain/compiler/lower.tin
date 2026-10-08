@@ -5534,9 +5534,8 @@ fn enum_zero(pos i64, body []i64, t Ty) i64 {
 	return sym_ref_node(pos, cast(Sym, obj.sym))
 }
 
-// argo_value appends statements that decode one value of type t and returns it, or 0
-// when t cannot be decoded (an error is reported).
-fn argo_value(pos i64, body []i64, p i64, t Ty) i64 {
+// argo_scalar reads one str, bool, float or integer of type t at p.
+fn argo_scalar(pos i64, p i64, t Ty) i64 {
 	let k = kind_of(t)
 	if k == K_STRING && t.bound != 0 {
 		// A str max n stops reading at the bound (#240).
@@ -5570,6 +5569,29 @@ fn argo_value(pos i64, body []i64, p i64, t Ty) i64 {
 		}
 		let c = call_fn(pos, argo_lib(pos, "argo.rintr"), args3(sym_ref_node(pos, cast(Sym, p)), mk_int(pos, lo, ty_int), mk_int(pos, hi, ty_int)), ty_int)
 		return mk_conv(pos, cast(i64, c), CV_INT, cast(i64, t))
+	}
+	return 0
+}
+
+// argo_value appends statements that decode one value of type t and returns it, or 0
+// when t cannot be decoded (an error is reported).
+fn argo_value(pos i64, body []i64, p i64, t Ty) i64 {
+	let k = kind_of(t)
+	if k == K_STRING || k == K_BOOL || k == K_INT || is_float_t(cast(i64, t)) != 0 {
+		// null is the zero value outside GetStrict, as in Go (#715): v = zero; if
+		// !argo.rnullok(p) { v = read(p) }.
+		let z = zero_value(pos, cast(i64, t))
+		cast(Node, z).type_ = cast(i64, t)
+		let v = temp(pos, z, cast(i64, t))
+		body = append(body, cast(i64, v))
+		let ifs = cast(IfStmt, node_new(ST_IF, pos))
+		ifs.cond = mk_unot(pos, argo_rd(pos, p, "argo.rnullok", ty_bool))
+		ifs.then = empty_block(pos)
+		mut tb = cast(Block, ifs.then).stmts
+		let rv = argo_scalar(pos, p, t)
+		tb = append(tb, assign_stmt(pos, sym_ref_node(pos, cast(Sym, v.sym)), rv))
+		body = append(body, cast(i64, ifs))
+		return sym_ref_node(pos, cast(Sym, v.sym))
 	}
 	if k == K_STRUCT || k == K_SLICE || k == K_MAP {
 		let obj = temp(pos, argo_new(pos, body, t), cast(i64, t))
@@ -5802,6 +5824,33 @@ fn argo_bound(pos i64, body []i64, p i64, x i64, t Ty) {
 	body = append(body, cast(i64, ifs))
 }
 
+// argo_null_return starts a decoder or validator: outside GetStrict a null leaves the target
+// as it was (#715): if argo.rnullok(p) { return }.
+fn argo_null_return(pos i64, body []i64, p i64) {
+	let ifs = cast(IfStmt, node_new(ST_IF, pos))
+	ifs.cond = argo_rd(pos, p, "argo.rnullok", ty_bool)
+	ifs.then = empty_block(pos)
+	mut tb = cast(Block, ifs.then).stmts
+	tb = append(tb, node_new(ST_RETURN, pos))
+	body = append(body, cast(i64, ifs))
+}
+
+// argo_null_keeps puts the statements of block b that decode a field of type ft under
+// if !argo.rnullok(p): a null leaves the field as it was, as in Go (#715). An optional field
+// reads null as nil itself.
+fn argo_null_keeps(pos i64, b i64, p i64, ft Ty) {
+	if kind_of(ft) == K_OPT {
+		return
+	}
+	let blk = cast(Block, b)
+	let ifs = cast(IfStmt, node_new(ST_IF, pos))
+	ifs.cond = mk_unot(pos, argo_rd(pos, p, "argo.rnullok", ty_bool))
+	ifs.then = empty_block(pos)
+	cast(Block, ifs.then).stmts = blk.stmts
+	blk.stmts = cast([]i64, []i64{})
+	blk.stmts = append(blk.stmts, cast(i64, ifs))
+}
+
 // argo_int_key reads member name k (a str Sym) as a key of integer type t: argo.rkeyint
 // within t's range, or argo.rkeyuint for an unsigned t (#716).
 fn argo_int_key(pos i64, p i64, k i64, t Ty) i64 {
@@ -5884,6 +5933,7 @@ fn argo_dfn(pos i64, t Ty) i64 {
 	mut vs9 = cast([]i64, f.locals)
 	vs9 = append(vs9, cast(i64, x))
 	mut body = cast(Block, f.body).stmts
+	argo_null_return(pos, body, cast(i64, p))
 	if k == K_STRUCT && cast(i64, t.enum_) != 0 {
 		argo_denum(pos, body, cast(i64, p), cast(i64, x), t)
 	} else if k == K_STRUCT {
@@ -5927,6 +5977,7 @@ fn argo_dfn(pos i64, t Ty) i64 {
 					bb = append(bb, assign_stmt(pos, field_store(pos, sym_ref_node(pos, x), cast(i64, t), fi), val))
 				}
 			}
+			argo_null_keeps(pos, br.then, cast(i64, p), cast(Ty, ft))
 			if cast(i64, last) != 0 {
 				let eb = cast(Block, empty_block(pos))
 				eb.stmts = append(eb.stmts, cast(i64, br))
@@ -6158,6 +6209,7 @@ fn argo_vfn(pos i64, t Ty) i64 {
 	vs4 = append(vs4, cast(i64, ps))
 	let p = cast(i64, ps)
 	mut body = cast(Block, f.body).stmts
+	argo_null_return(pos, body, p)
 	if k == K_STRUCT && cast(i64, t.enum_) != 0 {
 		// An enum's payload shapes are decoded into a scratch value.
 		let df = argo_dfn(pos, t)
@@ -6192,6 +6244,7 @@ fn argo_vfn(pos i64, t Ty) i64 {
 			br.cond = rt_call(pos, "rt_str_eq", args2(sym_ref_node(pos, cast(Sym, key.sym)), lit_string(pos, fname)), ty_bool)
 			br.then = empty_block(pos)
 			argo_vval(pos, cast(Block, br.then).stmts, p, cast(Ty, field_type(t, fi)))
+			argo_null_keeps(pos, br.then, p, cast(Ty, field_type(t, fi)))
 			if cast(i64, last) != 0 {
 				let eb = cast(Block, empty_block(pos))
 				eb.stmts = append(eb.stmts, cast(i64, br))

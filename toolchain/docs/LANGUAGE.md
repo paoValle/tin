@@ -2059,8 +2059,10 @@ fn main() {
 - `argo.Get(text, mut v)` fills a struct, slice (appending) or map (adding entries; a map
   with integer keys reads each member name as a base-10 integer that must fit the key type,
   as Go does: `"+7"` and `"007"` are 7, `"x"` or `"256"` for a `u8` key is a fault, #716);
-  nested struct fields are filled in place, `?T` fields accept `null`, unknown members are
-  skipped, numbers follow the JSON grammar and must fit their type (`007`, `1.`, `700`
+  nested struct fields are filled in place, `?T` fields accept `null` (nil), `null` for a value
+  that cannot be nil is read as Go reads it (a field keeps its value, so a slice or map field
+  is left as it was where Go makes it nil; an element or map value is its zero value; #715),
+  unknown members are skipped, numbers follow the JSON grammar and must fit their type (`007`, `1.`, `700`
   into a `u8` and `1e400` into an `f64` are faults), and trailing garbage is a fault, as
   are arrays and objects nested more than 512 deep (each level takes stack, and a request
   handler's stack is 256 KiB). Error messages name the offset: `argo: expected an integer
@@ -2071,8 +2073,8 @@ fn main() {
   filled in place and cut back to its old length on a fault (no second pass). Text that
   passes cannot fail while filling, except that a bound on a map that already holds
   entries counts them.
-- `argo.GetStrict(text, mut v)` is `argo.Get` for an API boundary: an **unknown member**
-  and a **duplicate member** (`{"n":1,"n":2}`, a way to smuggle a parameter past a check
+- `argo.GetStrict(text, mut v)` is `argo.Get` for an API boundary: `null` for a value that
+  cannot be nil, an **unknown member** and a **duplicate member** (`{"n":1,"n":2}`, a way to smuggle a parameter past a check
   that reads the first value) are faults naming the key and its offset. `argo.Get` skips
   unknown members and the last duplicate wins, as in Go. Both reject **invalid UTF-8** in
   a string and an **unpaired surrogate** escape (`"\ud800"`), naming the offset, where Go

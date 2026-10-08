@@ -1,0 +1,14 @@
+{"s": null, "n": null, "u": null, "f": null, "g": null, "b": null} => {keep 4 7 1.5 2.5 true [8] map[keep:1] {9} B(3) 6 {5} [] [] map[]}
+{"xs": null, "m": null, "in": null, "k": null, "p": null} => {keep 4 7 1.5 2.5 true [8] map[keep:1] {9} B(3) 6 {5} [] [] map[]}
+{"o": null} => {keep 4 7 1.5 2.5 true [8] map[keep:1] {9} B(3) <nil> {5} [] [] map[]}
+{"xs": [1, null, 2], "ss": ["a", null], "ins": [{"x": 1}, null], "mi": {"a": null, "b": {"x": null}}} => {keep 4 7 1.5 2.5 true [8 1 0 2] map[keep:1] {9} B(3) 6 {5} [a ] [{1} {0}] map[a:{0} b:{0}]}
+{"m": {"z": null}} => {keep 4 7 1.5 2.5 true [8] map[keep:1 z:0] {9} B(3) 6 {5} [] [] map[]}
+{"in": {"x": null}} => {keep 4 7 1.5 2.5 true [8] map[keep:1] {9} B(3) 6 {5} [] [] map[]}
+null => {keep 4 7 1.5 2.5 true [8] map[keep:1] {9} B(3) 6 {5} [] [] map[]}
+{"n": nul} => fault: argo: expected an integer at offset 6, found "n"
+{"n": nullx} => fault: argo: expected ',' or the end of the object or array at offset 10, found "x"
+strict {"n": null} => fault: argo: expected an integer at offset 6, found "n"
+strict {"xs": null} => fault: argo: expected an array at offset 7, found "n"
+strict {"o": null} => {keep 4 7 1.5 2.5 true [8] map[keep:1] {9} B(3) <nil> {5} [] [] map[]}
+top null slice [9]
+top null map map[a:1]

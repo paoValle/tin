@@ -1,0 +1,85 @@
+package main
+
+// argo.Get reads null for a value that cannot be nil as Go does: a field keeps its value, an
+// element or map value is its zero value; GetStrict refuses it (#715).
+
+import "argo"
+import "say"
+
+type In struct {
+	x i64
+}
+
+type K enum {
+	A
+	B(i64)
+}
+
+type P value struct {
+	a i64
+}
+
+type R struct {
+	s  str
+	n  i64
+	u  u8
+	f  f64
+	g  f32
+	b  bool
+	xs []i64
+	m  map[str]i64
+	in In
+	k  K
+	o  ?i64
+	p  P
+	ss []str
+	ins []In
+	mi map[str]In
+}
+
+fn fresh() R {
+	return R{m: map[str]i64{"keep": 1}, in: In{x: 9}, s: "keep", n: 4, u: 7, f: 1.5, g: f32(2.5), b: true, xs: []i64{8}, k: K.B(3), o: 6, p: P{a: 5}, mi: map[str]In{}}
+}
+
+fn get(t str) {
+	mut r = fresh()
+	argo.Get(t, mut r) catch err {
+		say.Line(t, "=> fault:", err)
+		return
+	}
+	say.Line(t, "=>", r)
+}
+
+fn strict(t str) {
+	mut r = fresh()
+	argo.GetStrict(t, mut r) catch err {
+		say.Line("strict", t, "=> fault:", err)
+		return
+	}
+	say.Line("strict", t, "=>", r)
+}
+
+fn main() {
+	get(`{"s": null, "n": null, "u": null, "f": null, "g": null, "b": null}`)
+	get(`{"xs": null, "m": null, "in": null, "k": null, "p": null}`)
+	get(`{"o": null}`)
+	get(`{"xs": [1, null, 2], "ss": ["a", null], "ins": [{"x": 1}, null], "mi": {"a": null, "b": {"x": null}}}`)
+	get(`{"m": {"z": null}}`)
+	get(`{"in": {"x": null}}`)
+	get(`null`)
+	get(`{"n": nul}`)
+	get(`{"n": nullx}`)
+	strict(`{"n": null}`)
+	strict(`{"xs": null}`)
+	strict(`{"o": null}`)
+	mut xs = []i64{9}
+	argo.Get(`null`, mut xs) catch err {
+		say.Line(err)
+	}
+	say.Line("top null slice", xs)
+	mut m = map[str]i64{"a": 1}
+	argo.Get(`null`, mut m) catch err {
+		say.Line(err)
+	}
+	say.Line("top null map", m)
+}

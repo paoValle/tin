@@ -526,6 +526,16 @@ fn rnull(p mut Parser) bool {
 	return false
 }
 
+// rnullok consumes null if it is next and the parser is not strict: Get reads null for a
+// value that cannot be nil as Go does, leaving a field as it was and an element or map value
+// at its zero value; GetStrict keeps it a fault (#715).
+fn rnullok(p mut Parser) bool {
+	if p.strict {
+		return false
+	}
+	return rnull(mut p)
+}
+
 fn hex4(s str, i i64) i64 {
 	mut v = 0
 	for k in 0..4 {
