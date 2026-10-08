@@ -157,7 +157,9 @@ fn is_const(e i64) i64 {
 		if (cast(Binary, e).op == "/" || cast(Binary, e).op == "%") && is_const(cast(Binary, e).r) != 0 && const_val(cast(Binary, e).r) == 0 {
 			return 0
 		}
-		return i64(e_fp(cast(Node, cast(Binary, e).l)) == 0 && fold_safe(cast(Node, e)) != 0 && fold_safe(cast(Node, cast(Binary, e).l)) != 0 && is_const(cast(Binary, e).l) != 0 && is_const(cast(Binary, e).r) != 0 && ovf_folds(cast(Binary, e)) != 0)
+		// The right operand first: in a left-deep chain (a + b + c ...) it is the leaf, so a
+		// variable answers at once instead of a walk down the left spine at every level (#713).
+		return i64(e_fp(cast(Node, cast(Binary, e).l)) == 0 && fold_safe(cast(Node, e)) != 0 && fold_safe(cast(Node, cast(Binary, e).l)) != 0 && is_const(cast(Binary, e).r) != 0 && is_const(cast(Binary, e).l) != 0 && ovf_folds(cast(Binary, e)) != 0)
 	}
 	return 0
 }

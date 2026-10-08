@@ -716,7 +716,11 @@ fn vr_type(t Ty) i64 {
 fn vrange_of(e i64) i64 {
 	let k = cast(Node, e).kind
 	let t = cast(Ty, cast(Node, e).type_)
-	if is_const(e) != 0 && fold_safe(cast(Node, e)) != 0 {
+	// A checked + - * is left to the binary case below, which gives a constant's exact range
+	// from its operands': asking is_const here first walked the whole operand at every level of
+	// a chain (x + 1 + 1 ...), n^3 for n terms (#713).
+	let checked = k == EX_BINARY && is_ovf_op(cast(Binary, e).op) != 0 && cast(Binary, e).ovf != OVF_WRAP && is_integer_t(cast(i64, t)) != 0
+	if !checked && is_const(e) != 0 && fold_safe(cast(Node, e)) != 0 {
 		vr_lo = const_val(e)
 		vr_hi = vr_lo
 		return 1

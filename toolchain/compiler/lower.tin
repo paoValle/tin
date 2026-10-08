@@ -713,60 +713,98 @@ fn is_cmp_op(op str) i64 {
 
 fn is_untyped_lit(e i64) i64 {
 	let k = cast(Node, e).kind
-	return i64(k == EX_INT || k == EX_NIL || k == EX_FLOAT || (k == EX_UNARY && is_untyped_lit(cast(Unary, e).x) != 0) || (k == EX_BINARY && is_untyped_lit(cast(Binary, e).l) != 0 && is_untyped_lit(cast(Binary, e).r) != 0))
+	if k != EX_BINARY {
+		return i64(k == EX_INT || k == EX_NIL || k == EX_FLOAT || (k == EX_UNARY && is_untyped_lit(cast(Unary, e).x) != 0))
+	}
+	// A leaf operand that is not a literal answers at once, before any walk down the other
+	// side: unify asks at every level of a chain (a + b + c ..., or a + (b + (c ...))) (#713).
+	let l = cast(Binary, e).l
+	let r = cast(Binary, e).r
+	let lk = cast(Node, l).kind
+	let rk = cast(Node, r).kind
+	if (lk != EX_BINARY && is_untyped_lit(l) == 0) || (rk != EX_BINARY && is_untyped_lit(r) == 0) {
+		return 0
+	}
+	return i64(is_untyped_lit(r) != 0 && is_untyped_lit(l) != 0)
 }
 
 // untyped_int_expr reports an untyped integer: a literal, an integer constant without a type,
 // or arithmetic on those.
 fn untyped_int_expr(e i64) i64 {
-	let k = cast(Node, e).kind
-	if k == EX_INT {
-		return 1
-	}
-	if k == EX_IDENT || k == EX_SELECT {
-		mut s = pkg_const(e)
-		if k == EX_IDENT {
-			s = lookup_name(cast(IdentExpr, e).name)
-		}
-		return i64(cast(i64, s) != 0 && s.kind == SYM_CONST && s.done != 0 && s.expr == 0 && kind_of(cast(Ty, s.type_)) == K_UINT)
-	}
-	if k == EX_UNARY {
-		return i64(cast(Unary, e).op == "-" && untyped_int_expr(cast(Unary, e).x) != 0)
-	}
-	if k == EX_BINARY {
-		let op = cast(Binary, e).op
-		return i64((op == "+" || op == "-" || op == "*" || op == "/" || op == "%") && untyped_int_expr(cast(Binary, e).l) != 0 && untyped_int_expr(cast(Binary, e).r) != 0)
-	}
-	return 0
+	return i64(untyped_class(e) == 1)
 }
 
 // untyped_float_expr reports an untyped float: a float literal, a float constant without a
 // type, or arithmetic in which one of those meets untyped integers.
 fn untyped_float_expr(e i64) i64 {
+	return i64(untyped_class(e) == 2)
+}
+
+// untyped_class is 1 for an untyped integer expression, 2 for an untyped float one and 0
+// otherwise, in one walk that stops at the first operand that is neither (#713). unify asks at
+// every level of a chain `x + x + x ...`; walking the left spine each time, twice over, made
+// compiling a chain of n terms take time n^3.
+fn untyped_class(e i64) i64 {
 	let k = cast(Node, e).kind
-	if k == EX_FLOAT {
+	if k == EX_INT {
 		return 1
+	}
+	if k == EX_FLOAT {
+		return 2
 	}
 	if k == EX_IDENT || k == EX_SELECT {
 		mut s = pkg_const(e)
 		if k == EX_IDENT {
 			s = lookup_name(cast(IdentExpr, e).name)
 		}
-		return i64(cast(i64, s) != 0 && s.kind == SYM_CONST && s.done != 0 && s.expr != 0 && kind_of(cast(Ty, s.type_)) == K_UFLOAT)
-	}
-	if k == EX_UNARY {
-		return i64(cast(Unary, e).op == "-" && untyped_float_expr(cast(Unary, e).x) != 0)
-	}
-	if k == EX_BINARY {
-		let op = cast(Binary, e).op
-		if op != "+" && op != "-" && op != "*" && op != "/" {
+		if cast(i64, s) == 0 || s.kind != SYM_CONST || s.done == 0 {
 			return 0
 		}
-		let l = cast(Binary, e).l
-		let r = cast(Binary, e).r
-		return i64((untyped_float_expr(l) != 0 && (untyped_float_expr(r) != 0 || untyped_int_expr(r) != 0)) || (untyped_int_expr(l) != 0 && untyped_float_expr(r) != 0))
+		if s.expr == 0 && kind_of(cast(Ty, s.type_)) == K_UINT {
+			return 1
+		}
+		if s.expr != 0 && kind_of(cast(Ty, s.type_)) == K_UFLOAT {
+			return 2
+		}
+		return 0
 	}
-	return 0
+	if k == EX_UNARY {
+		if cast(Unary, e).op != "-" {
+			return 0
+		}
+		return untyped_class(cast(Unary, e).x)
+	}
+	if k != EX_BINARY {
+		return 0
+	}
+	let op = cast(Binary, e).op
+	if op != "+" && op != "-" && op != "*" && op != "/" && op != "%" {
+		return 0
+	}
+	let l = cast(Binary, e).l
+	let r = cast(Binary, e).r
+	// A leaf operand that is not untyped settles it without walking the other side.
+	let lk = cast(Node, l).kind
+	let rk = cast(Node, r).kind
+	if (lk != EX_BINARY && lk != EX_UNARY && untyped_class(l) == 0) || (rk != EX_BINARY && rk != EX_UNARY && untyped_class(r) == 0) {
+		return 0
+	}
+	let rc = untyped_class(r)
+	if rc == 0 {
+		return 0
+	}
+	let lc = untyped_class(l)
+	if lc == 0 {
+		return 0
+	}
+	if lc == 1 && rc == 1 {
+		return 1
+	}
+	// A float meets an int or a float: a float, except under %, which floats do not have.
+	if op == "%" {
+		return 0
+	}
+	return 2
 }
 
 // unify checks both operands of a binary operator and returns their common type:
