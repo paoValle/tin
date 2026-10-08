@@ -249,6 +249,16 @@ fn NewBitmap(w i64, h i64) Bitmap {
 	return b
 }
 
+// BitmapOver is a w by h bitmap over bytes someone else owns (blue, green, red, alpha, premultiplied: what a Metal texture reads
+// back as), so SavePNG can write them.
+fn BitmapOver(pixels i64, w i64, h i64) Bitmap {
+	let b = Bitmap{W: w, H: h, Pixels: pixels}
+	b.space = CGColorSpaceCreateDeviceRGB()
+	// kCGImageAlphaPremultipliedFirst with kCGBitmapByteOrder32Little: bytes in memory are blue, green, red, alpha
+	b.Ctx = CGBitmapContextCreate(pixels, w, h, 8, w * 4, b.space, 8194)
+	return b
+}
+
 // FillRect fills the rectangle with the color (components 0 to 1).
 fn FillRect(b Bitmap, x f64, y f64, w f64, h f64, r f64, g f64, bl f64, a f64) {
 	CGContextSetRGBFillColor(b.Ctx, r, g, bl, a)
@@ -367,6 +377,16 @@ fn EventScrollY(e i64) f64 {
 	return SendDouble(e, "scrollingDeltaY")
 }
 
+// EventPreciseScroll reports whether a scroll-wheel event carries points (a trackpad) rather than lines (a mouse wheel).
+fn EventPreciseScroll(e i64) bool {
+	return Send(e, "hasPreciseScrollingDeltas") & 0xff != 0
+}
+
+// EventScrollX is the horizontal scroll of a scroll-wheel event in points.
+fn EventScrollX(e i64) f64 {
+	return SendDouble(e, "scrollingDeltaX")
+}
+
 // ClipboardText is the text on the general pasteboard ("" when there is none).
 fn ClipboardText() str {
 	let pb = Send(Class("NSPasteboard"), "generalPasteboard")
@@ -384,6 +404,17 @@ fn SetClipboard(text str) {
 fn OpenPanel() str {
 	let panel = Send(Class("NSOpenPanel"), "openPanel")
 	// NSModalResponseOK is 1
+	if Send(panel, "runModal") != 1 {
+		return ""
+	}
+	return StringOf(Send(Send(panel, "URL"), "path"))
+}
+
+// FolderPanel asks for a folder to open ("" when cancelled).
+fn FolderPanel() str {
+	let panel = Send(Class("NSOpenPanel"), "openPanel")
+	Send1(panel, "setCanChooseFiles:", 0)
+	Send1(panel, "setCanChooseDirectories:", 1)
 	if Send(panel, "runModal") != 1 {
 		return ""
 	}

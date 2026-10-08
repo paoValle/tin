@@ -1,0 +1,41 @@
+package main
+
+import "../../terminal"
+import "say"
+
+fn show(s terminal.Screen, what str) {
+	say.Line("--", what, "cursor", s.CurX, s.CurY)
+	for y in 0..s.Rows {
+		say.Line("|" + s.Text(y) + "|")
+	}
+}
+
+// The terminal screen fed what shells print.
+fn main() {
+	mut s = terminal.New(12, 4)
+	s.Write("hello\r\nworld")
+	show(s, "two lines")
+	s.Write("\x1b[2J\x1b[Hab\x1b[2Ccd\x1b[1;1Hxy")
+	show(s, "clear, home, forward")
+	s.Write("\x1b[3;3Hz\x1b[K\x1b[2;1Hqqqq\x1b[2;3H\x1b[K")
+	show(s, "erase to end of line")
+	s.Write("\x1b[4;1H\x1b[1;31mred\x1b[0mn")
+	say.Line("sgr", s.At(0, 3).Fg, s.At(0, 3).Attr, s.At(2, 3).Ch, s.At(3, 3).Fg, s.At(3, 3).Attr)
+	s = terminal.New(5, 2)
+	s.Write("abcdefgh\r\nij")
+	show(s, "wrap")
+	say.Line("history", s.HistoryLines())
+	s.Write("\r\nkl\r\nmn")
+	say.Line("history after scroll", s.HistoryLines(), s.Text(0), s.Text(1))
+	s = terminal.New(6, 2)
+	s.Write("h\xc3\xa9llo")
+	show(s, "utf8")
+	s.Write("\x1b[1;1H\x1b[38;5;196mX\x1b[38;2;1;2;3mY\x1b[0m\x1b]0;title\x07Z")
+	say.Line("colors", s.At(0, 0).Fg, s.At(1, 0).Fg, s.At(2, 0).Ch)
+	s.Write("\x1b[1;2H\x1b[2P")
+	show(s, "delete chars")
+	s.Write("\x1b[?25l")
+	say.Line("cursor shown", s.ShowCursor)
+	s.Resize(8, 3)
+	say.Line("resized", s.Cols, s.Rows, s.Text(0))
+}

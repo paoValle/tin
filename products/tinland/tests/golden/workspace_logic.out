@@ -1,0 +1,14 @@
+opened true
+picker true 3
+filtered [src/util.tin]
+opened file util.tin false 0
+palette [View: Toggle Project Panel]
+panel open before true
+panel open after false
+closed false
+4 results in 3 files
+match opened main.tin 0 12 main
+3 results in 2 files
+invalid regular expression
+created true fresh.tin
+rename starts with fresh.tin

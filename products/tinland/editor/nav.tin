@@ -18,7 +18,7 @@ type Place struct {
 fn (ed mut Editor) gotoDefinition() {
 	let found = tinsym.Resolve(ed.Syms, ed.Buf.Path, ed.Buf.Text(), ed.Buf.Row, ed.Buf.Col)
 	if len(found) == 0 {
-		ed.say("no declaration found")
+		ed.Say("no declaration found")
 		return
 	}
 	let sym = found[0]
@@ -28,13 +28,13 @@ fn (ed mut Editor) gotoDefinition() {
 	}
 	ed.Back = append(ed.Back, here)
 	ed.Buf.MoveTo(sym.Line - 1, sym.Col - 1, false)
-	ed.say(sym.Sig)
+	ed.Say(sym.Sig)
 }
 
 // goBack returns to where the last go to declaration came from.
 fn (ed mut Editor) goBack() {
 	if len(ed.Back) == 0 {
-		ed.say("nowhere to go back to")
+		ed.Say("nowhere to go back to")
 		return
 	}
 	let at = ed.Back[len(ed.Back) - 1]
@@ -60,7 +60,7 @@ fn (ed mut Editor) quickInfo() {
 			ed.Info = lines
 			return
 		}
-		ed.say("no declaration found")
+		ed.Say("no declaration found")
 		return
 	}
 	mut lines = []str{found[0].Sig}
@@ -100,7 +100,7 @@ fn (ed mut Editor) openCompletion() {
 	ed.CompSel = 0
 	ed.CompOpen = len(shown) > 0
 	if !ed.CompOpen {
-		ed.say("no completions")
+		ed.Say("no completions")
 	}
 }
 

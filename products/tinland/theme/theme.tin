@@ -1,0 +1,77 @@
+// The colors of the interface, in one place: a Theme is a value (every field a color) and the program holds one. Dark is
+// modelled on Zed's One Dark.
+package theme
+
+import "../ui"
+
+type Theme struct {
+	// surfaces
+	Background i64
+	Panel i64
+	TitleBar i64
+	StatusBar i64
+	Editor i64
+	TabBar i64
+	TabActive i64
+	Border i64
+	// rows and controls
+	Hover i64
+	Selected i64
+	Accent i64
+	// text
+	Text i64
+	Muted i64
+	Faint i64
+	Error i64
+	Warning i64
+	// the editor
+	Gutter i64
+	GutterActive i64
+	Cursor i64
+	Selection i64
+	LineHighlight i64
+	Match i64
+	// syntax
+	Keyword i64
+	String i64
+	Number i64
+	Comment i64
+	Constant i64
+	Type i64
+	Func i64
+}
+
+// Dark is the default theme: VS Code's Dark Modern.
+fn Dark() Theme {
+	return Theme{
+		Background: ui.Hex(0x1f1f1f),
+		Panel: ui.Hex(0x181818),
+		TitleBar: ui.Hex(0x181818),
+		StatusBar: ui.Hex(0x181818),
+		Editor: ui.Hex(0x1f1f1f),
+		TabBar: ui.Hex(0x181818),
+		TabActive: ui.Hex(0x1f1f1f),
+		Border: ui.Hex(0x2b2b2b),
+		Hover: ui.Hex(0x2a2d2e),
+		Selected: ui.Hex(0x37373d),
+		Accent: ui.Hex(0x0078d4),
+		Text: ui.Hex(0xcccccc),
+		Muted: ui.Hex(0x9d9d9d),
+		Faint: ui.Hex(0x6e7681),
+		Error: ui.Hex(0xf14c4c),
+		Warning: ui.Hex(0xcca700),
+		Gutter: ui.Hex(0x6e7681),
+		GutterActive: ui.Hex(0xcccccc),
+		Cursor: ui.Hex(0xaeafad),
+		Selection: ui.Hex(0x264f78),
+		LineHighlight: ui.Hex(0x282828),
+		Match: ui.HexA(0xea5c00, 0.33),
+		Keyword: ui.Hex(0x569cd6),
+		String: ui.Hex(0xce9178),
+		Number: ui.Hex(0xb5cea8),
+		Comment: ui.Hex(0x6a9955),
+		Constant: ui.Hex(0x4fc1ff),
+		Type: ui.Hex(0x4ec9b0),
+		Func: ui.Hex(0xdcdcaa)
+	}
+}

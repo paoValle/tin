@@ -110,7 +110,7 @@ fn RunScript(ed mut Editor, script str) {
 		} else if step == "dump" {
 			ed.dump()
 		} else if twine.HasPrefix(step, "jump:") {
-			say.Line("jumped:", ed.jumpTo(step[5:]))
+			say.Line("jumped:", ed.JumpTo(step[5:]))
 		} else if twine.HasPrefix(step, "complete:") {
 			// complete:LABEL opens the completion list at the caret and says whether LABEL is in it
 			ed.openCompletion()
@@ -152,13 +152,13 @@ fn RunScript(ed mut Editor, script str) {
 				for r < reps {
 					if what == "render" {
 						ed.Buf.Version += 1
-						ed.Render()
+						ed.cpuFrame()
 					} else if what == "type" {
 						ed.Buf.Insert("x")
-						ed.Render()
+						ed.cpuFrame()
 					} else if what == "scroll" {
 						ed.Scroll = (ed.Scroll + 37) % len(ed.Buf.Lines)
-						ed.Render()
+						ed.cpuFrame()
 					}
 					r += 1
 				}
@@ -177,15 +177,12 @@ fn RunScript(ed mut Editor, script str) {
 		} else if twine.HasPrefix(step, "open:") {
 			ed.Load(step[5:])
 		} else if twine.HasPrefix(step, "snap:") {
-			ed.Render()
-			if !appkit.SavePNG(ed.Bmp, step[5:]) {
-				say.Line("cannot write", step[5:])
-			}
+			ed.Snapshot(step[5:])
 		} else if twine.HasPrefix(step, "view:") {
 			let nums = appkit.ParseNumbers(step[5:])
 			if len(nums) >= 2 {
-				ed.PtW = nums[0]
-				ed.PtH = nums[1]
+				ed.AreaW = nums[0]
+				ed.AreaH = nums[1]
 			}
 		}
 		i += 1

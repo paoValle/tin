@@ -1,0 +1,220 @@
+package workspace
+
+import "../project"
+import "twine"
+
+// The picker is the box that opens over the window to choose something by typing: a file (Go to File), a command (Command
+// Palette). Typing narrows the list by fuzzy matching, Up and Down move through it, Return takes the chosen one.
+const PickFile = 0
+const PickCommand = 1
+const PickNewFile = 2
+const PickNewFolder = 3
+const PickRename = 4
+
+// Picker is the state of the box.
+type Picker struct {
+	Open bool
+	Kind i64
+	Query str
+	Items []str
+	// Targets are what the items stand for: a path, or a command number.
+	Targets []i64
+	Sel i64
+}
+
+// A command of the palette: its name and the number Perform takes.
+type command struct {
+	name str
+	cmd i64
+}
+
+fn commands() []command {
+	return []command{
+		command{name: "File: New", cmd: 1},
+		command{name: "File: Open File...", cmd: 2},
+		command{name: "File: Open Folder...", cmd: CmdOpenFolder},
+		command{name: "File: Save", cmd: 3},
+		command{name: "File: Save As...", cmd: 4},
+		command{name: "File: Close Tab", cmd: 5},
+		command{name: "Edit: Undo", cmd: 7},
+		command{name: "Edit: Redo", cmd: 8},
+		command{name: "Edit: Find and Replace", cmd: 13},
+		command{name: "Edit: Toggle Comment", cmd: 17},
+		command{name: "Edit: Format Document", cmd: 23},
+		command{name: "Selection: Select All", cmd: 12},
+		command{name: "Selection: Duplicate Line", cmd: 18},
+		command{name: "Selection: Delete Line", cmd: 19},
+		command{name: "View: Toggle Project Panel", cmd: CmdToggleProject},
+		command{name: "View: Reveal in Project Panel", cmd: CmdRevealInProject},
+		command{name: "View: Toggle Output Panel", cmd: CmdToggleOutput},
+		command{name: "View: Search in Project", cmd: CmdSearch},
+		command{name: "Go: Go to File...", cmd: CmdQuickOpen},
+		command{name: "Go: Go to Line...", cmd: 16},
+		command{name: "Go: Go to Declaration", cmd: 24},
+		command{name: "Go: Back", cmd: 25},
+		command{name: "Run: Run File", cmd: 22},
+		command{name: "Project: New File...", cmd: CmdNewFile},
+		command{name: "Project: Refresh", cmd: CmdRefresh},
+		command{name: "View: Zoom In", cmd: CmdZoomIn},
+		command{name: "View: Zoom Out", cmd: CmdZoomOut},
+		command{name: "View: Reset Zoom", cmd: CmdZoomReset},
+	}
+}
+
+// OpenPicker shows the picker for a kind of choice.
+fn (ws mut Workspace) OpenPicker(kind i64) {
+	ws.Picker.Open = true
+	ws.Picker.Kind = kind
+	ws.Picker.Query = ""
+	ws.Picker.Sel = 0
+	ws.Focus = FocusPicker
+	if kind == PickRename && ws.HasProj && ws.Proj.Selected > 0 {
+		ws.Picker.Query = ws.Proj.Entries[ws.Proj.Selected].Name
+	}
+	ws.refilter()
+}
+
+// ClosePicker hides the picker and gives the keyboard back to the editor.
+fn (ws mut Workspace) ClosePicker() {
+	ws.Picker.Open = false
+	ws.Focus = FocusEditor
+}
+
+// refilter recomputes the list for the query.
+fn (ws mut Workspace) refilter() {
+	mut items = []str{}
+	mut targets = []i64{}
+	if ws.Picker.Kind >= PickNewFile {
+		ws.Picker.Items = items
+		ws.Picker.Targets = targets
+		return
+	}
+	if ws.Picker.Kind == PickFile {
+		if ws.HasProj {
+			let all = ws.Proj.Files(20000)
+			mut rel = []str{}
+			for path in all {
+				rel = append(rel, twine.TrimPrefix(path, ws.Proj.Root + "/"))
+			}
+			items = project.Ranked(ws.Picker.Query, rel, 14)
+		}
+		for it in items {
+			targets = append(targets, 0)
+		}
+	} else {
+		let all = commands()
+		mut names = []str{}
+		for c in all {
+			names = append(names, c.name)
+		}
+		items = project.Ranked(ws.Picker.Query, names, 14)
+		for it in items {
+			mut id = 0
+			for c in all {
+				if c.name == it {
+					id = c.cmd
+				}
+			}
+			targets = append(targets, id)
+		}
+	}
+	ws.Picker.Items = items
+	ws.Picker.Targets = targets
+	if ws.Picker.Sel >= len(items) {
+		ws.Picker.Sel = 0
+	}
+}
+
+// PickerKey handles a key while the picker is open (the events deliver keys here; tests call it directly).
+fn (ws mut Workspace) PickerKey(code i64, flags i64, chars str) {
+	ws.pickerKey(code, flags, chars)
+}
+
+// pickerKey handles a key while the picker is open.
+fn (ws mut Workspace) pickerKey(code i64, flags i64, chars str) {
+	if code == keyEscape {
+		ws.ClosePicker()
+	} else if code == keyReturn {
+		if ws.Picker.Kind >= PickNewFile {
+			ws.applyName()
+		} else {
+			ws.accept(ws.Picker.Sel)
+		}
+	} else if code == keyDown {
+		if ws.Picker.Sel + 1 < len(ws.Picker.Items) {
+			ws.Picker.Sel += 1
+		}
+	} else if code == keyUp {
+		if ws.Picker.Sel > 0 {
+			ws.Picker.Sel -= 1
+		}
+	} else {
+		let q = editLine(ws.Picker.Query, code, flags, chars)
+		if q != ws.Picker.Query {
+			ws.Picker.Query = q
+			ws.Picker.Sel = 0
+			ws.refilter()
+		}
+	}
+	ws.Dirty = true
+}
+
+// accept takes item i of the picker.
+fn (ws mut Workspace) accept(i i64) {
+	if i < 0 || i >= len(ws.Picker.Items) {
+		return
+	}
+	let kind = ws.Picker.Kind
+	let item = ws.Picker.Items[i]
+	let target = ws.Picker.Targets[i]
+	ws.ClosePicker()
+	if kind == PickFile {
+		ws.OpenFile(ws.Proj.Root + "/" + item)
+	} else {
+		ws.Perform(target)
+	}
+}
+
+// applyName creates or renames with the name typed.
+fn (ws mut Workspace) applyName() {
+	let name = twine.TrimSpace(ws.Picker.Query)
+	let kind = ws.Picker.Kind
+	ws.ClosePicker()
+	if len(name) == 0 || !ws.HasProj {
+		return
+	}
+	if kind == PickNewFile {
+		let path = ws.Proj.NewFile(ws.Proj.Selected, name) catch _ {
+			ws.Ed.Say("cannot create " + name)
+			return
+		}
+		ws.OpenFile(path)
+	} else if kind == PickNewFolder {
+		ws.Proj.NewFolder(ws.Proj.Selected, name) catch _ {
+			ws.Ed.Say("cannot create " + name)
+			return
+		}
+	} else if kind == PickRename && ws.Proj.Selected > 0 {
+		ws.Proj.Rename(ws.Proj.Selected, name) catch _ {
+			ws.Ed.Say("cannot rename")
+			return
+		}
+	}
+}
+
+// pickerPrompt is the line above the list.
+fn (ws Workspace) pickerPrompt() str {
+	if ws.Picker.Kind == PickFile {
+		return "Go to file"
+	}
+	if ws.Picker.Kind == PickCommand {
+		return "Command"
+	}
+	if ws.Picker.Kind == PickNewFile {
+		return "New file name"
+	}
+	if ws.Picker.Kind == PickNewFolder {
+		return "New folder name"
+	}
+	return "Rename to"
+}

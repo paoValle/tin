@@ -55,6 +55,10 @@ fn (t mut Tree) natural(i i64) {
 		if count > 1 {
 			main += n.Style.Gap * f64(count - 1)
 		}
+		// a scrolling box asks for nothing along its direction: what its children need is what it scrolls, not what it takes
+		if n.Style.Scroll {
+			main = 0.0
+		}
 		if row {
 			w = main
 			h = cross

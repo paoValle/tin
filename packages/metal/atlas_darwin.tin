@@ -209,15 +209,15 @@ fn (a mut Atlas) Text(scene mut Scene, font i64, x f64, y f64, text str, cell f6
 	for i < len(text) {
 		let (rune, n) = glyph.DecodeRune(text, i)
 		i += n
+		let gl = a.Lookup(font, rune)
 		if rune == ' ' {
 			if cell > 0.0 {
 				pen += cell
 			} else {
-				pen += f.Advance
+				pen += gl.Advance
 			}
 			continue
 		}
-		let gl = a.Lookup(font, rune)
 		let gx = f64(i64(pen + 0.5)) - f64(edge)
 		let gy = f64(i64(y + 0.5)) - f64(i64(f.Ascent) + 1) - f64(edge)
 		scene.Sprite(gx, gy, f64(gl.W), f64(gl.H), f64(gl.X), f64(gl.Y), r, g, b, al)

@@ -107,6 +107,11 @@ fn sortEntries(xs mut []Entry) {
 	}
 }
 
+// Rebuild lists the rows again (after folders were opened or closed by changing Entries).
+fn (p mut Project) Rebuild() {
+	p.rebuild()
+}
+
 // rebuild lists the rows: the root, and below each open folder its children.
 fn (p mut Project) rebuild() {
 	p.Rows = []i64{}

@@ -1,0 +1,95 @@
+package workspace
+
+import "mint"
+import "../project"
+import "twine"
+
+// Search is the project-wide search of the search panel: the text typed, the options and what was found.
+type Search struct {
+	Query str
+	Case bool
+	Word bool
+	Regex bool
+	Matches []project.Match
+	// Done says a search ran for this query (so "no results" can be told from "not searched").
+	Done bool
+	Error str
+	Files i64
+}
+
+// RunSearch searches the project for the query.
+fn (ws mut Workspace) RunSearch() {
+	ws.Search.Done = true
+	ws.Search.Error = ""
+	ws.Search.Matches = []project.Match{}
+	if !ws.HasProj || len(ws.Search.Query) == 0 {
+		return
+	}
+	let opt = project.Options{CaseSensitive: ws.Search.Case, WholeWord: ws.Search.Word, Regex: ws.Search.Regex, Limit: 500}
+	let found = ws.Proj.Search(ws.Search.Query, opt) catch _ {
+		ws.Search.Error = "invalid regular expression"
+		return
+	}
+	ws.Search.Matches = found
+	mut files = 0
+	mut last = ""
+	for m in found {
+		if m.Path != last {
+			files += 1
+			last = m.Path
+		}
+	}
+	ws.Search.Files = files
+}
+
+// searchKey handles a key while the search box has the keyboard.
+fn (ws mut Workspace) searchKey(code i64, flags i64, chars str) {
+	if code == keyEscape {
+		ws.Focus = FocusEditor
+	} else if code == keyReturn {
+		ws.RunSearch()
+	} else {
+		let q = editLine(ws.Search.Query, code, flags, chars)
+		if q != ws.Search.Query {
+			ws.Search.Query = q
+			ws.Search.Done = false
+		}
+	}
+	ws.Dirty = true
+}
+
+// OpenMatch opens the file of match i at its place.
+fn (ws mut Workspace) OpenMatch(i i64) {
+	if i < 0 || i >= len(ws.Search.Matches) {
+		return
+	}
+	let m = ws.Search.Matches[i]
+	ws.OpenFile(m.Path)
+	ws.Ed.Buf.MoveTo(m.Line, m.Col, false)
+	ws.Ed.Buf.MoveTo(m.Line, m.Col + m.Len, true)
+	ws.Ed.Follow = true
+	ws.Focus = FocusEditor
+}
+
+// summary is the line under the search box.
+fn (s Search) Summary() str {
+	if len(s.Error) > 0 {
+		return s.Error
+	}
+	if !s.Done {
+		return "Press Return to search"
+	}
+	if len(s.Matches) == 0 {
+		return "No results"
+	}
+	mut text = mint.Itoa(len(s.Matches)) + " results in " + mint.Itoa(s.Files) + " files"
+	if len(s.Matches) >= 500 {
+		text = "500+ results"
+	}
+	return text
+}
+
+// shortName is the path below the project folder.
+fn (ws Workspace) relPath(path str) str {
+	return twine.TrimPrefix(path, ws.Proj.Root + "/")
+}

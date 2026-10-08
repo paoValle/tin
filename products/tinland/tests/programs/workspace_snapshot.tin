@@ -1,0 +1,35 @@
+package main
+
+import "../../editor"
+import "../../render"
+import "../../theme"
+import "../../workspace"
+import "metal"
+import "quarry"
+import "say"
+import "textedit"
+
+// The whole window drawn on the GPU without showing it: the folder given first on the command line and the file after it, to
+// the PNG named third. Prints "no gpu" first on a machine that has none.
+fn main() {
+	let args = quarry.Args()
+	let gpu = metal.Open()
+	if gpu.Device == 0 {
+		say.Line("no gpu:", gpu.Error)
+		return
+	}
+	render.Init(gpu, 2.0, 13.0)
+	mut ed = editor.New(textedit.New())
+	ed.UseFont()
+	mut ws = workspace.New(theme.Dark(), ed)
+	ws.OpenFolder(args[1])
+	ws.OpenFile(args[2])
+	ws.W = 1100.0
+	ws.H = 700.0
+	ws.Prepare()
+	mut scene = metal.Scene{}
+	ws.Paint(mut scene)
+	render.Upload()
+	say.Line("instances", scene.N > 40)
+	say.Line("written", render.Snapshot(scene, 2200, 1400, ws.Th.Background, args[3]))
+}

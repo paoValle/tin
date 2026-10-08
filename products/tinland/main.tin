@@ -5,25 +5,20 @@ import "editor"
 import "quarry"
 import "textedit"
 
-// Tinland: a text editor written in Tin. With paths it opens those files; with TINLAND_SCRIPT set it runs the script
-// without a window (editor/script.tin); with TINLAND_SMOKE=N the window closes itself after N seconds.
+// Tinland: an editor written in Tin. With paths it opens those files and folders; with TINLAND_SCRIPT set it runs the script
+// without a window (editor/script.tin).
 fn main() {
-	mut ed = editor.New(textedit.New())
 	let args = quarry.Args()
-	mut a = 1
-	for a < len(args) {
-		ed.Load(args[a])
-		a += 1
-	}
 	let script = quarry.Getenv("TINLAND_SCRIPT")
 	if len(script) > 0 {
+		mut ed = editor.New(textedit.New())
+		for a in 1..len(args) {
+			ed.Load(args[a])
+		}
 		ed.Headless = true
-		ed.Scale = 1.0
-		ed.FontFor()
 		editor.RunScript(mut ed, script)
 		ed.Cleanup()
 		return
 	}
-	app.Run(mut ed)
-	ed.Cleanup()
+	app.Run(args[1:])
 }

@@ -1,0 +1,30 @@
+-- two lines cursor 5 1
+|hello|
+|world|
+||
+||
+-- clear, home, forward cursor 2 0
+|xy  cd|
+||
+||
+||
+-- erase to end of line cursor 2 1
+|xy  cd|
+|qq|
+|  z|
+||
+sgr 13447473 1 100 -1 0
+-- wrap cursor 2 1
+|fgh|
+|ij|
+history 1
+history after scroll 3 kl mn
+-- utf8 cursor 5 0
+|héllo|
+||
+colors 16711680 66051 90
+-- delete chars cursor 1 0
+|Xlo|
+||
+cursor shown false
+resized 8 3 Xlo

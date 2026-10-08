@@ -1,66 +1,113 @@
+// The application: the window and its menu bar around a workspace. AppKit calls the functions here (a frame sixty times a second,
+// every key and mouse event, every menu choice, the close request); there is no loop of ours.
 package app
 
 import "appkit"
-import "editor"
-import "mint"
+import "../editor"
+import "gpuwin"
+import "metal"
 import "quarry"
+import "../render"
+import "textedit"
+import "../theme"
+import "../workspace"
 
-// Run opens the window and handles events until it is closed.
-fn Run(ed mut editor.Editor) {
-	let win = appkit.OpenWindow("Tinland", ed.PtW, ed.PtH)
-	ed.Win = win
-	ed.Scale = appkit.Scale(win)
-	ed.FontFor()
-	let menu = BuildMenus(win)
-	let smoke = quarry.Getenv("TINLAND_SMOKE")
-	mut ticks = 0
-	mut limitTicks = -1
-	if len(smoke) > 0 {
-		let seconds = mint.Atoi(smoke) catch _ {
-			0
+// Run opens the window for the workspace and serves it until it is closed: AppKit calls the window's callbacks (gpuwin writes
+// each key, mouse event, menu choice and close request in a queue as it happens), and between events the workspace takes what
+// is queued and draws a frame when something changed. It reports false when the machine has no GPU.
+fn Run(paths []str) bool {
+	// the workspace is a local of this function: an arena may use a local but not a mut parameter
+	mut ws = workspace.New(theme.Dark(), editor.New(textedit.New()))
+	for p in paths {
+		if quarry.IsDir(p) {
+			ws.OpenFolder(p)
+		} else {
+			ws.OpenFile(p)
 		}
-		limitTicks = seconds * 2
 	}
-	for !ed.Quit && appkit.IsOpen(win) && (limitTicks < 0 || ticks < limitTicks) {
+	let (win, gpu) = gpuwin.Open("Tinland", 1180.0, 760.0)
+	if gpu.Device == 0 {
+		quarry.Eprintln("Tinland draws on the GPU and this machine has none: " + gpu.Error)
+		return false
+	}
+	render.Init(gpu, appkit.Scale(win.Win), ws.CodeSize)
+	ws.Ed.UseFont()
+	BuildMenus(win)
+	for !ws.Quit {
 		let pool = appkit.PoolPush()
-		mut e = appkit.WaitEvent(win, 0.5)
-		if e == 0 {
-			// nothing happened for half a second: check what was typed, and blink the caret
-			if ed.DiagFor != ed.Buf.Version {
-				ed.CheckNow()
+		// wait for the next event: the caret blinks twice a second, so an idle window wakes at that pace and no faster
+		mut got = gpuwin.Pump(win, 0.5)
+		if !got {
+			ws.Ed.Blink = !ws.Ed.Blink
+			ws.Ed.Redraw = true
+		}
+		for got {
+			got = gpuwin.Pump(win, 0.0)
+		}
+		take(mut ws, win)
+		// the window moved to a screen with another scale (Retina and not): the glyphs are drawn again for it
+		let scale = appkit.Scale(win.Win)
+		if scale != render.Scale() {
+			render.Init(gpu, scale, ws.CodeSize)
+			ws.Ed.UseFont()
+			ws.Dirty = true
+		}
+		let (cw, ch) = appkit.ContentSize(win.Win)
+		let resized = ws.Resize(cw, ch)
+		if resized || ws.NeedsFrame() {
+			ws.Prepare()
+			arena {
+				mut scene = metal.Scene{}
+				ws.Paint(mut scene)
+				render.Upload()
+				let (pw, ph) = gpuwin.Size(win)
+				render.Present(win.Layer, pw, ph, scene, ws.Th.Background)
 			}
-			ed.Blink = !ed.Blink
-			ed.Redraw = true
-			ticks += 1
-		}
-		for e != 0 {
-			ed.HandleEvent(e)
-			e = appkit.WaitEvent(win, 0.0)
-		}
-		mut cmd = appkit.NextCommand(menu)
-		for cmd >= 0 {
-			ed.Perform(cmd)
-			cmd = appkit.NextCommand(menu)
-		}
-		let (w, h) = appkit.ContentSize(win)
-		if w > 0.0 && (w != ed.PtW || h != ed.PtH) {
-			ed.PtW = w
-			ed.PtH = h
-			ed.Redraw = true
-		}
-		if ed.Redraw {
-			ed.Render()
-			appkit.Present(win, ed.Bmp)
-			ed.Redraw = false
-			mut title = ed.Name()
-			if ed.Buf.Dirty {
-				title = title + " (edited)"
-			}
-			if title != ed.Title {
-				ed.Title = title
-				appkit.SetTitle(win, title + " - Tinland")
-			}
+			appkit.SetTitle(win.Win, ws.Title())
 		}
 		appkit.PoolPop(pool)
+	}
+	ws.Ed.Cleanup()
+	return true
+}
+
+// take acts on everything the callbacks queued.
+fn take(ws mut workspace.Workspace, win gpuwin.Window) {
+	mut kind = 0
+	mut payload = 0
+	let (k0, p0) = gpuwin.Next()
+	kind = k0
+	payload = p0
+	for kind != 0 {
+		if kind == gpuwin.KindEvent {
+			event(mut ws, win, payload)
+			gpuwin.Release(payload)
+		} else if kind == gpuwin.KindCommand {
+			ws.Perform(payload)
+		} else if kind == gpuwin.KindQuit {
+			ws.Ed.Perform(editor.CmdQuit)
+			ws.Quit = ws.Ed.Quit
+		}
+		let (k, p) = gpuwin.Next()
+		kind = k
+		payload = p
+	}
+}
+
+// event handles a key or mouse event of the window.
+fn event(ws mut workspace.Workspace, win gpuwin.Window, e i64) {
+	ws.Event(e)
+	if ws.Menu == workspace.MenuTree {
+		ws.Menu = workspace.MenuNone
+		gpuwin.PopUp(win, e, []str{"New File...", "New Folder...", "-", "Rename...", "Delete", "-", "Refresh"}, []i64{workspace.CmdNewFile, workspace.CmdNewFolder2, 0, workspace.CmdRename, workspace.CmdDelete, 0, workspace.CmdRefresh})
+	}
+	if ws.Drag == workspace.DragTitle {
+		// a press on the title bar moves the window (a double click zooms it)
+		if appkit.EventClicks(e) >= 2 {
+			appkit.Send1(win.Win.Win, "zoom:", 0)
+		} else {
+			appkit.Send1(win.Win.Win, "performWindowDragWithEvent:", e)
+		}
+		ws.Drag = 0
 	}
 }

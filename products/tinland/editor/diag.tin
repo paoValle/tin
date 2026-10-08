@@ -1,6 +1,6 @@
 package editor
 
-import "language"
+import "../language"
 import "mint"
 import "quarry"
 import "tinsym"
@@ -47,6 +47,11 @@ fn (ed Editor) diagAt(line i64) i64 {
 }
 
 // summary is the status line text for the errors: the one under the caret, or how many there are.
+// DiagSummary is "2 errors" (empty when the text compiles).
+fn (ed Editor) DiagSummary() str {
+	return ed.diagSummary()
+}
+
 fn (ed Editor) diagSummary() str {
 	if len(ed.Diags) == 0 {
 		return ""

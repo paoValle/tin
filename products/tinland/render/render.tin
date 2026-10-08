@@ -32,6 +32,7 @@ const IconPlus = 14
 const IconGear = 15
 const IconText = 16
 const IconImage = 17
+const IconRefresh = 18
 
 // Canvas is the GPU, the glyph atlas and the screen scale.
 type Canvas struct {
@@ -51,7 +52,7 @@ fn Init(gpu metal.Gpu, scale f64, codePoints f64) {
 	cv.Atlas.AddFont(".AppleSystemUIFont-Bold", 13.0 * scale)
 	cv.Atlas.AddFont(".AppleSystemUIFont", 11.0 * scale)
 	cv.Atlas.AddFont("Menlo-Regular", codePoints * scale)
-	for name in []str{"folder", "folder.fill", "doc", "chevron.left.forwardslash.chevron.right", "chevron.right", "chevron.down", "sidebar.left", "arrow.triangle.branch", "list.bullet.indent", "magnifyingglass", "exclamationmark.triangle", "terminal", "ladybug", "xmark", "plus", "gearshape", "doc.text", "photo"} {
+	for name in []str{"folder", "folder.fill", "doc", "chevron.left.forwardslash.chevron.right", "chevron.right", "chevron.down", "sidebar.left", "arrow.triangle.branch", "list.bullet.indent", "magnifyingglass", "exclamationmark.triangle", "terminal", "ladybug", "xmark", "plus", "gearshape", "doc.text", "photo", "arrow.clockwise"} {
 		cv.Atlas.AddIcon(name)
 	}
 }
@@ -90,7 +91,7 @@ fn CodeCell() f64 {
 }
 
 // Pen draws the text in the font at (x, y), where y is the top of its line (points), and returns where the pen ended.
-fn Pen(scene mut metal.Scene, font i64, x f64, y f64, text str, c ui.Color) f64 {
+fn Pen(scene mut metal.Scene, font i64, x f64, y f64, text str, c i64) f64 {
 	let f = cv.Atlas.Fonts[font]
 	let s = cv.Scale
 	mut cell = 0.0
@@ -134,6 +135,57 @@ fn Upload() {
 }
 
 // Present draws the scene into the layer, w by h pixels, over the color.
-fn Present(layer i64, w i64, h i64, scene metal.Scene, bg ui.Color) {
+fn Present(layer i64, w i64, h i64, scene metal.Scene, bg i64) {
 	metal.DrawLayer(cv.Gpu, layer, w, h, scene, cv.Atlas, ui.R(bg), ui.G(bg), ui.B(bg), ui.A(bg))
+}
+
+// Fill paints a solid rectangle (points).
+fn Fill(scene mut metal.Scene, x f64, y f64, w f64, h f64, c i64) {
+	let s = cv.Scale
+	scene.Rect(x * s, y * s, w * s, h * s, ui.R(c), ui.G(c), ui.B(c), ui.A(c), 0.0)
+}
+
+// FillRound paints a rectangle with rounded corners.
+fn FillRound(scene mut metal.Scene, x f64, y f64, w f64, h f64, radius f64, c i64) {
+	let s = cv.Scale
+	scene.Rect(x * s, y * s, w * s, h * s, ui.R(c), ui.G(c), ui.B(c), ui.A(c), radius * s)
+}
+
+// Stroke paints the edge of a rectangle, width points wide, inside it.
+fn Stroke(scene mut metal.Scene, x f64, y f64, w f64, h f64, radius f64, width f64, c i64) {
+	let s = cv.Scale
+	scene.Outline(x * s, y * s, w * s, h * s, ui.R(c), ui.G(c), ui.B(c), ui.A(c), radius * s, width * s)
+}
+
+// Clip limits what is drawn next to a rectangle (points) until Unclip.
+fn Clip(scene mut metal.Scene, x f64, y f64, w f64, h f64) {
+	let s = cv.Scale
+	scene.PushClip(x * s, y * s, w * s, h * s)
+}
+
+fn Unclip(scene mut metal.Scene) {
+	scene.PopClip()
+}
+
+// Hairline is the thickness of a one pixel line, in points.
+fn Hairline() f64 {
+	return 1.0 / cv.Scale
+}
+
+// Snapshot draws the scene over the color into an offscreen texture of w by h pixels and writes it as a PNG (tests and
+// screenshots); it reports whether the file was written.
+fn Snapshot(scene metal.Scene, w i64, h i64, bg i64, path str) bool {
+	let t = metal.NewTarget(cv.Gpu, w, h)
+	metal.Draw(cv.Gpu, t.Texture, w, h, scene, cv.Atlas, ui.R(bg), ui.G(bg), ui.B(bg), ui.A(bg))
+	return metal.SavePNG(t, path)
+}
+
+// HaveGPU reports whether Init found a GPU.
+fn HaveGPU() bool {
+	return cv.Gpu.Device != 0
+}
+
+// SetCodeSize changes the size of the code font (points) and rebuilds the atlas for it.
+fn SetCodeSize(points f64) {
+	Init(cv.Gpu, cv.Scale, points)
 }

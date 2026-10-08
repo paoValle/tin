@@ -1,15 +1,15 @@
 package editor
 
-import "appkit"
 import "textedit"
 import "twine"
 
-// pointToCell moves the caret to where the mouse is (x and y in points from the window's bottom left).
+// Mouse and key input, in the terms the text area understands: positions are in points from the area's top left, keys come as
+// the hardware code, the modifier flags and the text typed.
+
+// mouseTo moves the caret to the character cell at (x, y).
 fn (ed mut Editor) mouseTo(x f64, y f64, extend bool) {
-	let px = x * ed.Scale
-	let py = ed.PtH * ed.Scale - y * ed.Scale
-	mut row = ed.Scroll + i64((py - ed.LineH * 0.2 - ed.tabH()) / ed.LineH)
-	if py < ed.LineH * 0.2 + ed.tabH() {
+	mut row = ed.Scroll + i64(y / ed.LineH)
+	if y < 0.0 {
 		row = ed.Scroll - 1
 	}
 	if row < 0 {
@@ -18,7 +18,7 @@ fn (ed mut Editor) mouseTo(x f64, y f64, extend bool) {
 	if row >= len(ed.Buf.Lines) {
 		row = len(ed.Buf.Lines) - 1
 	}
-	mut dcol = ed.HScroll + i64((px - ed.gutterW()) / ed.CharW + 0.5)
+	mut dcol = ed.HScroll + i64((x - ed.gutterW()) / ed.CharW + 0.5)
 	if dcol < 0 {
 		dcol = 0
 	}
@@ -27,62 +27,70 @@ fn (ed mut Editor) mouseTo(x f64, y f64, extend bool) {
 	ed.Redraw = true
 }
 
-// HandleEvent acts on one window event; the ones the editor does not use go to AppKit.
-fn (ed mut Editor) HandleEvent(e i64) {
-	let t = appkit.EventType(e)
-	if t == appkit.EventKeyDown {
-		mut chars = appkit.EventChars(e)
-		let flags = appkit.EventFlags(e)
-		if (flags & flagCmd) != 0 {
-			chars = twine.ToLower(chars)
-		}
-		ed.handleKey(Key{Code: appkit.EventKeyCode(e), Flags: flags, Chars: chars})
+// KeyDown acts on a key press: code is the hardware key code, flags the modifiers, chars the text it types.
+fn (ed mut Editor) KeyDown(code i64, flags i64, chars str) {
+	mut text = chars
+	if (flags & flagCmd) != 0 {
+		text = twine.ToLower(chars)
+	}
+	ed.handleKey(Key{Code: code, Flags: flags, Chars: text})
+}
+
+// MouseDown handles a press at (x, y) in the text area: clicks is 1, 2 (a word) or 3 (a line); a click with the command key
+// goes to the declaration under the mouse.
+fn (ed mut Editor) MouseDown(x f64, y f64, clicks i64, flags i64) {
+	ed.Mode = modeEdit
+	ed.CompOpen = false
+	ed.Follow = true
+	ed.mouseTo(x, y, (flags & flagShift) != 0)
+	if (flags & flagCmd) != 0 {
+		ed.gotoDefinition()
 		return
 	}
-	if t == 1 || t == 6 {
-		// left mouse down, dragged
-		let (x, y) = appkit.EventLocation(e)
-		if y < ed.PtH && ed.PtH * ed.Scale - y * ed.Scale < ed.tabH() {
-			if t == 1 {
-				ed.activate(ed.tabAt(x * ed.Scale))
-			}
-		} else if y < ed.PtH && t == 1 && ed.panelClick(ed.PtH * ed.Scale - y * ed.Scale) {
-			// a click in the output panel: a compiler message opens its place
-		} else if y < ed.PtH {
-			ed.Mode = modeEdit
-			let clicks = appkit.EventClicks(e)
-			ed.mouseTo(x, y, t == 6 && ed.dragging)
-			if t == 1 && (appkit.EventFlags(e) & flagCmd) != 0 {
-				// Cmd+click: go to the declaration of the name clicked
-				ed.gotoDefinition()
-				return
-			}
-			if t == 1 && clicks == 2 {
-				ed.Buf.SelectWordAt(ed.Buf.Row, ed.Buf.Col)
-			} else if t == 1 && clicks >= 3 {
-				ed.Buf.MoveTo(ed.Buf.Row, 0, false)
-				ed.Buf.MoveTo(ed.Buf.Row, len(ed.Buf.Lines[ed.Buf.Row]), true)
-			}
-			ed.dragging = true
-		}
-	} else if t == 2 {
-		ed.dragging = false
-	} else if t == 22 {
-		ed.acc += appkit.EventScrollY(e)
-		let step = ed.FontSize * 1.4
-		let lines = i64(ed.acc / step)
-		if lines != 0 {
-			ed.acc -= f64(lines) * step
-			ed.Scroll -= lines
-			if ed.Scroll < 0 {
-				ed.Scroll = 0
-			}
-			if ed.Scroll > len(ed.Buf.Lines) - 1 {
-				ed.Scroll = len(ed.Buf.Lines) - 1
-			}
-			ed.Redraw = true
-		}
-		return
+	if clicks == 2 {
+		ed.Buf.SelectWordAt(ed.Buf.Row, ed.Buf.Col)
+	} else if clicks >= 3 {
+		ed.Buf.MoveTo(ed.Buf.Row, 0, false)
+		ed.Buf.MoveTo(ed.Buf.Row, len(ed.Buf.Lines[ed.Buf.Row]), true)
 	}
-	appkit.Dispatch(ed.Win, e)
+	ed.dragging = true
+}
+
+// MouseDrag extends the selection to (x, y) while the button is held.
+fn (ed mut Editor) MouseDrag(x f64, y f64) {
+	if ed.dragging {
+		ed.mouseTo(x, y, true)
+	}
+}
+
+// MouseUp ends a drag.
+fn (ed mut Editor) MouseUp() {
+	ed.dragging = false
+}
+
+// Wheel scrolls the text by dy points (positive scrolls the text down, as a trackpad moves it).
+fn (ed mut Editor) Wheel(dx f64, dy f64) {
+	ed.acc += dy
+	let lines = i64(ed.acc / ed.LineH)
+	if lines != 0 {
+		ed.acc -= f64(lines) * ed.LineH
+		ed.Scroll -= lines
+		if ed.Scroll < 0 {
+			ed.Scroll = 0
+		}
+		if ed.Scroll > len(ed.Buf.Lines) - 1 {
+			ed.Scroll = len(ed.Buf.Lines) - 1
+		}
+		ed.Redraw = true
+	}
+	ed.accX += dx
+	let cols = i64(ed.accX / ed.CharW)
+	if cols != 0 {
+		ed.accX -= f64(cols) * ed.CharW
+		ed.HScroll -= cols
+		if ed.HScroll < 0 {
+			ed.HScroll = 0
+		}
+		ed.Redraw = true
+	}
 }

@@ -13,6 +13,19 @@ const ModCtrl = 1 << 18
 type Menu struct {
 	Bar   i64
 	Queue i64
+	// Target and Action are what a chosen item sends: the queue and addObject: for the polling style, or an object
+	// with a method taking the item (see NewCallbackMenuBar).
+	Target i64
+	Action i64
+}
+
+// NewCallbackMenuBar makes an empty menu bar whose items send action (a selector such as "command:", taking the item) to
+// target, an object that implements it (the delegate gpuwin defines). The item's tag says which one it was.
+fn NewCallbackMenuBar(app i64, target i64, action str) Menu {
+	let m = Menu{Target: target, Action: Sel(action)}
+	m.Bar = Send(Send(Class("NSMenu"), "alloc"), "init")
+	Send1(app, "setMainMenu:", m.Bar)
+	return m
 }
 
 // NewMenuBar makes an empty menu bar for the window's application and installs it.
@@ -21,6 +34,8 @@ fn NewMenuBar(win Window) Menu {
 	m.Bar = Send(Send(Class("NSMenu"), "alloc"), "init")
 	m.Queue = Send(Class("NSMutableArray"), "array")
 	Send(m.Queue, "retain")
+	m.Target = m.Queue
+	m.Action = Sel("addObject:")
 	Send1(win.App, "setMainMenu:", m.Bar)
 	return m
 }
@@ -37,9 +52,9 @@ fn AddMenu(m Menu, title str) i64 {
 // AddItem adds an item that, when chosen, puts tag in the queue; key is the key shown beside it (with the
 // modifiers in mods, ModCmd and so on).
 fn AddItem(m Menu, menu i64, title str, key str, mods i64, tag i64) {
-	let item = Send3(Send(Class("NSMenuItem"), "alloc"), "initWithTitle:action:keyEquivalent:", NewString(title), Sel("addObject:"), NewString(key))
+	let item = Send3(Send(Class("NSMenuItem"), "alloc"), "initWithTitle:action:keyEquivalent:", NewString(title), m.Action, NewString(key))
 	Send1(item, "setKeyEquivalentModifierMask:", mods)
-	Send1(item, "setTarget:", m.Queue)
+	Send1(item, "setTarget:", m.Target)
 	Send1(item, "setTag:", tag)
 	Send1(menu, "addItem:", item)
 }

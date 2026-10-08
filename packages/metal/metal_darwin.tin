@@ -307,3 +307,12 @@ fn Pixels(t Target) i64 {
 fn Pixel(bytes i64, i i64) i64 {
 	return i64(load8(bytes + i))
 }
+
+// SavePNG writes the target's pixels to a PNG file and reports whether it could.
+fn SavePNG(t Target, path str) bool {
+	let bytes = Pixels(t)
+	let b = appkit.BitmapOver(bytes, t.W, t.H)
+	let ok = appkit.SavePNG(b, path)
+	free(bytes)
+	return ok
+}

@@ -1,71 +1,102 @@
 package app
 
 import "appkit"
-import "editor"
+import "../editor"
+import "gpuwin"
+import "../workspace"
 
-// item adds a menu item: its title, the key shown beside it (with Shift when shift is set) and its command.
-fn item(m appkit.Menu, menu i64, title str, key str, shift bool, cmd i64) {
-	mut mods = appkit.ModCmd
-	if shift {
-		mods = mods | appkit.ModShift
-	}
+// item adds a menu item: its title, the key shown beside it and its command (the tag OnCommand gets).
+fn item(m appkit.Menu, menu i64, title str, key str, mods i64, cmd i64) {
 	appkit.AddItem(m, menu, title, key, mods, cmd)
 }
 
-// BuildMenus installs the menu bar: the application, File, Edit, Find and Window menus.
-fn BuildMenus(win appkit.Window) appkit.Menu {
-	let m = appkit.NewMenuBar(win)
+const cmd = appkit.ModCmd
+const shift = appkit.ModShift
+const alt = appkit.ModAlt
+const ctrl = appkit.ModCtrl
+
+// BuildMenus installs the menu bar, in the order and with the names Zed uses: the application, File, Edit, Selection, View, Go,
+// Run, Window and Help.
+fn BuildMenus(win gpuwin.Window) appkit.Menu {
+	let m = gpuwin.NewMenuBar(win)
 	let app = appkit.AddMenu(m, "Tinland")
 	appkit.AddSystemItem(app, "About Tinland", "orderFrontStandardAboutPanel:", "", 0)
 	appkit.AddSeparator(app)
-	appkit.AddSystemItem(app, "Hide Tinland", "hide:", "h", appkit.ModCmd)
-	appkit.AddSystemItem(app, "Hide Others", "hideOtherApplications:", "h", appkit.ModCmd | appkit.ModAlt)
+	appkit.AddSystemItem(app, "Hide Tinland", "hide:", "h", cmd)
+	appkit.AddSystemItem(app, "Hide Others", "hideOtherApplications:", "h", cmd | alt)
 	appkit.AddSystemItem(app, "Show All", "unhideAllApplications:", "", 0)
 	appkit.AddSeparator(app)
-	item(m, app, "Quit Tinland", "q", false, editor.CmdQuit)
+	item(m, app, "Quit Tinland", "q", cmd, editor.CmdQuit)
 
 	let file = appkit.AddMenu(m, "File")
-	item(m, file, "New", "n", false, editor.CmdNew)
-	item(m, file, "Open...", "o", false, editor.CmdOpen)
+	item(m, file, "New", "n", cmd, editor.CmdNew)
 	appkit.AddSeparator(file)
-	item(m, file, "Save", "s", false, editor.CmdSave)
-	item(m, file, "Save As...", "s", true, editor.CmdSaveAs)
+	item(m, file, "Open File...", "o", cmd, editor.CmdOpen)
+	item(m, file, "Open Folder...", "o", cmd | shift, workspace.CmdOpenFolder)
 	appkit.AddSeparator(file)
-	item(m, file, "Close Tab", "w", false, editor.CmdClose)
-	item(m, file, "Run", "r", false, editor.CmdRun)
+	item(m, file, "New File...", "n", cmd | alt, workspace.CmdNewFile)
+	item(m, file, "New Folder...", "n", cmd | alt | shift, workspace.CmdNewFolder2)
+	item(m, file, "Rename...", "", 0, workspace.CmdRename)
+	item(m, file, "Delete", "", 0, workspace.CmdDelete)
+	appkit.AddSeparator(file)
+	item(m, file, "Save", "s", cmd, editor.CmdSave)
+	item(m, file, "Save As...", "s", cmd | shift, editor.CmdSaveAs)
+	appkit.AddSeparator(file)
+	item(m, file, "Close Tab", "w", cmd, editor.CmdClose)
 
 	let edit = appkit.AddMenu(m, "Edit")
-	item(m, edit, "Undo", "z", false, editor.CmdUndo)
-	item(m, edit, "Redo", "z", true, editor.CmdRedo)
+	item(m, edit, "Undo", "z", cmd, editor.CmdUndo)
+	item(m, edit, "Redo", "z", cmd | shift, editor.CmdRedo)
 	appkit.AddSeparator(edit)
-	item(m, edit, "Cut", "x", false, editor.CmdCut)
-	item(m, edit, "Copy", "c", false, editor.CmdCopy)
-	item(m, edit, "Paste", "v", false, editor.CmdPaste)
-	item(m, edit, "Select All", "a", false, editor.CmdSelectAll)
+	item(m, edit, "Cut", "x", cmd, editor.CmdCut)
+	item(m, edit, "Copy", "c", cmd, editor.CmdCopy)
+	item(m, edit, "Paste", "v", cmd, editor.CmdPaste)
 	appkit.AddSeparator(edit)
-	item(m, edit, "Toggle Comment", "/", false, editor.CmdComment)
-	item(m, edit, "Duplicate Line", "d", false, editor.CmdDuplicate)
-	item(m, edit, "Delete Line", "k", true, editor.CmdDeleteLine)
-	item(m, edit, "Indent", "]", false, editor.CmdIndent)
-	item(m, edit, "Unindent", "[", false, editor.CmdUnindent)
-	item(m, edit, "Format Document", "i", true, editor.CmdFormat)
+	item(m, edit, "Find and Replace...", "f", cmd, editor.CmdFind)
+	item(m, edit, "Find in Project", "f", cmd | shift, workspace.CmdSearch)
+	item(m, edit, "Find Next", "g", cmd, editor.CmdFindNext)
+	item(m, edit, "Find Previous", "g", cmd | shift, editor.CmdFindPrev)
+	appkit.AddSeparator(edit)
+	item(m, edit, "Toggle Comment", "/", cmd, editor.CmdComment)
+	item(m, edit, "Format Document", "i", cmd | shift, editor.CmdFormat)
 
-	let find = appkit.AddMenu(m, "Find")
-	item(m, find, "Find and Replace...", "f", false, editor.CmdFind)
-	item(m, find, "Find Next", "g", false, editor.CmdFindNext)
-	item(m, find, "Find Previous", "g", true, editor.CmdFindPrev)
-	item(m, find, "Go to Line...", "l", false, editor.CmdGoto)
+	let sel = appkit.AddMenu(m, "Selection")
+	item(m, sel, "Select All", "a", cmd, editor.CmdSelectAll)
+	appkit.AddSeparator(sel)
+	item(m, sel, "Duplicate Line", "d", cmd, editor.CmdDuplicate)
+	item(m, sel, "Delete Line", "k", cmd | shift, editor.CmdDeleteLine)
+	item(m, sel, "Indent", "]", cmd, editor.CmdIndent)
+	item(m, sel, "Unindent", "[", cmd, editor.CmdUnindent)
 
-	let navigate = appkit.AddMenu(m, "Navigate")
-	item(m, navigate, "Go to Declaration", "b", false, editor.CmdDefinition)
-	appkit.AddItem(m, navigate, "Back", "\xef\x9c\x82", appkit.ModCmd | appkit.ModAlt, editor.CmdBack)
-	appkit.AddItem(m, navigate, "Quick Info", "q", appkit.ModCtrl, editor.CmdInfo)
-	appkit.AddItem(m, navigate, "Complete", " ", appkit.ModCtrl, editor.CmdComplete)
+	let view = appkit.AddMenu(m, "View")
+	item(m, view, "Command Palette...", "p", cmd | shift, workspace.CmdPalette)
+	appkit.AddSeparator(view)
+	item(m, view, "Zoom In", "=", cmd, workspace.CmdZoomIn)
+	item(m, view, "Zoom Out", "-", cmd, workspace.CmdZoomOut)
+	item(m, view, "Reset Zoom", "0", cmd, workspace.CmdZoomReset)
+	appkit.AddSeparator(view)
+	item(m, view, "Toggle Project Panel", "b", cmd, workspace.CmdToggleProject)
+	item(m, view, "Toggle Output Panel", "j", cmd, workspace.CmdToggleOutput)
+	item(m, view, "Reveal in Project Panel", "r", cmd | shift, workspace.CmdRevealInProject)
+	appkit.AddSeparator(view)
+	appkit.AddSystemItem(view, "Enter Full Screen", "toggleFullScreen:", "f", cmd | ctrl)
+
+	let nav = appkit.AddMenu(m, "Go")
+	item(m, nav, "Go to File...", "p", cmd, workspace.CmdQuickOpen)
+	item(m, nav, "Go to Line...", "l", cmd, editor.CmdGoto)
+	item(m, nav, "Go to Declaration", "b", cmd | shift, editor.CmdDefinition)
+	appkit.AddItem(m, nav, "Back", "\xef\x9c\x82", cmd | alt, editor.CmdBack)
+	appkit.AddItem(m, nav, "Quick Info", "q", ctrl, editor.CmdInfo)
+	appkit.AddItem(m, nav, "Complete", " ", ctrl, editor.CmdComplete)
+
+	let run = appkit.AddMenu(m, "Run")
+	item(m, run, "Run File", "r", cmd, editor.CmdRun)
 
 	let window = appkit.AddMenu(m, "Window")
-	appkit.AddSystemItem(window, "Minimize", "performMiniaturize:", "m", appkit.ModCmd)
+	appkit.AddSystemItem(window, "Minimize", "performMiniaturize:", "m", cmd)
 	appkit.AddSystemItem(window, "Zoom", "performZoom:", "", 0)
-	appkit.SetWindowsMenu(win, window)
-	appkit.HookCloseButton(win, m, editor.CmdQuit)
+	appkit.SetWindowsMenu(win.Win, window)
+
+	appkit.AddMenu(m, "Help")
 	return m
 }

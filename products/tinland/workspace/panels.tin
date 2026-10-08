@@ -1,0 +1,142 @@
+package workspace
+
+import "../render"
+import "../ui"
+import "appkit"
+import "mint"
+import "twine"
+
+// The smaller panels of the left dock: the outline of the file, the problems the compiler found, and the files git says changed.
+
+// outlineRows are the entries of the active file's outline: declarations (not locals) whose file is the one shown.
+fn (ws Workspace) outlineRows() []i64 {
+	mut rows = []i64{}
+	for i in 0..len(ws.Ed.Syms) {
+		let s = ws.Ed.Syms[i]
+		if s.Kind != "local" && (s.File == ws.Ed.Buf.Path || len(s.File) == 0) {
+			rows = append(rows, i)
+		}
+	}
+	return rows
+}
+
+// panelFrame opens the column every one of these panels sits in, with its title; the caller adds the rows and closes it twice.
+fn (ws Workspace) panelFrame(t mut ui.Tree, title str, note str) {
+	let th = ws.Th
+	t.Open(ui.VBox().Wide(ws.LeftW).Fill(th.Panel), 0)
+	t.Open(ui.HBox().High(34.0).Items(ui.Center).Spacing(8.0).PadXY(12.0, 0.0), 0)
+	t.Text(title, render.FontUIBold, th.Text, ui.Box())
+	t.Text(note, render.FontSmall, th.Faint, ui.Box().Flex(1.0))
+	t.Close()
+	t.Open(ui.VBox().Flex(1.0).Scrolls(), idPanelScroll)
+}
+
+fn (ws Workspace) outlinePanel(t mut ui.Tree) {
+	let th = ws.Th
+	let rows = ws.outlineRows()
+	ws.panelFrame(mut t, "Outline", ws.Ed.Name())
+	if len(rows) == 0 {
+		t.Text("No symbols", render.FontUI, th.Faint, ui.Box().Pad(12.0))
+	}
+	for r in rows {
+		let s = ws.Ed.Syms[r]
+		t.Open(ui.HBox().High(24.0).Items(ui.Center).Spacing(8.0).PadXY(12.0, 0.0).Hover(th.Hover).Clipped(), idSymRow + r)
+		t.Text(s.Kind, render.FontSmall, th.Faint, ui.Box().Wide(42.0))
+		t.Text(s.Name, render.FontUI, th.Text, ui.Box())
+		t.Close()
+	}
+	t.Close()
+	t.Close()
+}
+
+fn (ws Workspace) diagnosticsPanel(t mut ui.Tree) {
+	let th = ws.Th
+	ws.panelFrame(mut t, "Problems", ws.Ed.DiagSummary())
+	if len(ws.Ed.Diags) == 0 {
+		t.Text("No problems", render.FontUI, th.Faint, ui.Box().Pad(12.0))
+	}
+	for i in 0..len(ws.Ed.Diags) {
+		let d = ws.Ed.Diags[i]
+		t.Open(ui.VBox().PadXY(12.0, 5.0).Hover(th.Hover).Clipped(), idDiagRow + i)
+		t.Text(d.Message, render.FontUI, th.Error, ui.Box())
+		t.Text(mint.Itoa(d.Line) + ":" + mint.Itoa(d.Col) + "  " + d.Code, render.FontSmall, th.Faint, ui.Box())
+		t.Close()
+	}
+	t.Close()
+	t.Close()
+}
+
+fn (ws Workspace) gitPanel(t mut ui.Tree) {
+	let th = ws.Th
+	ws.panelFrame(mut t, "Git", ws.Proj.Branch)
+	if !ws.HasProj {
+		t.Text("Open a folder", render.FontUI, th.Faint, ui.Box().Pad(12.0))
+	} else if len(ws.Git) == 0 {
+		t.Text("No changes", render.FontUI, th.Faint, ui.Box().Pad(12.0))
+	}
+	for i in 0..len(ws.Git) {
+		let line = ws.Git[i]
+		if len(line) < 4 {
+			continue
+		}
+		let code = twine.TrimSpace(line[0:2])
+		mut color = th.Muted
+		if code == "M" {
+			color = th.Warning
+		} else if code == "A" || code == "??" {
+			color = ui.Hex(0x73c991)
+		} else if code == "D" {
+			color = th.Error
+		}
+		t.Open(ui.HBox().High(24.0).Items(ui.Center).Spacing(8.0).PadXY(12.0, 0.0).Hover(th.Hover).Clipped(), idGitRow + i)
+		t.Text(code, render.FontSmall, color, ui.Box().Wide(16.0))
+		t.Text(line[3:], render.FontUI, th.Text, ui.Box())
+		t.Close()
+	}
+	t.Close()
+	t.Close()
+}
+
+// RefreshGit asks git which files changed (empty when the project is not a checkout).
+fn (ws mut Workspace) RefreshGit() {
+	ws.Git = []str{}
+	if !ws.HasProj {
+		return
+	}
+	let (code, out) = appkit.RunCapture("git -C '" + ws.Proj.Root + "' status --porcelain")
+	if code != 0 {
+		return
+	}
+	for line in twine.Split(out, "\n") {
+		if len(line) > 3 {
+			ws.Git = append(ws.Git, line)
+		}
+	}
+}
+
+// openGitFile opens the file of line i of the git panel.
+fn (ws mut Workspace) openGitFile(i i64) {
+	if i >= 0 && i < len(ws.Git) {
+		ws.OpenFile(ws.Proj.Root + "/" + ws.Git[i][3:])
+	}
+}
+
+// openSym puts the caret at the declaration the outline names.
+fn (ws mut Workspace) openSym(i i64) {
+	if i < 0 || i >= len(ws.Ed.Syms) {
+		return
+	}
+	let s = ws.Ed.Syms[i]
+	ws.Ed.Buf.MoveTo(s.Line - 1, max(s.Col - 1, 0), false)
+	ws.Ed.Follow = true
+}
+
+// openDiag puts the caret at the problem.
+fn (ws mut Workspace) openDiag(i i64) {
+	if i < 0 || i >= len(ws.Ed.Diags) {
+		return
+	}
+	let d = ws.Ed.Diags[i]
+	ws.Ed.Buf.MoveTo(max(d.Line - 1, 0), max(d.Col - 1, 0), false)
+	ws.Ed.Follow = true
+}

@@ -1,0 +1,333 @@
+package workspace
+
+import "../render"
+import "appkit"
+import "../editor"
+import "textedit"
+
+// Commands of the workspace, besides the editor's (editor.Cmd...). The menu bar sends these numbers.
+const CmdOpenFolder = 100
+const CmdToggleProject = 101
+const CmdNewFile = 102
+const CmdNewFolder = 103
+const CmdRevealInProject = 104
+const CmdQuickOpen = 105
+const CmdPalette = 106
+const CmdSearch = 107
+const CmdToggleOutput = 108
+const CmdRefresh = 109
+const CmdNewFolder2 = 110
+const CmdRename = 111
+const CmdDelete = 112
+const CmdCollapseAll = 113
+const CmdZoomIn = 114
+const CmdZoomOut = 115
+const CmdZoomReset = 116
+
+// Event kinds of an NSEvent that the workspace reads.
+const evMouseDown = 1
+const evRightDown = 3
+const evMouseUp = 2
+const evMouseMoved = 5
+const evMouseDragged = 6
+const evKeyDown = 10
+const evScroll = 22
+
+// Event acts on one window event: a key goes to the shortcuts and then the editor; the mouse is matched against what the last
+// frame drew.
+fn (ws mut Workspace) Event(e i64) {
+	let t = appkit.EventType(e)
+	if t == evKeyDown {
+		ws.key(appkit.EventKeyCode(e), appkit.EventFlags(e), appkit.EventChars(e))
+		return
+	}
+	if t == evScroll {
+		let (sx, sy) = appkit.EventLocation(e)
+		ws.MouseX = sx
+		ws.MouseY = ws.H - sy
+		// a mouse wheel reports lines, a trackpad points
+		mut k = 1.0
+		if !appkit.EventPreciseScroll(e) {
+			k = 12.0
+		}
+		ws.scroll(appkit.EventScrollX(e) * k, appkit.EventScrollY(e) * k)
+		return
+	}
+	if t != evMouseDown && t != evRightDown && t != evMouseUp && t != evMouseMoved && t != evMouseDragged {
+		return
+	}
+	let (x, wy) = appkit.EventLocation(e)
+	let y = ws.H - wy
+	ws.MouseX = x
+	ws.MouseY = y
+	if t == evMouseMoved || t == evMouseDragged {
+		let over = ws.Hits.At(x, y)
+		if over != ws.Hover {
+			ws.Hover = over
+			ws.Dirty = true
+		}
+	}
+	if t == evRightDown {
+		let id = ws.Hits.At(x, y)
+		if id >= idRow && id < idOutputLine {
+			ws.clickSelect(id - idRow)
+			ws.Menu = MenuTree
+		}
+		ws.Dirty = true
+	} else if t == evMouseDown {
+		ws.press(x, y, appkit.EventClicks(e), appkit.EventFlags(e))
+	} else if t == evMouseDragged {
+		ws.drag(x, y)
+	} else if t == evMouseUp {
+		ws.Drag = dragNone
+		ws.Ed.MouseUp()
+	}
+}
+
+// key handles a key press: the workspace's own shortcuts first, then the editor.
+fn (ws mut Workspace) key(code i64, flags i64, chars str) {
+	if ws.Picker.Open {
+		ws.pickerKey(code, flags, chars)
+		return
+	}
+	if ws.Focus == FocusSearch && (flags & appkit.ModCmd) == 0 {
+		ws.searchKey(code, flags, chars)
+		return
+	}
+	if (flags & appkit.ModCmd) != 0 && (flags & appkit.ModShift) == 0 && (flags & appkit.ModAlt) == 0 && chars == "b" {
+		ws.Perform(CmdToggleProject)
+		return
+	}
+	ws.Ed.KeyDown(code, flags, chars)
+	ws.Dirty = true
+}
+
+// scroll moves what is under the mouse: the project panel, the output panel or the text.
+fn (ws mut Workspace) scroll(dx f64, dy f64) {
+	let id = ws.Hits.ScrollAt(ws.MouseX, ws.MouseY)
+	if id == idLeftScroll || id == idOutputScroll || id == idSearchScroll || id == idPanelScroll {
+		ws.Scrolls.Scroll(id, 0.0 - dy)
+	} else {
+		ws.Ed.Wheel(dx, dy)
+	}
+	ws.Dirty = true
+}
+
+// press handles a mouse button going down at (x, y).
+fn (ws mut Workspace) press(x f64, y f64, clicks i64, flags i64) {
+	let id = ws.Hits.At(x, y)
+	ws.Dirty = true
+	if id == idEditor {
+		let (ex, ey, ew, eh) = ws.Hits.Rect(idEditor)
+		ws.Ed.MouseDown(x - ex, y - ey, clicks, flags)
+		ws.Drag = dragText
+		return
+	}
+	if ws.Picker.Open {
+		if id >= idPickerItem && id < idSearchRow {
+			ws.accept(id - idPickerItem)
+		} else if id != idPickerInput {
+			ws.ClosePicker()
+		}
+		return
+	}
+	ws.Focus = FocusEditor
+	ws.Ed.Mode = 0
+	if id == idSearchInput {
+		ws.Focus = FocusSearch
+	} else if id == idSearchCase {
+		ws.Search.Case = !ws.Search.Case
+		ws.Search.Done = false
+	} else if id == idSearchWord {
+		ws.Search.Word = !ws.Search.Word
+		ws.Search.Done = false
+	} else if id == idSearchRegex {
+		ws.Search.Regex = !ws.Search.Regex
+		ws.Search.Done = false
+	} else if id >= idGitRow {
+		ws.openGitFile(id - idGitRow)
+	} else if id >= idDiagRow {
+		ws.openDiag(id - idDiagRow)
+	} else if id >= idSymRow {
+		ws.openSym(id - idSymRow)
+	} else if id >= idSearchRow {
+		ws.OpenMatch(id - idSearchRow)
+	} else if id == idDivider {
+		ws.Drag = dragDivider
+	} else if id == idTitle {
+		ws.Drag = DragTitle
+	} else if id >= idRow && id < idOutputLine {
+		ws.clickRow(id - idRow)
+	} else if id >= idTabClose && id < idRow {
+		ws.Ed.CloseTab(id - idTabClose)
+	} else if id >= idTabBase && id < idTabClose {
+		ws.Ed.Activate(id - idTabBase)
+	} else if id >= idPanelBase && id < idTabBase {
+		ws.togglePanel(id - idPanelBase)
+	} else if id >= idOutputLine && id < idPickerItem {
+		ws.Ed.JumpTo(ws.Ed.Output[id - idOutputLine])
+	} else if id == idOutputClose {
+		ws.Ed.OutputOpen = false
+	} else if id == idNewFile {
+		ws.Perform(CmdNewFile)
+	} else if id == idRefresh {
+		ws.Perform(CmdRefresh)
+	}
+}
+
+// drag handles the mouse moving with the button down.
+fn (ws mut Workspace) drag(x f64, y f64) {
+	if ws.Drag == dragDivider {
+		mut w = x
+		if w < 160.0 {
+			w = 160.0
+		}
+		if w > 600.0 {
+			w = 600.0
+		}
+		ws.LeftW = w
+		ws.Dirty = true
+	} else if ws.Drag == dragText {
+		let (ex, ey, ew, eh) = ws.Hits.Rect(idEditor)
+		ws.Ed.MouseDrag(x - ex, y - ey)
+		ws.Dirty = true
+	}
+}
+
+// clickRow opens a file, or opens or closes a folder, from a row of the project panel.
+fn (ws mut Workspace) clickRow(r i64) {
+	if r < 0 || r >= len(ws.Proj.Rows) {
+		return
+	}
+	let i = ws.Proj.Rows[r]
+	ws.Proj.Select(i)
+	if ws.Proj.Entries[i].Dir {
+		ws.Proj.Toggle(i)
+	} else {
+		ws.Ed.Load(ws.Proj.Entries[i].Path)
+	}
+}
+
+// togglePanel shows panel k in the left dock, or hides the dock when k is already showing.
+fn (ws mut Workspace) togglePanel(k i64) {
+	if ws.LeftOpen && ws.Panel == k {
+		ws.LeftOpen = false
+	} else {
+		ws.LeftOpen = true
+		ws.Panel = k
+		if k == PanelSearch {
+			ws.Focus = FocusSearch
+		}
+		if k == PanelGit {
+			ws.RefreshGit()
+		}
+		if k == PanelDiagnostics {
+			ws.Ed.CheckNow()
+		}
+	}
+}
+
+// Perform does a menu command.
+fn (ws mut Workspace) Perform(cmd i64) {
+	ws.Dirty = true
+	if cmd == CmdToggleProject {
+		ws.togglePanel(PanelProject)
+	} else if cmd == CmdOpenFolder {
+		let path = appkit.FolderPanel()
+		if len(path) > 0 {
+			ws.OpenFolder(path)
+		}
+	} else if cmd == CmdQuickOpen {
+		ws.OpenPicker(PickFile)
+	} else if cmd == CmdPalette {
+		ws.OpenPicker(PickCommand)
+	} else if cmd == CmdSearch {
+		ws.LeftOpen = true
+		ws.Panel = PanelSearch
+		ws.Focus = FocusSearch
+	} else if cmd == CmdToggleOutput {
+		ws.Ed.OutputOpen = !ws.Ed.OutputOpen
+	} else if cmd == CmdRefresh {
+		if ws.HasProj {
+			ws.Proj.Refresh()
+			ws.RefreshGit()
+		}
+	} else if cmd == CmdNewFile {
+		ws.OpenPicker(PickNewFile)
+	} else if cmd == CmdNewFolder2 {
+		ws.OpenPicker(PickNewFolder)
+	} else if cmd == CmdRename {
+		ws.OpenPicker(PickRename)
+	} else if cmd == CmdDelete {
+		ws.deleteSelected()
+	} else if cmd == CmdZoomIn {
+		ws.zoom(ws.CodeSize + 1.0)
+	} else if cmd == CmdZoomOut {
+		ws.zoom(ws.CodeSize - 1.0)
+	} else if cmd == CmdZoomReset {
+		ws.zoom(13.0)
+	} else if cmd == CmdCollapseAll {
+		ws.collapseAll()
+	} else if cmd == CmdRevealInProject {
+		if ws.HasProj && len(ws.Ed.Buf.Path) > 0 {
+			ws.Proj.Reveal(ws.Ed.Buf.Path)
+			ws.LeftOpen = true
+			ws.Panel = PanelProject
+		}
+	} else if cmd == editor.CmdOpen {
+		let path = appkit.OpenPanel()
+		if len(path) > 0 {
+			ws.OpenFile(path)
+		}
+	} else {
+		ws.Ed.Perform(cmd)
+	}
+}
+
+// deleteSelected removes the selected file or folder after asking.
+fn (ws mut Workspace) deleteSelected() {
+	if !ws.HasProj || ws.Proj.Selected <= 0 {
+		return
+	}
+	let e = ws.Proj.Entries[ws.Proj.Selected]
+	if appkit.Alert("Delete " + e.Name + "?", "This removes it from disk and cannot be undone.", []str{"Delete", "Cancel"}) != 0 {
+		return
+	}
+	ws.Proj.Delete(ws.Proj.Selected) catch _ {
+		ws.Ed.Say("cannot delete " + e.Name)
+		return
+	}
+}
+
+// collapseAll closes every folder of the project panel.
+fn (ws mut Workspace) collapseAll() {
+	if !ws.HasProj {
+		return
+	}
+	for i in 1..len(ws.Proj.Entries) {
+		ws.Proj.Entries[i].Open = false
+	}
+	ws.Proj.Rebuild()
+}
+
+// clickSelect selects a row of the project panel without opening it.
+fn (ws mut Workspace) clickSelect(r i64) {
+	if r >= 0 && r < len(ws.Proj.Rows) {
+		ws.Proj.Select(ws.Proj.Rows[r])
+	}
+}
+
+// zoom sets the code font size (within 8 and 40 points).
+fn (ws mut Workspace) zoom(points f64) {
+	mut p = points
+	if p < 8.0 {
+		p = 8.0
+	}
+	if p > 40.0 {
+		p = 40.0
+	}
+	ws.CodeSize = p
+	render.SetCodeSize(p)
+	ws.Ed.UseFont()
+	ws.Dirty = true
+}

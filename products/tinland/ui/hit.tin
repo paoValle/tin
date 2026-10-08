@@ -75,3 +75,109 @@ fn (t Tree) Rect(id i64) (f64, f64, f64, f64) {
 	let n = t.Nodes[i]
 	return n.X, n.Y, n.W, n.H
 }
+
+// HitList is what the program keeps of a frame between frames, to know what the mouse is over: the elements that have an Id, in
+// drawing order, each with its rectangle and the clipping rectangle in force. It is a block of numbers made once, so recording
+// a frame into it allocates nothing that outlives the frame.
+type HitList struct {
+	Rects []f64
+	N i64
+}
+
+const hitStride = 10
+
+// NewHitList makes room for n elements.
+fn NewHitList(n i64) HitList {
+	return HitList{Rects: make([]f64, n * hitStride)}
+}
+
+// Record replaces the list's contents with the elements of the laid out tree.
+fn (t Tree) Record(h mut HitList) {
+	h.N = 0
+	if len(t.Nodes) > 0 {
+		t.record(0, -1000000.0, -1000000.0, 1000000.0, 1000000.0, mut h)
+	}
+}
+
+fn (t Tree) record(i i64, cx0 f64, cy0 f64, cx1 f64, cy1 f64, h mut HitList) {
+	let n = t.Nodes[i]
+	mut x0 = cx0
+	mut y0 = cy0
+	mut x1 = cx1
+	mut y1 = cy1
+	if n.Id != 0 && (h.N + 1) * hitStride <= len(h.Rects) {
+		let at = h.N * hitStride
+		h.Rects[at] = f64(n.Id)
+		h.Rects[at + 1] = n.X
+		h.Rects[at + 2] = n.Y
+		h.Rects[at + 3] = n.W
+		h.Rects[at + 4] = n.H
+		h.Rects[at + 5] = cx0
+		h.Rects[at + 6] = cy0
+		h.Rects[at + 7] = cx1
+		h.Rects[at + 8] = cy1
+		h.Rects[at + 9] = 0.0
+		if n.Style.Scroll {
+			h.Rects[at + 9] = 1.0
+		}
+		h.N += 1
+	}
+	if n.Style.Clip {
+		x0 = maxf(x0, n.X)
+		y0 = maxf(y0, n.Y)
+		if n.X + n.W < x1 {
+			x1 = n.X + n.W
+		}
+		if n.Y + n.H < y1 {
+			y1 = n.Y + n.H
+		}
+	}
+	mut c = n.First
+	for c >= 0 {
+		t.record(c, x0, y0, x1, y1, mut h)
+		c = t.Nodes[c].Next
+	}
+}
+
+// At is the Id of the topmost recorded element holding the point (0 for none).
+fn (h HitList) At(x f64, y f64) i64 {
+	mut k = h.N - 1
+	for k >= 0 {
+		let at = k * hitStride
+		if holds(h, at, x, y) {
+			return i64(h.Rects[at])
+		}
+		k -= 1
+	}
+	return 0
+}
+
+// ScrollAt is the Id of the topmost recorded scrolling box holding the point (0 for none).
+fn (h HitList) ScrollAt(x f64, y f64) i64 {
+	mut k = h.N - 1
+	for k >= 0 {
+		let at = k * hitStride
+		if h.Rects[at + 9] > 0.0 && holds(h, at, x, y) {
+			return i64(h.Rects[at])
+		}
+		k -= 1
+	}
+	return 0
+}
+
+fn holds(h HitList, at i64, x f64, y f64) bool {
+	let rx = h.Rects[at + 1]
+	let ry = h.Rects[at + 2]
+	return x >= rx && x < rx + h.Rects[at + 3] && y >= ry && y < ry + h.Rects[at + 4] && x >= h.Rects[at + 5] && y >= h.Rects[at + 6] && x < h.Rects[at + 7] && y < h.Rects[at + 8]
+}
+
+// Rect is the rectangle recorded for the Id (zeros when it is not in the list).
+fn (h HitList) Rect(id i64) (f64, f64, f64, f64) {
+	for k in 0..h.N {
+		let at = k * hitStride
+		if i64(h.Rects[at]) == id {
+			return h.Rects[at + 1], h.Rects[at + 2], h.Rects[at + 3], h.Rects[at + 4]
+		}
+	}
+	return 0.0, 0.0, 0.0, 0.0
+}

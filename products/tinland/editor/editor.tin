@@ -55,13 +55,10 @@ type Editor struct {
 	Buf      textedit.Buffer
 	Tabs     []Tab
 	Active   i64
-	Win      appkit.Window
-	Bmp      appkit.Bitmap
-	Open     bool
-	Scale    f64
-	PtW      f64
-	PtH      f64
-	FontSize f64
+	// AreaW and AreaH are the size in points of the text area (gutter and text), and CharW and LineH the size of one
+	// character cell: the view sets them before each frame so scrolling and paging know what fits.
+	AreaW    f64
+	AreaH    f64
 	CharW    f64
 	LineH    f64
 	Scroll   i64
@@ -93,13 +90,16 @@ type Editor struct {
 	rawRows  []bool
 	rawFor   i64
 	acc      f64
+	accX     f64
+	// Follow asks the next frame to scroll the caret into view (after typing or moving it, not after a wheel).
+	Follow   bool
 	dragging bool
 	clicks   i64
 	lastClick f64
 }
 
 fn New(buf textedit.Buffer) Editor {
-	let ed = Editor{Buf: buf, Win: appkit.Window{}, Bmp: appkit.Bitmap{}, FindFrom: textedit.Pos{}, FontSize: 13.0, Scale: 2.0, PtW: 900.0, PtH: 600.0, Redraw: true, Blink: true}
+	let ed = Editor{Buf: buf, FindFrom: textedit.Pos{}, AreaW: 800.0, AreaH: 500.0, CharW: 7.8, LineH: 17.0, Redraw: true, Blink: true}
 	ed.rawFor = -1
 	ed.Diags = []tinsym.Diag{}
 	ed.DiagFor = -1
@@ -118,7 +118,8 @@ fn (ed Editor) Name() str {
 	return parts[len(parts) - 1]
 }
 
-fn (ed mut Editor) say(text str) {
+// Say shows a message in the status bar.
+fn (ed mut Editor) Say(text str) {
 	ed.Message = text
 	ed.Redraw = true
 }
@@ -148,6 +149,7 @@ fn (ed mut Editor) activate(i i64) {
 	ed.Diags = []tinsym.Diag{}
 	ed.DiagFor = -1
 	ed.Mode = modeEdit
+	ed.Follow = true
 	ed.Redraw = true
 }
 
@@ -167,6 +169,29 @@ fn (ed Editor) tabName(i i64) str {
 	return nameOf(b)
 }
 
+// TabName is the name shown for tab i, and TabDirty whether it has unsaved changes.
+fn (ed Editor) TabName(i i64) str {
+	return ed.tabName(i)
+}
+
+fn (ed Editor) TabDirty(i i64) bool {
+	if i == ed.Active {
+		return ed.Buf.Dirty
+	}
+	return ed.Tabs[i].Buf.Dirty
+}
+
+// Activate shows tab i.
+fn (ed mut Editor) Activate(i i64) {
+	ed.activate(i)
+}
+
+// CloseTab closes tab i (asking about unsaved changes).
+fn (ed mut Editor) CloseTab(i i64) {
+	ed.activate(i)
+	ed.closeTab()
+}
+
 fn nameOf(b textedit.Buffer) str {
 	if len(b.Path) == 0 {
 		return "untitled"
@@ -183,13 +208,13 @@ fn (ed mut Editor) Load(path str) bool {
 	for i < len(ed.Tabs) {
 		if ed.Tabs[i].Buf.Path == path {
 			ed.activate(i)
-			ed.say("switched to " + path)
+			ed.Say("switched to " + path)
 			return true
 		}
 		i += 1
 	}
 	let text = quarry.ReadFile(path) catch _ {
-		ed.say("cannot read " + path)
+		ed.Say("cannot read " + path)
 		return false
 	}
 	let buf = textedit.FromText(text)
@@ -203,7 +228,7 @@ fn (ed mut Editor) Load(path str) bool {
 	} else {
 		ed.newTab(buf)
 	}
-	ed.say("opened " + path)
+	ed.Say("opened " + path)
 	return true
 }
 
@@ -246,7 +271,7 @@ fn (ed mut Editor) save(asNew bool) bool {
 	mut path = ed.Buf.Path
 	if len(path) == 0 || asNew {
 		if ed.Headless {
-			ed.say("no file name")
+			ed.Say("no file name")
 			return false
 		}
 		path = appkit.SavePanel(ed.Name())
@@ -255,32 +280,18 @@ fn (ed mut Editor) save(asNew bool) bool {
 		}
 	}
 	quarry.WriteFile(path, ed.Buf.Text()) catch _ {
-		ed.say("cannot write " + path)
+		ed.Say("cannot write " + path)
 		return false
 	}
 	ed.Buf.Path = path
 	ed.Buf.Dirty = false
-	ed.say("saved " + path)
+	ed.Say("saved " + path)
 	return true
 }
 
-// panelH is the height in pixels of the output panel (0 when closed).
-fn (ed Editor) panelH() f64 {
-	if !ed.OutputOpen {
-		return 0.0
-	}
-	return ed.LineH * f64(outputRows) + ed.LineH * 0.4
-}
-
-// tabH is the height in pixels of the tab bar.
-fn (ed Editor) tabH() f64 {
-	return ed.LineH * 1.5
-}
-
-// rows is how many text lines fit in the window.
+// rows is how many text lines fit in the text area.
 fn (ed Editor) rows() i64 {
-	let area = ed.PtH * ed.Scale - ed.LineH * 2.0 - ed.LineH * 0.4 - ed.tabH() - ed.panelH()
-	let n = i64(area / ed.LineH)
+	let n = i64(ed.AreaH / ed.LineH)
 	if n < 1 {
 		return 1
 	}
@@ -289,14 +300,14 @@ fn (ed Editor) rows() i64 {
 
 // cols is how many columns of text fit beside the line numbers.
 fn (ed Editor) cols() i64 {
-	let n = i64((ed.PtW * ed.Scale - ed.gutterW() - ed.CharW) / ed.CharW)
+	let n = i64((ed.AreaW - ed.gutterW() - ed.CharW) / ed.CharW)
 	if n < 1 {
 		return 1
 	}
 	return n
 }
 
-// gutterW is the width in pixels of the line numbers.
+// gutterW is the width in points of the line numbers.
 fn (ed Editor) gutterW() f64 {
 	mut digits = 1
 	mut n = len(ed.Buf.Lines)
@@ -357,6 +368,7 @@ fn typeable(chars str) bool {
 
 // handleKey acts on one key press.
 fn (ed mut Editor) handleKey(k Key) {
+	ed.Follow = true
 	ed.Blink = true
 	ed.Redraw = true
 	ed.Message = ""
@@ -551,7 +563,7 @@ fn (ed mut Editor) command(k Key, shift bool) {
 		ed.FindFrom = b.SelStart()
 	} else if c == 'g' {
 		if len(ed.Needle) > 0 && !b.Find(ed.Needle, !shift) {
-			ed.say("not found: " + ed.Needle)
+			ed.Say("not found: " + ed.Needle)
 		}
 	} else if c == 'l' {
 		ed.Mode = modeGoto
@@ -666,7 +678,7 @@ fn (ed mut Editor) promptKey(k Key) {
 		ed.Replacement = ed.Prompt
 		if (k.Flags & flagCmd) != 0 {
 			let n = b.ReplaceAll(ed.Needle, ed.Prompt)
-			ed.say("replaced " + mint.Itoa(n))
+			ed.Say("replaced " + mint.Itoa(n))
 			ed.Mode = modeEdit
 			return
 		}
@@ -677,10 +689,10 @@ fn (ed mut Editor) promptKey(k Key) {
 		if b.HasSel && b.SelectedText() == ed.Needle {
 			b.ReplaceSelection(ed.Prompt)
 			if !b.Find(ed.Needle, true) {
-				ed.say("no more matches")
+				ed.Say("no more matches")
 			}
 		} else {
-			ed.say("not found: " + ed.Needle)
+			ed.Say("not found: " + ed.Needle)
 		}
 		return
 	}
@@ -695,7 +707,7 @@ fn (ed mut Editor) promptKey(k Key) {
 		}
 		ed.Needle = ed.Prompt
 		if len(ed.Needle) > 0 && !b.Find(ed.Needle, !shift) {
-			ed.say("not found: " + ed.Needle)
+			ed.Say("not found: " + ed.Needle)
 		}
 		return
 	}
@@ -751,17 +763,17 @@ fn parseInt(s str) i64 {
 // formatDoc formats the active file with tin fmt's rules (a .tin file; the text is one undo step).
 fn (ed mut Editor) formatDoc() {
 	if !twine.HasSuffix(ed.Buf.Path, ".tin") {
-		ed.say("Format Document works on a .tin file")
+		ed.Say("Format Document works on a .tin file")
 		return
 	}
 	let text = ed.Buf.Text()
 	let fresh = tinfmt.Format(text)
 	if fresh == text {
-		ed.say("already formatted")
+		ed.Say("already formatted")
 		return
 	}
 	ed.Buf.SetText(fresh)
-	ed.say("formatted")
+	ed.Say("formatted")
 }
 
 // tmp is a file name inside this editor's private temporary directory (made on first use), or "" when there is none:
@@ -782,4 +794,19 @@ fn (ed Editor) Cleanup() {
 		quarry.RemoveAll(ed.TmpDir) catch _ {
 		}
 	}
+}
+
+// StatusLine is what the status bar says on the left: the find, replace or go-to-line prompt while one is open, otherwise the last
+// message (empty when there is none).
+fn (ed Editor) StatusLine() str {
+	if ed.Mode == modeFind {
+		return "Find: " + ed.Prompt + "_"
+	}
+	if ed.Mode == modeReplace {
+		return "Find: " + ed.Needle + "   Replace with: " + ed.Prompt + "_   (Return replaces, Cmd+Return all, Tab switches)"
+	}
+	if ed.Mode == modeGoto {
+		return "Go to line: " + ed.Prompt + "_"
+	}
+	return ed.Message
 }

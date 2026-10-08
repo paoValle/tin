@@ -54,13 +54,25 @@ main
 
 ## Today and next
 
-What is here now is the first editor: it draws on the CPU into a bitmap and polls for events (`editor/render.tin`,
-`app/app.tin`). The plan, in the order it is built:
+The window is built the way Zed's is, with one difference that comes from Tin's memory model (below).
 
-1. **Callbacks and classes** (done): `@callback` lets AppKit call Tin functions, and `appkit.NewClass` defines Objective-C
-   classes from Tin, so a view receives its own events instead of the application polling for them.
-2. **A GPU canvas** (`metal`): a Metal layer, a pipeline for rectangles and one for glyphs from an atlas that CoreText fills.
-3. **The UI framework** (`ui`): elements (boxes with flex layout, text, scroll areas, lists), hit testing, focus, themes.
-4. **The editor on the framework**, then **`workspace`** (title bar, project panel, tabs, status bar, panels) and **`project`**
-   (open a folder, the file tree, search), replacing the CPU renderer.
-5. More: quick open, a terminal panel, git status, settings and keymaps as files.
+- **Callbacks and classes**: `@callback` lets AppKit call Tin functions and `appkit.NewClass` defines Objective-C classes from
+  Tin. `gpuwin` defines the window's view and delegate; AppKit delivers every key and mouse event, menu choice and close request
+  to them. Menus are real: each item's action is a method of the delegate.
+- **A GPU canvas** (`metal`): one pipeline draws every frame in one call: rounded rectangles, outlines, clipping, and sprites
+  from a glyph atlas that CoreText fills on demand (text, with the system's fallback fonts, and SF Symbol icons).
+- **The UI framework** (`ui`): a tree of elements built every frame (boxes with flex layout, text, icons, scroll areas, custom
+  areas), laid out, painted to a list of commands and recorded for hit testing. It has no GPU in it, so it is tested everywhere.
+- **`workspace`**: the title bar, the left dock (project, git, outline, search, problems), tabs, the editor, the output panel,
+  the status bar, the picker (go to file, command palette) and the project search. **`project`** is the folder tree with ignore
+  rules, file operations, fuzzy matching and the search itself; it is portable.
+- **`editor`**: the text area (the buffer is `textedit`), its keys, completion, diagnostics, navigation and running a file.
+
+Where Zed keeps its state in `Rc` cells that live as long as they are referenced, Tin's request pool and ingot heap make a
+global that is changed after start-up pay a `keep()` on every store. So the callbacks only write down what happened (a queue of
+numbers, `gpuwin.Next`) and the program's state sits in the plain locals of `app.Run`, which takes the queue between frames
+and draws each frame in an `arena`, so a frame leaves nothing behind (memory stays flat: 600 frames at 60 per second moved the
+resident size by nothing). The loop waits for the next AppKit event with `gpuwin.Pump`; AppKit calls the callbacks while it
+handles the event.
+
+Still to build: a terminal panel, tab splits, a settings file and keymaps, completion popups from a language server.

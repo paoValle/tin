@@ -1,0 +1,378 @@
+package workspace
+
+import "mint"
+import "../project"
+import "../render"
+import "textedit"
+import "twine"
+import "../ui"
+
+// Build describes the window as an element tree: the title bar, the project panel, the tabs, the editor, the output panel and the
+// status bar. It runs every frame; everything it reads is state, so the same state gives the same tree.
+fn (ws Workspace) Build(t mut ui.Tree) {
+	let th = ws.Th
+	t.Open(ui.VBox().Fill(th.Background), 0)
+	ws.titleBar(mut t)
+	t.Open(ui.HBox().Flex(1.0), 0)
+	if ws.LeftOpen && ws.Panel == PanelProject {
+		ws.projectPanel(mut t)
+		t.Leaf(ui.Box().Wide(1.0).Fill(th.Border), idDivider)
+	} else if ws.LeftOpen && ws.Panel == PanelGit {
+		ws.gitPanel(mut t)
+		t.Leaf(ui.Box().Wide(1.0).Fill(th.Border), idDivider)
+	} else if ws.LeftOpen && ws.Panel == PanelOutline {
+		ws.outlinePanel(mut t)
+		t.Leaf(ui.Box().Wide(1.0).Fill(th.Border), idDivider)
+	} else if ws.LeftOpen && ws.Panel == PanelDiagnostics {
+		ws.diagnosticsPanel(mut t)
+		t.Leaf(ui.Box().Wide(1.0).Fill(th.Border), idDivider)
+	} else if ws.LeftOpen && ws.Panel == PanelSearch {
+		ws.searchPanel(mut t)
+		t.Leaf(ui.Box().Wide(1.0).Fill(th.Border), idDivider)
+	} else if ws.LeftOpen {
+		ws.placeholderPanel(mut t)
+		t.Leaf(ui.Box().Wide(1.0).Fill(th.Border), idDivider)
+	}
+	t.Open(ui.VBox().Flex(1.0).Fill(th.Editor), 0)
+	ws.tabBar(mut t)
+	t.Custom(ui.Box().Flex(1.0), idEditor)
+	if ws.Ed.OutputOpen {
+		ws.outputPanel(mut t)
+	}
+	t.Close()
+	t.Close()
+	ws.statusBar(mut t)
+	if ws.Picker.Open {
+		ws.pickerOverlay(mut t)
+	}
+	t.Close()
+}
+
+// titleBar is the strip across the top: room for the window's own buttons on the left, then the project and its branch.
+fn (ws Workspace) titleBar(t mut ui.Tree) {
+	let th = ws.Th
+	t.Open(ui.HBox().High(titleH).Items(ui.Center).Spacing(14.0).Fill(th.TitleBar), idTitle)
+	t.Leaf(ui.Box().Wide(70.0), 0)
+	mut name = "Tinland"
+	if ws.HasProj {
+		name = ws.Proj.Name
+	}
+	t.Text(name, render.FontUIBold, th.Text, ui.Box())
+	if ws.HasProj && len(ws.Proj.Branch) > 0 {
+		t.Open(ui.HBox().Items(ui.Center).Spacing(5.0).PadXY(8.0, 3.0).Round(5.0), 0)
+		t.Icon(render.IconGit, 13.0, th.Muted, ui.Box())
+		t.Text(ws.Proj.Branch, render.FontUI, th.Muted, ui.Box())
+		t.Close()
+	}
+	t.Close()
+	t.Leaf(ui.Box().High(1.0).Fill(th.Border), 0)
+}
+
+// projectPanel is the folder tree. Only the rows in view become elements; two spacers stand for the rest, so a project with
+// thousands of files costs the same as one with a few.
+fn (ws Workspace) projectPanel(t mut ui.Tree) {
+	let th = ws.Th
+	t.Open(ui.VBox().Wide(ws.LeftW).Fill(th.Panel), 0)
+	t.Open(ui.HBox().High(34.0).Items(ui.Center).Spacing(4.0).PadXY(12.0, 0.0), 0)
+	mut title = "No folder open"
+	if ws.HasProj {
+		title = ws.Proj.Name
+	}
+	t.Text(title, render.FontUIBold, th.Text, ui.Box().Flex(1.0))
+	if ws.HasProj {
+		ws.iconButton(mut t, render.IconRefresh, idRefresh)
+		ws.iconButton(mut t, render.IconPlus, idNewFile)
+	}
+	t.Close()
+	t.Open(ui.VBox().Flex(1.0).Scrolls(), idLeftScroll)
+	if !ws.HasProj {
+		t.Text("Open a folder with File > Open Folder", render.FontUI, th.Faint, ui.Box().Pad(12.0))
+	} else {
+		let rows = len(ws.Proj.Rows)
+		let viewH = ws.H - titleH - statusH - 34.0
+		mut first = i64(ws.Scrolls.Offset[idLeftScroll] / rowH) - 2
+		if first < 0 {
+			first = 0
+		}
+		mut last = first + i64(viewH / rowH) + 6
+		if last > rows {
+			last = rows
+		}
+		if first > 0 {
+			t.Leaf(ui.Box().High(f64(first) * rowH), 0)
+		}
+		for r in first..last {
+			ws.projectRow(mut t, r)
+		}
+		if last < rows {
+			t.Leaf(ui.Box().High(f64(rows - last) * rowH), 0)
+		}
+	}
+	t.Close()
+	t.Close()
+}
+
+// projectRow is one line of the folder tree: indentation, a chevron for a folder, the icon and the name.
+fn (ws Workspace) projectRow(t mut ui.Tree, r i64) {
+	let th = ws.Th
+	let i = ws.Proj.Rows[r]
+	let e = ws.Proj.Entries[i]
+	mut bg = ui.None()
+	if i == ws.Proj.Selected {
+		bg = th.Selected
+	}
+	t.Open(ui.HBox().High(rowH).Items(ui.Center).Spacing(6.0).Fill(bg).Hover(th.Hover), idRow + r)
+	t.Leaf(ui.Box().Wide(8.0 + f64(e.Depth) * 14.0), 0)
+	mut color = th.Text
+	if e.Ignored {
+		color = th.Faint
+	}
+	if e.Dir {
+		mut chevron = render.IconChevronRight
+		if e.Open {
+			chevron = render.IconChevronDown
+		}
+		t.Icon(chevron, 10.0, th.Muted, ui.Box().Wide(10.0))
+		mut folder = render.IconFolder
+		if e.Open {
+			folder = render.IconFolderOpen
+		}
+		t.Icon(folder, 14.0, th.Accent, ui.Box())
+	} else {
+		t.Leaf(ui.Box().Wide(10.0), 0)
+		t.Icon(fileIcon(e.Name), 14.0, th.Muted, ui.Box())
+	}
+	t.Text(e.Name, render.FontUI, color, ui.Box())
+	t.Close()
+}
+
+// fileIcon picks an icon by the file's extension.
+fn fileIcon(name str) i64 {
+	if twine.HasSuffix(name, ".tin") || twine.HasSuffix(name, ".go") || twine.HasSuffix(name, ".rs") || twine.HasSuffix(name, ".c") || twine.HasSuffix(name, ".h") || twine.HasSuffix(name, ".py") || twine.HasSuffix(name, ".js") || twine.HasSuffix(name, ".ts") || twine.HasSuffix(name, ".json") || twine.HasSuffix(name, ".yml") || twine.HasSuffix(name, ".yaml") || twine.HasSuffix(name, ".sh") || twine.HasSuffix(name, ".toml") {
+		return render.IconCode
+	}
+	if twine.HasSuffix(name, ".md") || twine.HasSuffix(name, ".txt") {
+		return render.IconText
+	}
+	if twine.HasSuffix(name, ".png") || twine.HasSuffix(name, ".jpg") || twine.HasSuffix(name, ".svg") || twine.HasSuffix(name, ".gif") {
+		return render.IconImage
+	}
+	return render.IconFile
+}
+
+// iconButton is a small clickable icon.
+fn (ws Workspace) iconButton(t mut ui.Tree, icon i64, id i64) {
+	let th = ws.Th
+	t.Open(ui.HBox().Size(24.0, 24.0).Items(ui.Center).Content(ui.JustifyCenter).Round(5.0).Hover(th.Hover), id)
+	t.Icon(icon, 14.0, th.Muted, ui.Box())
+	t.Close()
+}
+
+// placeholderPanel stands for the left panels that are not built yet (git, outline, search, ...).
+fn (ws Workspace) placeholderPanel(t mut ui.Tree) {
+	let th = ws.Th
+	t.Open(ui.VBox().Wide(ws.LeftW).Fill(th.Panel).Pad(14.0).Spacing(8.0), 0)
+	t.Text(panelName(ws.Panel), render.FontUIBold, th.Text, ui.Box())
+	t.Text("Nothing here yet", render.FontUI, th.Faint, ui.Box())
+	t.Close()
+}
+
+fn panelName(p i64) str {
+	if p == PanelGit {
+		return "Git"
+	}
+	if p == PanelOutline {
+		return "Outline"
+	}
+	if p == PanelSearch {
+		return "Search"
+	}
+	if p == PanelDiagnostics {
+		return "Diagnostics"
+	}
+	if p == PanelTerminal {
+		return "Terminal"
+	}
+	if p == PanelDebug {
+		return "Debug"
+	}
+	return "Project"
+}
+
+// tabBar is the open files, the active one joined to the editor below it.
+fn (ws Workspace) tabBar(t mut ui.Tree) {
+	let th = ws.Th
+	t.Open(ui.HBox().High(tabH).Fill(th.TabBar), 0)
+	for i in 0..len(ws.Ed.Tabs) {
+		mut bg = ui.None()
+		mut color = th.Muted
+		if i == ws.Ed.Active {
+			bg = th.TabActive
+			color = th.Text
+		}
+		t.Open(ui.HBox().Items(ui.Center).Spacing(8.0).PadXY(12.0, 0.0).Fill(bg).Hover(th.Hover), idTabBase + i)
+		t.Text(ws.Ed.TabName(i), render.FontUI, color, ui.Box())
+		if ws.Ed.TabDirty(i) {
+			t.Open(ui.Box().Size(14.0, 14.0).Content(ui.JustifyCenter).Items(ui.Center), idTabClose + i)
+			t.Leaf(ui.Box().Size(7.0, 7.0).Round(3.5).Fill(th.Muted), 0)
+			t.Close()
+		} else {
+			t.Open(ui.HBox().Size(14.0, 14.0).Items(ui.Center).Content(ui.JustifyCenter).Round(3.0).Hover(th.Selected), idTabClose + i)
+			t.Icon(render.IconClose, 9.0, th.Faint, ui.Box())
+			t.Close()
+		}
+		t.Close()
+	}
+	t.Close()
+	t.Leaf(ui.Box().High(1.0).Fill(th.Border), 0)
+}
+
+// outputPanel is what the last Run printed: a click on a compiler message opens its place.
+fn (ws Workspace) outputPanel(t mut ui.Tree) {
+	let th = ws.Th
+	t.Leaf(ui.Box().High(1.0).Fill(th.Border), 0)
+	t.Open(ui.VBox().High(outputH).Fill(th.Panel), 0)
+	t.Open(ui.HBox().High(28.0).Items(ui.Center).PadXY(12.0, 0.0), 0)
+	t.Text("Output", render.FontUIBold, th.Text, ui.Box().Flex(1.0))
+	ws.iconButton(mut t, render.IconClose, idOutputClose)
+	t.Close()
+	t.Open(ui.VBox().Flex(1.0).Scrolls().PadXY(12.0, 4.0), idOutputScroll)
+	for i in 0..len(ws.Ed.Output) {
+		t.Text(ws.Ed.Output[i], render.FontCode, th.Text, ui.Box().Hover(th.Hover))
+	}
+	t.Close()
+	t.Close()
+}
+
+// statusBar is the strip along the bottom: the panel buttons, the editor's message, the problems and the cursor position.
+fn (ws Workspace) statusBar(t mut ui.Tree) {
+	let th = ws.Th
+	t.Leaf(ui.Box().High(1.0).Fill(th.Border), 0)
+	t.Open(ui.HBox().High(statusH).Items(ui.Center).Spacing(4.0).PadXY(8.0, 0.0).Fill(th.StatusBar), 0)
+	let icons = []i64{render.IconPanel, render.IconGit, render.IconOutline, render.IconSearch, render.IconWarning, render.IconTerminal, render.IconDebug}
+	for k in 0..len(icons) {
+		mut bg = ui.None()
+		mut color = th.Muted
+		if ws.LeftOpen && ws.Panel == k {
+			bg = th.Selected
+			color = th.Text
+		}
+		t.Open(ui.HBox().Size(26.0, 22.0).Items(ui.Center).Content(ui.JustifyCenter).Round(5.0).Fill(bg).Hover(th.Hover), idPanelBase + k)
+		t.Icon(icons[k], 14.0, color, ui.Box())
+		t.Close()
+	}
+	t.Leaf(ui.Box().Wide(8.0), 0)
+	t.Text(ws.statusText(), render.FontUI, th.Muted, ui.Box().Flex(1.0))
+	let problems = ws.Ed.DiagSummary()
+	if len(problems) > 0 {
+		t.Text(problems, render.FontUI, th.Error, ui.Box())
+		t.Leaf(ui.Box().Wide(10.0), 0)
+	}
+	let b = ws.Ed.Buf
+	let pos = "Ln " + mint.Itoa(b.Row + 1) + ", Col " + mint.Itoa(textedit.DisplayCol(b.Lines[b.Row], b.Col, 4) + 1)
+	t.Text(pos, render.FontUI, th.Muted, ui.Box())
+	t.Leaf(ui.Box().Wide(10.0), 0)
+	t.Text(ws.Ed.Name(), render.FontUI, th.Muted, ui.Box())
+	t.Close()
+}
+
+// statusText is the prompt of an open find or go-to-line box, or else the editor's last message.
+fn (ws Workspace) statusText() str {
+	return ws.Ed.StatusLine()
+}
+
+// searchPanel is the project search: the box, its three switches, and the matches grouped by file.
+fn (ws Workspace) searchPanel(t mut ui.Tree) {
+	let th = ws.Th
+	t.Open(ui.VBox().Wide(ws.LeftW).Fill(th.Panel), 0)
+	t.Open(ui.HBox().High(34.0).Items(ui.Center).PadXY(12.0, 0.0), 0)
+	t.Text("Search", render.FontUIBold, th.Text, ui.Box().Flex(1.0))
+	t.Close()
+	t.Open(ui.VBox().Spacing(6.0).PadXY(10.0, 0.0), 0)
+	mut edge = th.Border
+	if ws.Focus == FocusSearch {
+		edge = th.Accent
+	}
+	t.Open(ui.HBox().High(30.0).Items(ui.Center).Spacing(4.0).PadXY(8.0, 0.0).Fill(th.Editor).Round(4.0).Outline(1.0, edge), idSearchInput)
+	t.Open(ui.HBox().Flex(1.0).Items(ui.Center).Clipped(), 0)
+	if len(ws.Search.Query) == 0 {
+		t.Text("Search", render.FontUI, th.Faint, ui.Box())
+	} else {
+		t.Text(ws.Search.Query, render.FontUI, th.Text, ui.Box())
+	}
+	if ws.Focus == FocusSearch && ws.Ed.Blink {
+		t.Leaf(ui.Box().Size(1.5, 16.0).Fill(th.Cursor), 0)
+	}
+	t.Close()
+	ws.switchButton(mut t, "Aa", ws.Search.Case, idSearchCase)
+	ws.switchButton(mut t, "ab", ws.Search.Word, idSearchWord)
+	ws.switchButton(mut t, ".*", ws.Search.Regex, idSearchRegex)
+	t.Close()
+	t.Text(ws.Search.Summary(), render.FontSmall, th.Muted, ui.Box().PadXY(2.0, 2.0))
+	t.Close()
+	t.Open(ui.VBox().Flex(1.0).Scrolls(), idSearchScroll)
+	mut last = ""
+	for i in 0..len(ws.Search.Matches) {
+		let m = ws.Search.Matches[i]
+		if m.Path != last {
+			last = m.Path
+			t.Open(ui.HBox().High(24.0).Items(ui.Center).Spacing(6.0).PadXY(12.0, 0.0).Clipped(), 0)
+			t.Icon(fileIcon(m.Path), 12.0, th.Muted, ui.Box())
+			t.Text(ws.relPath(m.Path), render.FontUI, th.Text, ui.Box())
+			t.Close()
+		}
+		t.Open(ui.HBox().High(22.0).Items(ui.Center).Spacing(8.0).PadXY(24.0, 0.0).Hover(th.Hover).Clipped(), idSearchRow + i)
+		t.Text(mint.Itoa(m.Line + 1), render.FontSmall, th.Faint, ui.Box())
+		t.Text(twine.TrimSpace(m.Text), render.FontCode, th.Muted, ui.Box())
+		t.Close()
+	}
+	t.Close()
+	t.Close()
+}
+
+// switchButton is a small toggle with a short label (Aa, ab, .*).
+fn (ws Workspace) switchButton(t mut ui.Tree, label str, on bool, id i64) {
+	let th = ws.Th
+	mut bg = ui.None()
+	mut color = th.Muted
+	if on {
+		bg = th.Selected
+		color = th.Text
+	}
+	t.Open(ui.HBox().Size(22.0, 20.0).Items(ui.Center).Content(ui.JustifyCenter).Round(4.0).Fill(bg).Hover(th.Hover), id)
+	t.Text(label, render.FontSmall, color, ui.Box())
+	t.Close()
+}
+
+// pickerOverlay is the box over the window with the input and the choices, on a dimmed backdrop.
+fn (ws Workspace) pickerOverlay(t mut ui.Tree) {
+	let th = ws.Th
+	t.Leaf(ui.Box().At(0.0, 0.0).Size(ws.W, ws.H).Fill(ui.HexA(0x000000, 0.35)), 0)
+	let w = 580.0
+	t.Open(ui.VBox().Wide(w).At((ws.W - w) / 2.0, 70.0).Fill(th.Panel).Round(8.0).Outline(1.0, th.Border), idPickerInput)
+	t.Open(ui.HBox().High(42.0).Items(ui.Center).Spacing(8.0).PadXY(14.0, 0.0), 0)
+	if len(ws.Picker.Query) == 0 {
+		t.Text(ws.pickerPrompt(), render.FontUI, th.Faint, ui.Box())
+	} else {
+		t.Text(ws.Picker.Query, render.FontUI, th.Text, ui.Box())
+	}
+	if ws.Ed.Blink {
+		t.Leaf(ui.Box().Size(1.5, 18.0).Fill(th.Cursor), 0)
+	}
+	t.Close()
+	if len(ws.Picker.Items) > 0 {
+		t.Leaf(ui.Box().High(1.0).Fill(th.Border), 0)
+		t.Open(ui.VBox().PadXY(6.0, 6.0), 0)
+		for i in 0..len(ws.Picker.Items) {
+			mut bg = ui.None()
+			if i == ws.Picker.Sel {
+				bg = th.Selected
+			}
+			t.Open(ui.HBox().High(28.0).Items(ui.Center).PadXY(10.0, 0.0).Round(5.0).Fill(bg).Hover(th.Hover).Clipped(), idPickerItem + i)
+			t.Text(ws.Picker.Items[i], render.FontUI, th.Text, ui.Box())
+			t.Close()
+		}
+		t.Close()
+	}
+	t.Close()
+}

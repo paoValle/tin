@@ -1,6 +1,6 @@
 package editor
 
-import "language"
+import "../language"
 import "twine"
 
 // output is what the last Run printed, shown in a panel above the status line until Escape.
@@ -9,7 +9,7 @@ const outputRows = 10
 // runFile compiles the active file with tinc and runs it, collecting the output into the panel.
 fn (ed mut Editor) runFile() {
 	if !twine.HasSuffix(ed.Buf.Path, ".tin") {
-		ed.say("Run works on a saved .tin file")
+		ed.Say("Run works on a saved .tin file")
 		return
 	}
 	if ed.Buf.Dirty && !ed.save(false) {
@@ -17,7 +17,7 @@ fn (ed mut Editor) runFile() {
 	}
 	let exe = ed.tmp("run")
 	if len(exe) == 0 {
-		ed.say("no private temporary directory")
+		ed.Say("no private temporary directory")
 		return
 	}
 	ed.Output = language.Run(ed.Buf.Path, exe, ed.Name())
@@ -25,8 +25,8 @@ fn (ed mut Editor) runFile() {
 	ed.Redraw = true
 }
 
-// jumpTo opens the file and line named by a compiler message "path:line:col: ..." (false for any other line).
-fn (ed mut Editor) jumpTo(text str) bool {
+// JumpTo opens the file and line named by a compiler message "path:line:col: ..." (false for any other line).
+fn (ed mut Editor) JumpTo(text str) bool {
 	let parts = twine.SplitN(text, ":", 4)
 	if len(parts) < 3 {
 		return false
@@ -52,25 +52,5 @@ fn (ed mut Editor) jumpTo(text str) bool {
 	}
 	ed.Buf.MoveTo(at, c, false)
 	ed.Redraw = true
-	return true
-}
-
-// panelClick handles a click at pixel row py (from the window's top) when it is inside the output panel.
-fn (ed mut Editor) panelClick(py f64) bool {
-	if !ed.OutputOpen {
-		return false
-	}
-	let top = ed.PtH * ed.Scale - ed.LineH * 1.4 - ed.panelH()
-	if py < top || py > top + ed.panelH() {
-		return false
-	}
-	mut first = len(ed.Output) - outputRows
-	if first < 0 {
-		first = 0
-	}
-	let i = first + i64((py - top - ed.LineH * 0.2) / ed.LineH)
-	if i >= 0 && i < len(ed.Output) {
-		ed.jumpTo(ed.Output[i])
-	}
 	return true
 }

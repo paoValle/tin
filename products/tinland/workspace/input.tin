@@ -1,0 +1,68 @@
+package workspace
+
+// Keys the single-line inputs (the picker, the search box) understand, by hardware code.
+const keyReturn = 36
+const keyTab = 48
+const keyBackspace = 51
+const keyEscape = 53
+const keyDown = 125
+const keyUp = 126
+
+// typed is the text a key press inserts, or "" for a key that types nothing (control characters and the private-use characters
+// AppKit reports for arrows and function keys).
+fn typed(chars str) str {
+	if len(chars) == 0 {
+		return ""
+	}
+	let c = i64(chars[0])
+	if c < 0x20 || c == 0x7f {
+		return ""
+	}
+	if c == 0xef && len(chars) > 1 {
+		let d = i64(chars[1])
+		if d >= 0x9c && d <= 0xa3 {
+			return ""
+		}
+	}
+	return chars
+}
+
+// editLine applies a key to the text of a one line input: typing inserts at the end, backspace removes one character (with the
+// option key, the last word). It returns the new text.
+fn editLine(text str, code i64, flags i64, chars str) str {
+	if code == keyBackspace {
+		if len(text) == 0 {
+			return text
+		}
+		if (flags & (1 << 19)) != 0 {
+			mut end = len(text)
+			for end > 0 && text[end - 1] == ' ' {
+				end -= 1
+			}
+			for end > 0 && text[end - 1] != ' ' {
+				end -= 1
+			}
+			return text[0:end]
+		}
+		// drop one whole character, not one byte of it
+		mut end = len(text) - 1
+		for end > 0 && text[end] >= 0x80 && text[end] < 0xc0 {
+			end -= 1
+		}
+		return text[0:end]
+	}
+	let t = typed(chars)
+	if len(t) > 0 && (flags & (1 << 20)) == 0 {
+		return text + t
+	}
+	return text
+}
+
+// pasteLine is the text with the clipboard added (the first line of it).
+fn pasteLine(text str, clip str) str {
+	mut end = 0
+	for end < len(clip) && clip[end] != '\n' {
+		end += 1
+	}
+	return text + clip[0:end]
+}

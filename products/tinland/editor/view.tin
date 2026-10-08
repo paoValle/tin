@@ -1,0 +1,359 @@
+package editor
+
+import "metal"
+import "mint"
+import "../render"
+import "say"
+import "textedit"
+import "../theme"
+import "../ui"
+
+// The editor's text area, painted on the GPU: line numbers, the current line, the selection, the text in syntax colors, the
+// diagnostics, the caret, a scroll bar and the completion list. Everything is placed on a grid of cells, CharW by LineH points,
+// so a fallback font's wider glyph cannot push the rest of a line out of its columns.
+
+// kindColor is the color of a syntax class.
+fn kindColor(th theme.Theme, kind i64) i64 {
+	if kind == textedit.KindKeyword {
+		return th.Keyword
+	}
+	if kind == textedit.KindString {
+		return th.String
+	}
+	if kind == textedit.KindNumber {
+		return th.Number
+	}
+	if kind == textedit.KindComment {
+		return th.Comment
+	}
+	if kind == textedit.KindConstant {
+		return th.Constant
+	}
+	if kind == textedit.KindType {
+		return th.Type
+	}
+	if kind == textedit.KindFunc {
+		return th.Func
+	}
+	return th.Text
+}
+
+// UseFont sets the character cell from the code font: its advance, and a line a little taller than the font.
+fn (ed mut Editor) UseFont() {
+	ed.CharW = render.CodeCell()
+	ed.LineH = f64(i64(render.LineHeight(render.FontCode) * 1.2 + 0.5))
+}
+
+// Prepare does what a frame needs that stores new memory: the multi-line string state of each line. Call it outside the
+// frame's arena, after the text changed.
+fn (ed mut Editor) Prepare() {
+	ed.updateRaw()
+}
+
+// updateRaw recomputes, for each line, whether it starts inside a multi-line `raw string`.
+fn (ed mut Editor) updateRaw() {
+	if ed.rawFor == ed.Buf.Version && len(ed.rawRows) == len(ed.Buf.Lines) {
+		return
+	}
+	mut rows = []bool{}
+	mut raw = false
+	mut i = 0
+	for i < len(ed.Buf.Lines) {
+		rows = append(rows, raw)
+		let (spans, next) = textedit.Highlight(ed.Buf.Lines[i], raw)
+		raw = next
+		i += 1
+	}
+	ed.rawRows = rows
+	ed.rawFor = ed.Buf.Version
+}
+
+// cell is one displayed character: what to draw and the syntax class it has.
+type cell struct {
+	text str
+	kind i64
+}
+
+// cellsOf expands a line into display cells: tabs become spaces to the next tab stop, a multi-byte character is one cell (two
+// for a wide one), and each cell gets its syntax class.
+fn cellsOf(line str, raw bool) []cell {
+	let (spans, _) = textedit.Highlight(line, raw)
+	mut kinds = make([]i64, len(line), len(line))
+	for sp in spans {
+		mut j = sp.Start
+		for j < sp.End && j < len(line) {
+			kinds[j] = sp.Kind
+			j += 1
+		}
+	}
+	mut out = []cell{}
+	mut i = 0
+	for i < len(line) {
+		let c = line[i]
+		if c == '\t' {
+			mut n = 4 - len(out) % 4
+			for n > 0 {
+				out = append(out, cell{text: " ", kind: kinds[i]})
+				n -= 1
+			}
+		} else if c >= 0x80 && c < 0xc0 {
+			// a continuation byte belongs to the cell its lead byte began
+		} else if c >= 0xc0 {
+			mut n = 2
+			if c >= 0xf0 {
+				n = 4
+			} else if c >= 0xe0 {
+				n = 3
+			}
+			if i + n > len(line) {
+				n = len(line) - i
+			}
+			out = append(out, cell{text: line[i:i + n], kind: kinds[i]})
+			if textedit.RuneWidth(textedit.RuneAt(line, i)) == 2 {
+				out = append(out, cell{text: "", kind: kinds[i]})
+			}
+		} else {
+			out = append(out, cell{text: line[i:i + 1], kind: kinds[i]})
+		}
+		i += 1
+	}
+	return out
+}
+
+fn textOf(cells []cell, from i64, to i64) str {
+	mut text = ""
+	for i in from..to {
+		text = text + cells[i].text
+	}
+	return text
+}
+
+fn (c cell) ascii() bool {
+	return len(c.text) == 1
+}
+
+// rowTop is where line number n of the view (counted from the scroll position) starts, in points from the area's top.
+fn (ed Editor) rowTop(n i64) f64 {
+	return f64(n) * ed.LineH
+}
+
+// Paint draws the text area into the rectangle (x, y, w, h) (points). The text must have been Prepared.
+fn (ed mut Editor) Paint(th theme.Theme, x f64, y f64, w f64, h f64, scene mut metal.Scene) {
+	ed.AreaW = w
+	ed.AreaH = h
+	if ed.Follow {
+		ed.ensureVisible()
+		ed.Follow = false
+	}
+	render.Clip(mut scene, x, y, w, h)
+	render.Fill(mut scene, x, y, w, h, th.Editor)
+	let gutter = ed.gutterW()
+	let rows = ed.rows()
+	let b = ed.Buf
+	let sel0 = b.SelStart()
+	let sel1 = b.SelEnd()
+	let textX = x + gutter
+	let lh = ed.LineH
+	let pad = (lh - render.LineHeight(render.FontCode)) / 2.0
+	mut n = 0
+	for n <= rows && ed.Scroll + n < len(b.Lines) {
+		let row = ed.Scroll + n
+		let line = b.Lines[row]
+		let top = y + ed.rowTop(n)
+		mut raw = false
+		if row < len(ed.rawRows) {
+			raw = ed.rawRows[row]
+		}
+		let cells = cellsOf(line, raw)
+		if row == b.Row && !b.HasSel {
+			render.Fill(mut scene, x, top, w, lh, th.LineHighlight)
+		}
+		// the selected part of this line
+		if b.HasSel && row >= sel0.Row && row <= sel1.Row {
+			mut from = 0
+			mut to = len(cells) + 1
+			if row == sel0.Row {
+				from = textedit.DisplayCol(line, sel0.Col, 4)
+			}
+			if row == sel1.Row {
+				to = textedit.DisplayCol(line, sel1.Col, 4)
+			}
+			let x0 = textX + f64(from - ed.HScroll) * ed.CharW
+			let x1 = textX + f64(to - ed.HScroll) * ed.CharW
+			if x1 > x0 {
+				render.Fill(mut scene, x0, top, x1 - x0, lh, th.Selection)
+			}
+		}
+		// the text, in runs of one syntax class
+		mut i = ed.HScroll
+		let last = ed.HScroll + ed.cols() + 2
+		for i < len(cells) && i < last {
+			mut j = i + 1
+			for j < len(cells) && j < last && cells[j].kind == cells[i].kind {
+				j += 1
+			}
+			let color = kindColor(th, cells[i].kind)
+			mut k = i
+			for k < j {
+				mut m = k
+				if cells[k].ascii() {
+					for m < j && cells[m].ascii() {
+						m += 1
+					}
+					render.Pen(mut scene, render.FontCode, textX + f64(k - ed.HScroll) * ed.CharW, top + pad, textOf(cells, k, m), color)
+				} else if len(cells[k].text) == 0 {
+					m = k + 1
+				} else {
+					m = k + 1
+					render.Pen(mut scene, render.FontCode, textX + f64(k - ed.HScroll) * ed.CharW, top + pad, cells[k].text, color)
+				}
+				k = m
+			}
+			i = j
+		}
+		// errors on this line: a bar in the gutter and a line under the offending text
+		if ed.diagAt(row) >= 0 {
+			render.Fill(mut scene, x, top, 3.0, lh, th.Error)
+			for d in ed.Diags {
+				if d.Line == row + 1 {
+					let from = textedit.DisplayCol(line, d.Col - 1, 4)
+					mut to = textedit.DisplayCol(line, d.EndCol - 1, 4)
+					if d.EndCol - 1 > len(line) {
+						to = textedit.DisplayCol(line, len(line), 4) + (d.EndCol - 1 - len(line))
+					}
+					if to <= from {
+						to = from + 1
+					}
+					render.Fill(mut scene, textX + f64(from - ed.HScroll) * ed.CharW, top + lh - 2.0, f64(to - from) * ed.CharW, 1.5, th.Error)
+				}
+			}
+		}
+		// the line number, right aligned in the gutter (the current line brighter)
+		let label = mint.Itoa(row + 1)
+		let lx = x + gutter - ed.CharW * 1.5 - f64(len(label)) * ed.CharW
+		mut numColor = th.Gutter
+		if row == b.Row {
+			numColor = th.GutterActive
+		}
+		render.Pen(mut scene, render.FontCode, lx, top + pad, label, numColor)
+		n += 1
+	}
+	// the caret: a bar between two characters, blinking
+	if ed.Blink && ed.Mode == modeEdit {
+		let cx = textX + f64(textedit.DisplayCol(b.Lines[b.Row], b.Col, 4) - ed.HScroll) * ed.CharW
+		let cn = b.Row - ed.Scroll
+		if cn >= 0 && cn <= rows {
+			render.Fill(mut scene, cx, y + ed.rowTop(cn), 1.5, lh, th.Cursor)
+		}
+	}
+	ed.scrollbar(th, x, y, w, h, mut scene)
+	ed.popups(th, x, y, w, h, mut scene)
+	render.Unclip(mut scene)
+}
+
+// scrollbar draws a thin thumb at the right edge showing which part of the text is in view.
+fn (ed Editor) scrollbar(th theme.Theme, x f64, y f64, w f64, h f64, scene mut metal.Scene) {
+	let total = len(ed.Buf.Lines)
+	let rows = ed.rows()
+	if total <= rows {
+		return
+	}
+	let thumb = h * f64(rows) / f64(total)
+	let at = (h - thumb) * f64(ed.Scroll) / f64(total - 1)
+	render.FillRound(mut scene, x + w - 9.0, y + at, 6.0, thumb, 3.0, ui.HexA(0xffffff, 0.18))
+}
+
+// popups draws the completion list or the quick info next to the caret.
+fn (ed Editor) popups(th theme.Theme, x f64, y f64, w f64, h f64, scene mut metal.Scene) {
+	mut lines = []str{}
+	mut sel = -1
+	if ed.CompOpen {
+		let first = max(0, min(ed.CompSel - 4, len(ed.Comp) - 9))
+		mut i = first
+		for i < len(ed.Comp) && i < first + 9 {
+			let it = ed.Comp[i]
+			mut l = it.Label
+			if len(it.Detail) > 0 {
+				l = l + "   " + it.Detail
+			}
+			lines = append(lines, l)
+			if i == ed.CompSel {
+				sel = i - first
+			}
+			i += 1
+		}
+	} else {
+		for l in ed.Info {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	mut widest = 0
+	for l in lines {
+		widest = max(widest, len(l))
+	}
+	widest = min(widest, 100)
+	let b = ed.Buf
+	let cn = b.Row - ed.Scroll
+	let cx = x + ed.gutterW() + f64(textedit.DisplayCol(b.Lines[b.Row], b.Col, 4) - ed.HScroll) * ed.CharW
+	let boxW = f64(widest + 2) * ed.CharW
+	let boxH = f64(len(lines)) * ed.LineH + 8.0
+	mut px = cx
+	if px + boxW > x + w {
+		px = x + w - boxW
+	}
+	mut top = y + ed.rowTop(cn + 1)
+	if top + boxH > y + h {
+		top = y + ed.rowTop(cn) - boxH
+	}
+	render.FillRound(mut scene, px, top, boxW, boxH, 6.0, th.Panel)
+	render.Stroke(mut scene, px, top, boxW, boxH, 6.0, 1.0, th.Border)
+	let pad = (ed.LineH - render.LineHeight(render.FontCode)) / 2.0
+	mut k = 0
+	for k < len(lines) {
+		let ly = top + 4.0 + f64(k) * ed.LineH
+		if k == sel {
+			render.FillRound(mut scene, px + 3.0, ly, boxW - 6.0, ed.LineH, 4.0, th.Selected)
+		}
+		mut text = lines[k]
+		if len(text) > widest {
+			text = text[:widest]
+		}
+		render.Pen(mut scene, render.FontCode, px + ed.CharW, ly + pad, text, th.Text)
+		k += 1
+	}
+}
+
+// cpuFrame does the work of a frame that needs no GPU: the highlighting state and the display cells of the visible lines (the
+// scripts time it to catch a regression in how a frame is prepared).
+fn (ed mut Editor) cpuFrame() {
+	ed.updateRaw()
+	ed.ensureVisible()
+	mut n = 0
+	for n <= ed.rows() && ed.Scroll + n < len(ed.Buf.Lines) {
+		let row = ed.Scroll + n
+		cellsOf(ed.Buf.Lines[row], ed.rawRows[row])
+		n += 1
+	}
+}
+
+// Snapshot draws the text area (AreaW by AreaH points) on the GPU at twice the scale and writes it as a PNG. Without a GPU it does
+// nothing (the caller checks for the file).
+fn (ed mut Editor) Snapshot(path str) {
+	let gpu = metal.Open()
+	if gpu.Device == 0 {
+		return
+	}
+	render.Init(gpu, 2.0, 13.0)
+	ed.UseFont()
+	ed.Prepare()
+	mut scene = metal.Scene{}
+	let th = theme.Dark()
+	ed.Paint(th, 0.0, 0.0, ed.AreaW, ed.AreaH, mut scene)
+	render.Upload()
+	if !render.Snapshot(scene, i64(ed.AreaW * 2.0), i64(ed.AreaH * 2.0), th.Editor, path) {
+		say.Line("cannot write", path)
+	}
+}

@@ -1,0 +1,59 @@
+package workspace
+
+import "metal"
+import "../render"
+import "../ui"
+
+// NeedsFrame reports whether anything changed since the last frame (the workspace's own state or the editor's).
+fn (ws Workspace) NeedsFrame() bool {
+	return ws.Dirty || ws.Ed.Redraw
+}
+
+// Resize tells the workspace the window's size in points and reports whether it changed.
+fn (ws mut Workspace) Resize(w f64, h f64) bool {
+	if w <= 0.0 || (w == ws.W && h == ws.H) {
+		return false
+	}
+	ws.W = w
+	ws.H = h
+	return true
+}
+
+// Prepare does the part of a frame that stores new memory in the state (the editor's per-line highlighting state); call it before
+// the frame's arena starts.
+fn (ws mut Workspace) Prepare() {
+	ws.Ed.Prepare()
+}
+
+// Paint lays the window out for its size (ws.W by ws.H points) and draws it into the scene. It records where everything is for
+// the mouse, and reads and changes nothing else that outlives the frame, so it can run in an arena.
+fn (ws mut Workspace) Paint(scene mut metal.Scene) {
+	let th = ws.Th
+	mut t = ui.NewTree(render.Width, render.LineHeight)
+	ws.Build(mut t)
+	t.Hover = ws.Hover
+	t.Layout(ws.W, ws.H, mut ws.Scrolls)
+	t.Record(mut ws.Hits)
+	let cmds = t.Paint()
+	// the editor paints its own area: draw what comes before it, then the text, then what comes after
+	mut at = -1
+	for i in 0..len(cmds) {
+		if cmds[i].Kind == ui.CmdCustom && cmds[i].Arg == idEditor {
+			at = i
+		}
+	}
+	if at < 0 {
+		render.Draw(cmds, t.Texts, mut scene, noCustom)
+	} else {
+		render.Draw(cmds[0:at], t.Texts, mut scene, noCustom)
+		let c = cmds[at]
+		ws.Ed.Paint(th, c.X, c.Y, c.W, c.H, mut scene)
+		render.Draw(cmds[at + 1:len(cmds)], t.Texts, mut scene, noCustom)
+	}
+	ws.Dirty = false
+	ws.Ed.Redraw = false
+	ws.Frames += 1
+}
+
+fn noCustom(id i64, x f64, y f64, w f64, h f64, scene mut metal.Scene) {
+}

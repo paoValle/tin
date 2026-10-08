@@ -1,0 +1,596 @@
+// A terminal screen: the grid of characters a shell's output draws, as a VT100 style terminal does. It takes bytes in (Write) and
+// holds cells out (At); it knows nothing of windows or processes, so it is tested everywhere.
+package terminal
+
+import "glyph"
+import "twine"
+
+// Colors are 0xRRGGBB, or Default for the theme's own.
+const Default = -1
+
+// Attribute bits of a cell.
+const Bold = 1
+const Underline = 2
+const Inverse = 4
+
+// Cell is one character place: the character (a code point, 0 for empty), its colors and attributes.
+type Cell value struct {
+	Ch i64
+	Fg i64
+	Bg i64
+	Attr i64
+}
+
+// How far the parser has got through an escape sequence.
+const stateText = 0
+const stateEsc = 1
+const stateCsi = 2
+const stateOsc = 3
+const stateCharset = 4
+
+// Screen is the visible grid, the lines that scrolled off its top, the cursor and the parser's state.
+type Screen struct {
+	Cols i64
+	Rows i64
+	Cells []Cell
+	// History holds the cells of lines that scrolled off the top, Cols per line, oldest first.
+	History []Cell
+	CurX i64
+	CurY i64
+	ShowCursor bool
+	fg i64
+	bg i64
+	attr i64
+	state i64
+	params []i64
+	cur i64
+	hasCur bool
+	private bool
+	// pending is the start of a UTF-8 sequence not complete yet
+	pending []u8
+	top i64
+	bottom i64
+	savedX i64
+	savedY i64
+	wrap bool
+}
+
+// New makes a blank screen of cols by rows.
+fn New(cols i64, rows i64) Screen {
+	let s = Screen{Cols: cols, Rows: rows, ShowCursor: true, fg: Default, bg: Default, params: []i64{}, pending: []u8{}}
+	s.Cells = make([]Cell, cols * rows)
+	s.bottom = rows - 1
+	return s
+}
+
+// At is the cell at column x of row y (0 is the top left); an empty cell outside the grid.
+fn (s Screen) At(x i64, y i64) Cell {
+	if x < 0 || y < 0 || x >= s.Cols || y >= s.Rows {
+		return Cell{Fg: Default, Bg: Default}
+	}
+	return s.Cells[y * s.Cols + x]
+}
+
+// HistoryLines is how many lines have scrolled off the top.
+fn (s Screen) HistoryLines() i64 {
+	return len(s.History) / s.Cols
+}
+
+// HistoryAt is the cell at column x of history line n (0 is the oldest).
+fn (s Screen) HistoryAt(x i64, n i64) Cell {
+	if x < 0 || x >= s.Cols || n < 0 || n >= s.HistoryLines() {
+		return Cell{Fg: Default, Bg: Default}
+	}
+	return s.History[n * s.Cols + x]
+}
+
+fn (s Screen) blank() Cell {
+	return Cell{Fg: Default, Bg: s.bg}
+}
+
+// Text is the characters of row y without trailing blanks.
+fn (s Screen) Text(y i64) str {
+	mut out = ""
+	mut last = -1
+	for x in 0..s.Cols {
+		if s.At(x, y).Ch != 0 {
+			last = x
+		}
+	}
+	for x in 0..last + 1 {
+		let c = s.At(x, y).Ch
+		if c == 0 {
+			out = out + " "
+		} else {
+			out = out + glyph.RuneStr(i32(c))
+		}
+	}
+	return out
+}
+
+// Resize changes the grid to cols by rows, keeping what fits at the top left.
+fn (s mut Screen) Resize(cols i64, rows i64) {
+	if cols < 1 || rows < 1 || (cols == s.Cols && rows == s.Rows) {
+		return
+	}
+	let cells = make([]Cell, cols * rows)
+	for y in 0..min(rows, s.Rows) {
+		for x in 0..min(cols, s.Cols) {
+			cells[y * cols + x] = s.Cells[y * s.Cols + x]
+		}
+	}
+	s.Cells = cells
+	s.History = []Cell{}
+	s.Cols = cols
+	s.Rows = rows
+	s.top = 0
+	s.bottom = rows - 1
+	if s.CurX >= cols {
+		s.CurX = cols - 1
+	}
+	if s.CurY >= rows {
+		s.CurY = rows - 1
+	}
+}
+
+// scrollUp moves the lines of the scroll region up by one; the top one goes to the history when the region is the whole screen.
+fn (s mut Screen) scrollUp() {
+	if s.top == 0 {
+		for x in 0..s.Cols {
+			s.History = append(s.History, s.Cells[x])
+		}
+		// at most 2000 lines are kept
+		if len(s.History) > 2000 * s.Cols {
+			s.History = s.History[s.Cols:len(s.History)]
+		}
+	}
+	for y in s.top..s.bottom {
+		for x in 0..s.Cols {
+			s.Cells[y * s.Cols + x] = s.Cells[(y + 1) * s.Cols + x]
+		}
+	}
+	for x in 0..s.Cols {
+		s.Cells[s.bottom * s.Cols + x] = s.blank()
+	}
+}
+
+fn (s mut Screen) scrollDown() {
+	mut y = s.bottom
+	for y > s.top {
+		for x in 0..s.Cols {
+			s.Cells[y * s.Cols + x] = s.Cells[(y - 1) * s.Cols + x]
+		}
+		y -= 1
+	}
+	for x in 0..s.Cols {
+		s.Cells[s.top * s.Cols + x] = s.blank()
+	}
+}
+
+fn (s mut Screen) lineFeed() {
+	if s.CurY == s.bottom {
+		s.scrollUp()
+	} else if s.CurY < s.Rows - 1 {
+		s.CurY += 1
+	}
+}
+
+fn (s mut Screen) put(ch i64) {
+	if s.wrap {
+		s.CurX = 0
+		s.lineFeed()
+		s.wrap = false
+	}
+	s.Cells[s.CurY * s.Cols + s.CurX] = Cell{Ch: ch, Fg: s.fg, Bg: s.bg, Attr: s.attr}
+	if s.CurX == s.Cols - 1 {
+		// the cursor waits at the last column; the next character wraps
+		s.wrap = true
+	} else {
+		s.CurX += 1
+	}
+}
+
+// Write feeds the screen the bytes a program printed.
+fn (s mut Screen) Write(data str) {
+	for i in 0..len(data) {
+		s.byte(data[i])
+	}
+}
+
+fn (s mut Screen) byte(b u8) {
+	if s.state == stateText {
+		s.text(b)
+	} else if s.state == stateEsc {
+		s.esc(b)
+	} else if s.state == stateCsi {
+		s.csi(b)
+	} else if s.state == stateOsc {
+		// a title or other operating system command: ends with BEL or ESC \
+		if b == 7 {
+			s.state = stateText
+		} else if b == 27 {
+			s.state = stateCharset
+		}
+	} else {
+		// the character after ESC ( or ESC \ : nothing to saved
+		s.state = stateText
+	}
+}
+
+fn (s mut Screen) text(b u8) {
+	if len(s.pending) > 0 {
+		s.pending = append(s.pending, b)
+		if b < 0x80 || b >= 0xc0 {
+			// not a continuation byte: the sequence was broken; treat this byte on its own
+			s.pending = []u8{}
+			s.text(b)
+			return
+		}
+		mut want = 2
+		if s.pending[0] >= 0xf0 {
+			want = 4
+		} else if s.pending[0] >= 0xe0 {
+			want = 3
+		}
+		if len(s.pending) == want {
+			mut bytes = twine.NewBuilder(4)
+			for c in s.pending {
+				bytes.Byte(c)
+			}
+			let (r, n) = glyph.DecodeRune(bytes.String(), 0)
+			s.pending = []u8{}
+			s.put(i64(r))
+		}
+		return
+	}
+	if b == 27 {
+		s.state = stateEsc
+	} else if b == 10 || b == 11 || b == 12 {
+		s.wrap = false
+		s.lineFeed()
+	} else if b == 13 {
+		s.wrap = false
+		s.CurX = 0
+	} else if b == 8 {
+		s.wrap = false
+		if s.CurX > 0 {
+			s.CurX -= 1
+		}
+	} else if b == 9 {
+		s.wrap = false
+		s.CurX = min((s.CurX / 8 + 1) * 8, s.Cols - 1)
+	} else if b < 32 || b == 127 {
+		// bell and the other control characters do nothing here
+	} else if b >= 0xc0 {
+		s.pending = append(s.pending, b)
+	} else {
+		s.put(i64(b))
+	}
+}
+
+fn (s mut Screen) esc(b u8) {
+	s.state = stateText
+	if b == '[' {
+		s.state = stateCsi
+		s.params = []i64{}
+		s.cur = 0
+		s.hasCur = false
+		s.private = false
+	} else if b == ']' {
+		s.state = stateOsc
+	} else if b == '(' || b == ')' {
+		s.state = stateCharset
+	} else if b == '7' {
+		s.savedX = s.CurX
+		s.savedY = s.CurY
+	} else if b == '8' {
+		s.CurX = s.savedX
+		s.CurY = s.savedY
+	} else if b == 'M' {
+		if s.CurY == s.top {
+			s.scrollDown()
+		} else if s.CurY > 0 {
+			s.CurY -= 1
+		}
+	} else if b == 'D' {
+		s.lineFeed()
+	} else if b == 'E' {
+		s.CurX = 0
+		s.lineFeed()
+	} else if b == 'c' {
+		let fresh = New(s.Cols, s.Rows)
+		s.Cells = fresh.Cells
+		s.CurX = 0
+		s.CurY = 0
+		s.fg = Default
+		s.bg = Default
+		s.attr = 0
+	}
+}
+
+// arg is parameter n of the sequence, or def when it was left out or zero.
+fn (s Screen) arg(n i64, def i64) i64 {
+	if n < len(s.params) && s.params[n] > 0 {
+		return s.params[n]
+	}
+	return def
+}
+
+fn (s mut Screen) csi(b u8) {
+	if b >= '0' && b <= '9' {
+		s.cur = s.cur * 10 + i64(b - '0')
+		s.hasCur = true
+		return
+	}
+	if b == ';' {
+		s.params = append(s.params, s.cur)
+		s.cur = 0
+		s.hasCur = false
+		return
+	}
+	if b == '?' || b == '>' || b == '=' || b == '!' {
+		s.private = true
+		return
+	}
+	if b < 0x40 {
+		// an intermediate byte (space, quote, ...): ignore it
+		return
+	}
+	if s.hasCur || len(s.params) > 0 {
+		s.params = append(s.params, s.cur)
+	}
+	s.state = stateText
+	s.wrap = false
+	s.finish(b)
+}
+
+// finish does the sequence whose final byte is b.
+fn (s mut Screen) finish(b u8) {
+	if s.private {
+		if b == 'h' || b == 'l' {
+			// ?25 shows or hides the cursor; the other modes (alternate screen, mouse) are not supported
+			for p in s.params {
+				if p == 25 {
+					s.ShowCursor = b == 'h'
+				}
+			}
+		}
+		return
+	}
+	if b == 'A' {
+		s.CurY = max(s.CurY - s.arg(0, 1), s.top)
+	} else if b == 'B' {
+		s.CurY = min(s.CurY + s.arg(0, 1), s.bottom)
+	} else if b == 'C' {
+		s.CurX = min(s.CurX + s.arg(0, 1), s.Cols - 1)
+	} else if b == 'D' {
+		s.CurX = max(s.CurX - s.arg(0, 1), 0)
+	} else if b == 'E' {
+		s.CurX = 0
+		s.CurY = min(s.CurY + s.arg(0, 1), s.bottom)
+	} else if b == 'F' {
+		s.CurX = 0
+		s.CurY = max(s.CurY - s.arg(0, 1), s.top)
+	} else if b == 'G' {
+		s.CurX = min(s.arg(0, 1) - 1, s.Cols - 1)
+	} else if b == 'd' {
+		s.CurY = min(s.arg(0, 1) - 1, s.Rows - 1)
+	} else if b == 'H' || b == 'f' {
+		s.CurY = min(s.arg(0, 1) - 1, s.Rows - 1)
+		s.CurX = min(s.arg(1, 1) - 1, s.Cols - 1)
+	} else if b == 'J' {
+		s.eraseDisplay(s.argRaw(0))
+	} else if b == 'K' {
+		s.eraseLine(s.argRaw(0))
+	} else if b == 'L' {
+		for n in 0..s.arg(0, 1) {
+			s.insertLine()
+		}
+	} else if b == 'M' {
+		for n in 0..s.arg(0, 1) {
+			s.deleteLine()
+		}
+	} else if b == 'P' {
+		s.deleteChars(s.arg(0, 1))
+	} else if b == '@' {
+		s.insertChars(s.arg(0, 1))
+	} else if b == 'X' {
+		for k in 0..s.arg(0, 1) {
+			if s.CurX + k < s.Cols {
+				s.Cells[s.CurY * s.Cols + s.CurX + k] = s.blank()
+			}
+		}
+	} else if b == 'S' {
+		for n in 0..s.arg(0, 1) {
+			s.scrollUp()
+		}
+	} else if b == 'T' {
+		for n in 0..s.arg(0, 1) {
+			s.scrollDown()
+		}
+	} else if b == 'm' {
+		s.sgr()
+	} else if b == 'r' {
+		s.top = s.arg(0, 1) - 1
+		s.bottom = min(s.arg(1, s.Rows) - 1, s.Rows - 1)
+		if s.top < 0 || s.top >= s.bottom {
+			s.top = 0
+			s.bottom = s.Rows - 1
+		}
+		s.CurX = 0
+		s.CurY = 0
+	} else if b == 's' {
+		s.savedX = s.CurX
+		s.savedY = s.CurY
+	} else if b == 'u' {
+		s.CurX = s.savedX
+		s.CurY = s.savedY
+	}
+}
+
+// argRaw is parameter n as given: zero when left out (erase commands tell 0 from 1).
+fn (s Screen) argRaw(n i64) i64 {
+	if n < len(s.params) {
+		return s.params[n]
+	}
+	return 0
+}
+
+fn (s mut Screen) eraseDisplay(mode i64) {
+	mut from = 0
+	mut to = s.Rows * s.Cols
+	if mode == 0 {
+		from = s.CurY * s.Cols + s.CurX
+	} else if mode == 1 {
+		to = s.CurY * s.Cols + s.CurX + 1
+	}
+	for i in from..to {
+		s.Cells[i] = s.blank()
+	}
+}
+
+fn (s mut Screen) eraseLine(mode i64) {
+	mut from = 0
+	mut to = s.Cols
+	if mode == 0 {
+		from = s.CurX
+	} else if mode == 1 {
+		to = s.CurX + 1
+	}
+	for x in from..to {
+		s.Cells[s.CurY * s.Cols + x] = s.blank()
+	}
+}
+
+fn (s mut Screen) insertLine() {
+	if s.CurY < s.top || s.CurY > s.bottom {
+		return
+	}
+	let saved = s.top
+	s.top = s.CurY
+	s.scrollDown()
+	s.top = saved
+}
+
+fn (s mut Screen) deleteLine() {
+	if s.CurY < s.top || s.CurY > s.bottom {
+		return
+	}
+	let saved = s.top
+	s.top = s.CurY
+	// a deleted line is gone, not kept as history
+	let hist = len(s.History)
+	s.scrollUp()
+	s.History = s.History[0:hist]
+	s.top = saved
+}
+
+fn (s mut Screen) deleteChars(n i64) {
+	let row = s.CurY * s.Cols
+	for x in s.CurX..s.Cols {
+		if x + n < s.Cols {
+			s.Cells[row + x] = s.Cells[row + x + n]
+		} else {
+			s.Cells[row + x] = s.blank()
+		}
+	}
+}
+
+fn (s mut Screen) insertChars(n i64) {
+	let row = s.CurY * s.Cols
+	mut x = s.Cols - 1
+	for x >= s.CurX {
+		if x - n >= s.CurX {
+			s.Cells[row + x] = s.Cells[row + x - n]
+		} else {
+			s.Cells[row + x] = s.blank()
+		}
+		x -= 1
+	}
+}
+
+// xterm256 is the color of entry n of the 256 color palette.
+fn xterm256(n i64) i64 {
+	if n < 16 {
+		return ansi16(n)
+	}
+	if n < 232 {
+		let k = n - 16
+		let r = k / 36
+		let g = (k / 6) % 6
+		let b = k % 6
+		return level(r) * 65536 + level(g) * 256 + level(b)
+	}
+	let v = 8 + (n - 232) * 10
+	return v * 65536 + v * 256 + v
+}
+
+fn level(c i64) i64 {
+	if c == 0 {
+		return 0
+	}
+	return 55 + c * 40
+}
+
+// ansi16 is the color of the 8 standard and 8 bright colors (VS Code's terminal palette).
+fn ansi16(n i64) i64 {
+	let palette = []i64{0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5, 0x666666, 0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db, 0xffffff}
+	return palette[n % 16]
+}
+
+fn (s mut Screen) sgr() {
+	if len(s.params) == 0 {
+		s.fg = Default
+		s.bg = Default
+		s.attr = 0
+		return
+	}
+	mut i = 0
+	for i < len(s.params) {
+		let p = s.params[i]
+		if p == 0 {
+			s.fg = Default
+			s.bg = Default
+			s.attr = 0
+		} else if p == 1 {
+			s.attr = s.attr | Bold
+		} else if p == 4 {
+			s.attr = s.attr | Underline
+		} else if p == 7 {
+			s.attr = s.attr | Inverse
+		} else if p == 22 {
+			s.attr = s.attr & 254
+		} else if p == 24 {
+			s.attr = s.attr & 253
+		} else if p == 27 {
+			s.attr = s.attr & 251
+		} else if p >= 30 && p <= 37 {
+			s.fg = ansi16(p - 30)
+		} else if p == 39 {
+			s.fg = Default
+		} else if p >= 40 && p <= 47 {
+			s.bg = ansi16(p - 40)
+		} else if p == 49 {
+			s.bg = Default
+		} else if p >= 90 && p <= 97 {
+			s.fg = ansi16(p - 90 + 8)
+		} else if p >= 100 && p <= 107 {
+			s.bg = ansi16(p - 100 + 8)
+		} else if p == 38 || p == 48 {
+			mut color = Default
+			if i + 2 < len(s.params) && s.params[i + 1] == 5 {
+				color = xterm256(s.params[i + 2])
+				i += 2
+			} else if i + 4 < len(s.params) && s.params[i + 1] == 2 {
+				color = s.params[i + 2] * 65536 + s.params[i + 3] * 256 + s.params[i + 4]
+				i += 4
+			}
+			if p == 38 {
+				s.fg = color
+			} else {
+				s.bg = color
+			}
+		}
+		i += 1
+	}
+}

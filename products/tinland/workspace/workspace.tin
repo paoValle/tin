@@ -1,0 +1,151 @@
+// A workspace is what one window holds: the title bar, the docks (the project panel on the left, the output panel at the
+// bottom), the editor with its tabs, and the status bar. This package owns the state of all of it, builds each frame's element
+// tree from that state, and turns the window's events into changes of it.
+package workspace
+
+import "../editor"
+import "../project"
+import "textedit"
+import "../theme"
+import "../ui"
+
+// Ids of the elements the mouse can reach.
+const idTitle = 1
+const idLeftScroll = 2
+const idEditor = 3
+const idDivider = 4
+const idOutputScroll = 5
+const idOutputClose = 6
+const idNewFile = 7
+const idNewFolder = 8
+const idRefresh = 9
+const idPanelBase = 10
+const idTabBase = 1000
+const idTabClose = 2000
+const idSearchInput = 20
+const idSearchCase = 21
+const idSearchWord = 22
+const idSearchRegex = 23
+const idPickerInput = 24
+const idSearchScroll = 25
+const idPanelScroll = 26
+const idRow = 10000
+const idOutputLine = 30000
+const idPickerItem = 40000
+const idSearchRow = 50000
+const idSymRow = 60000
+const idDiagRow = 70000
+const idGitRow = 80000
+
+// The panels of the left dock and their buttons in the status bar.
+const PanelProject = 0
+const PanelGit = 1
+const PanelOutline = 2
+const PanelSearch = 3
+const PanelDiagnostics = 4
+const PanelTerminal = 5
+const PanelDebug = 6
+
+// What the mouse is doing: nothing, dragging the dock's edge, selecting text.
+const dragNone = 0
+const dragDivider = 1
+const dragText = 2
+const DragTitle = 3
+
+// Sizes in points.
+const titleH = 36.0
+const statusH = 26.0
+const tabH = 34.0
+const rowH = 24.0
+const outputH = 200.0
+
+// Workspace is the state of one window.
+type Workspace struct {
+	Th theme.Theme
+	Ed editor.Editor
+	Proj project.Project
+	HasProj bool
+	Scrolls ui.Scrolls
+	Hits ui.HitList
+	LeftOpen bool
+	LeftW f64
+	Panel i64
+	// W and H are the window's size in points; MouseX and MouseY where the mouse was last.
+	W f64
+	H f64
+	MouseX f64
+	MouseY f64
+	Hover i64
+	Drag i64
+	// Dirty says the next frame must be drawn.
+	Dirty bool
+	Quit bool
+	// Frames counts drawn frames (the tests use it).
+	Frames i64
+	// Focus is where typed text goes: the editor, the search box or the picker.
+	Focus i64
+	Picker Picker
+	Search Search
+	// Git is the output of git status, one line per changed file.
+	Git []str
+	// Menu asks the application to pop up a context menu for the last right click (MenuNone when it does not).
+	Menu i64
+	// CodeSize is the size of the code font in points.
+	CodeSize f64
+}
+
+const MenuNone = 0
+const MenuTree = 1
+
+// Where typed text goes.
+const FocusEditor = 0
+const FocusSearch = 1
+const FocusPicker = 2
+
+// New makes a workspace around an editor.
+fn New(th theme.Theme, ed editor.Editor) Workspace {
+	let ws = Workspace{Th: th, Ed: ed, Proj: project.Project{Selected: -1}, Scrolls: ui.NewScrolls(64), Hits: ui.NewHitList(6000), Picker: Picker{Items: []str{}}, Search: Search{Matches: []project.Match{}}, Git: []str{}}
+	ws.LeftOpen = true
+	ws.LeftW = 260.0
+	ws.W = 1100.0
+	ws.H = 720.0
+	ws.Dirty = true
+	ws.CodeSize = 13.0
+	return ws
+}
+
+// OpenFolder makes the folder the project, showing it in the project panel.
+fn (ws mut Workspace) OpenFolder(path str) bool {
+	let p = project.Open(path) catch _ {
+		ws.Ed.Say("cannot open folder " + path)
+		return false
+	}
+	ws.Proj = p
+	ws.HasProj = true
+	ws.LeftOpen = true
+	ws.Panel = PanelProject
+	ws.Dirty = true
+	return true
+}
+
+// OpenFile opens the file in the editor (a new tab, or the one that already shows it) and marks it in the project panel.
+fn (ws mut Workspace) OpenFile(path str) {
+	if ws.Ed.Load(path) {
+		if ws.HasProj {
+			ws.Proj.Reveal(path)
+		}
+	}
+	ws.Dirty = true
+}
+
+// Title is the text of the window's title: the project, the branch and the file.
+fn (ws Workspace) Title() str {
+	mut t = ws.Ed.Name()
+	if ws.Ed.Buf.Dirty {
+		t = t + " (edited)"
+	}
+	if ws.HasProj {
+		t = t + " - " + ws.Proj.Name
+	}
+	return t + " - Tinland"
+}

@@ -1,0 +1,87 @@
+package main
+
+import "../../editor"
+import "../../project"
+import "../../theme"
+import "../../workspace"
+import "quarry"
+import "say"
+import "textedit"
+import "trail"
+
+fn put(path str, text str) {
+	quarry.WriteFile(path, text) catch _ {
+		say.Line("cannot write", path)
+	}
+}
+
+fn key(ws mut workspace.Workspace, code i64, chars str) {
+	ws.PickerKey(code, 0, chars)
+}
+
+fn typeText(ws mut workspace.Workspace, text str) {
+	for i in 0..len(text) {
+		key(mut ws, -1, text[i:i + 1])
+	}
+}
+
+// The workspace without a window: the picker, the project search and the file operations.
+fn main() {
+	let root = trail.Clean(quarry.TempDir() + "/tinland_ws_test")
+	quarry.RemoveAll(root) catch _ {
+	}
+	quarry.MkdirAll(root + "/src") catch _ {
+	}
+	put(root + "/main.tin", `package main
+fn main() {}
+`)
+	put(root + "/src/util.tin", `fn helper() {}
+fn main2() {}
+`)
+	put(root + "/notes.md", "main notes\n")
+	mut ws = workspace.New(theme.Dark(), editor.New(textedit.New()))
+	ws.Ed.Headless = true
+	say.Line("opened", ws.OpenFolder(root))
+	// go to file: type, narrow, choose
+	ws.OpenPicker(workspace.PickFile)
+	say.Line("picker", ws.Picker.Open, len(ws.Picker.Items))
+	typeText(mut ws, "util")
+	say.Line("filtered", ws.Picker.Items)
+	key(mut ws, 36, "")
+	say.Line("opened file", ws.Ed.Name(), ws.Picker.Open, ws.Focus)
+	// the palette
+	ws.OpenPicker(workspace.PickCommand)
+	typeText(mut ws, "toggle proj")
+	say.Line("palette", ws.Picker.Items)
+	say.Line("panel open before", ws.LeftOpen)
+	key(mut ws, 36, "")
+	say.Line("panel open after", ws.LeftOpen)
+	// escape closes
+	ws.OpenPicker(workspace.PickFile)
+	key(mut ws, 53, "")
+	say.Line("closed", ws.Picker.Open)
+	// project search
+	ws.Search.Query = "main"
+	ws.RunSearch()
+	say.Line(ws.Search.Summary())
+	ws.OpenMatch(0)
+	say.Line("match opened", ws.Ed.Name(), ws.Ed.Buf.Row, ws.Ed.Buf.Col, ws.Ed.Buf.SelectedText())
+	ws.Search.Regex = true
+	ws.Search.Query = "fn (\\w+)\\("
+	ws.RunSearch()
+	say.Line(ws.Search.Summary())
+	ws.Search.Query = "("
+	ws.RunSearch()
+	say.Line(ws.Search.Summary())
+	// new file, rename, delete
+	ws.Proj.Select(0)
+	ws.OpenPicker(workspace.PickNewFile)
+	typeText(mut ws, "fresh.tin")
+	key(mut ws, 36, "")
+	say.Line("created", quarry.Exists(root + "/fresh.tin"), ws.Ed.Name())
+	ws.OpenPicker(workspace.PickRename)
+	say.Line("rename starts with", ws.Picker.Query)
+	key(mut ws, 53, "")
+	quarry.RemoveAll(root) catch _ {
+	}
+}

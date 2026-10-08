@@ -7,7 +7,7 @@ cd "$(dirname "$0")/../../.." || exit 1
 compiler=${1:-bin/tinc}
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
-for name in ui_layout project; do
+for name in ui_layout project terminal; do
 	"$compiler" -o "$tmp/$name" "products/tinland/tests/programs/$name.tin"
 	"$tmp/$name" > "$tmp/$name.out"
 	cmp "$tmp/$name.out" "products/tinland/tests/golden/$name.out" || { echo "FAIL tinland $name"; exit 1; }
@@ -17,6 +17,12 @@ if [ "$(uname -s)" != Darwin ]; then
 	echo "SKIP tinland editor tests: not macOS"
 	exit 0
 fi
+for name in workspace_logic; do
+	"$compiler" -o "$tmp/$name" "products/tinland/tests/programs/$name.tin"
+	"$tmp/$name" > "$tmp/$name.out"
+	cmp "$tmp/$name.out" "products/tinland/tests/golden/$name.out" || { echo "FAIL tinland $name"; exit 1; }
+	echo "PASS tinland $name"
+done
 "$compiler" -o "$tmp/tinland" products/tinland/main.tin
 script=$(sed "s|@PNG@|$tmp/editor.png|" products/tinland/tests/scripts/editor.script)
 case $compiler in /*) tinc=$compiler ;; *) tinc=$PWD/$compiler ;; esac
@@ -24,3 +30,13 @@ TINLAND_TINC="$tinc" TINLAND_SCRIPT="$script" "$tmp/tinland" > "$tmp/editor.out"
 cmp "$tmp/editor.out" products/tinland/tests/golden/editor.out || { echo "FAIL darwin editor"; exit 1; }
 [ "$(head -c 4 "$tmp/editor.png" | od -An -c | tr -d ' ')" = '211PNG' ] || { echo "FAIL darwin editor snapshot"; exit 1; }
 echo "PASS darwin editor"
+# the whole window on the GPU: a PNG of it (skipped on a machine without a GPU)
+"$compiler" -o "$tmp/workspace_snapshot" products/tinland/tests/programs/workspace_snapshot.tin
+"$tmp/workspace_snapshot" products/tinland/tests/fixtures products/tinland/tests/fixtures/sample.txt "$tmp/workspace.png" > "$tmp/workspace_snapshot.out"
+if head -1 "$tmp/workspace_snapshot.out" | grep -q '^no gpu'; then
+	echo "SKIP tinland window snapshot: $(head -1 "$tmp/workspace_snapshot.out")"
+else
+	printf 'instances true\nwritten true\n' | cmp - "$tmp/workspace_snapshot.out" || { echo "FAIL tinland window snapshot"; exit 1; }
+	[ "$(head -c 4 "$tmp/workspace.png" | od -An -c | tr -d ' ')" = '211PNG' ] || { echo "FAIL tinland window snapshot png"; exit 1; }
+	echo "PASS tinland window snapshot"
+fi
