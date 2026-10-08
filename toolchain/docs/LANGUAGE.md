@@ -2056,7 +2056,9 @@ fn main() {
   form, exponent below 1e-6 or from 1e21, NaN/Inf as `null`), bools, strs (escaped),
   slices, maps with str or integer keys, structs, enums, optionals (`null` when nil),
   faults (their message or `null`).
-- `argo.Get(text, mut v)` fills a struct, slice (appending) or map (adding entries);
+- `argo.Get(text, mut v)` fills a struct, slice (appending) or map (adding entries; a map
+  with integer keys reads each member name as a base-10 integer that must fit the key type,
+  as Go does: `"+7"` and `"007"` are 7, `"x"` or `"256"` for a `u8` key is a fault, #716);
   nested struct fields are filled in place, `?T` fields accept `null`, unknown members are
   skipped, numbers follow the JSON grammar and must fit their type (`007`, `1.`, `700`
   into a `u8` and `1e400` into an `f64` are faults), and trailing garbage is a fault, as

@@ -1,0 +1,16 @@
+{"a":{"-5":"neg","3":"p"},"b":{"255":1},"c":{"-2147483648":true},"d":{"18446744073709551615":1.5},"e":{"7":{"a":9}},"f":{"-1":[1,2]}}
+{"a":{"-5":"neg","3":"p"},"b":{"255":1},"c":{"-2147483648":true},"d":{"18446744073709551615":1.5},"e":{"7":{"a":9}},"f":{"-1":[1,2]}} => {map[-5:neg 3:p] map[255:1] map[-2147483648:true] map[18446744073709551615:1.5] map[7:{9}] map[-1:[1 2]]}
+{"a": {"+7": "plus", "007": "zeros", "-0": "negzero"}} => {map[0:negzero 7:zeros] map[] map[] map[] map[] map[]}
+{"a": {"-9223372036854775808": "min", "9223372036854775807": "max"}} => {map[-9223372036854775808:min 9223372036854775807:max] map[] map[] map[] map[] map[]}
+{"a": {"9223372036854775808": "over"}} => fault: argo: expected an integer key in [-9223372036854775808, 9223372036854775807], found "9223372036854775808" at offset 7
+{"a": {"x": "bad"}} => fault: argo: expected an integer key in [-9223372036854775808, 9223372036854775807], found "x" at offset 7
+{"a": {"": "empty"}} => fault: argo: expected an integer key in [-9223372036854775808, 9223372036854775807], found "" at offset 7
+{"a": {"1.5": "frac"}} => fault: argo: expected an integer key in [-9223372036854775808, 9223372036854775807], found "1.5" at offset 7
+{"b": {"256": 1}} => fault: argo: expected an integer key in [0, 255], found "256" at offset 7
+{"b": {"-1": 1}} => fault: argo: expected an integer key in [0, 255], found "-1" at offset 7
+{"b": {"+1": 1}} => fault: argo: expected an integer key in [0, 255], found "+1" at offset 7
+{"d": {"18446744073709551616": 1}} => fault: argo: expected an integer key in [0, 18446744073709551615], found "18446744073709551616" at offset 7
+{"c": {"2147483648": true}} => fault: argo: expected an integer key in [-2147483648, 2147483647], found "2147483648" at offset 7
+{"f": {"-32768": [3]}} => {map[] map[] map[] map[] map[] map[-32768:[3]]}
+unchanged on fault: argo: expected an integer key in [-9223372036854775808, 9223372036854775807], found "x" at offset 9 map[9:9]
+strict dup: argo: duplicate key "1" at offset 9

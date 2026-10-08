@@ -2033,7 +2033,7 @@ Fix: write the value in the literal: `run("SELECT name FROM users WHERE id = {id
 
 `argo.Put(mut buf, v)` appends JSON for a value to a `[]u8`, and `argo.Get(text, mut v)`
 fills a struct, slice or map from JSON; both need `import "argo"` and a type argo can
-encode (no functions, `dyn` values or maps with other keys than `str` and integers).
+encode and decode (no functions, `dyn` values or maps with other keys than `str` and integers).
 
 ```tin edition=1
 package main

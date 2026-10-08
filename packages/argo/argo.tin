@@ -407,6 +407,66 @@ fn rkey(p mut Parser) str {
 	return k
 }
 
+// rkeyint reads member name k as the key of a map with signed integer keys: base-10 digits
+// with an optional sign, in [lo, hi], as Go's encoding/json reads one (strconv.ParseInt, so
+// "+7" and "007" too). Another name is a fault at its offset (#716).
+fn rkeyint(p mut Parser, k str, lo i64, hi i64) i64 {
+	if p.err != nil {
+		return 0
+	}
+	mut i = 0
+	mut neg = false
+	if len(k) > 0 && (k[0] == '+' || k[0] == '-') {
+		neg = k[0] == '-'
+		i = 1
+	}
+	let (v, ok) = keydigits(k, i)
+	if ok && neg && v <= u64(0-(lo+1))+1 {
+		return 0 -% i64(v)
+	}
+	if ok && !neg && v <= u64(hi) {
+		return i64(v)
+	}
+	fault_at(mut p, p.keyAt, say.Fmt("expected an integer key in [%d, %d], found %q", lo, hi, k))
+	return 0
+}
+
+// rkeyuint is rkeyint for a map with unsigned integer keys: digits only, as Go's
+// strconv.ParseUint reads them, at most hi.
+fn rkeyuint(p mut Parser, k str, hi u64) u64 {
+	if p.err != nil {
+		return 0
+	}
+	let (v, ok) = keydigits(k, 0)
+	if ok && v <= hi {
+		return v
+	}
+	fault_at(mut p, p.keyAt, say.Fmt("expected an integer key in [0, %d], found %q", hi, k))
+	return 0
+}
+
+// keydigits reads k[i:] as base-10 digits: the value, and false when there are none, another
+// byte follows or the value passes 2^64-1.
+fn keydigits(k str, i i64) (u64, bool) {
+	if i >= len(k) {
+		return 0, false
+	}
+	mut v = u64(0)
+	let top = ^u64(0)
+	for j in i..len(k) {
+		let c = k[j]
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		let d = u64(c - '0')
+		if v > (top-d)/10 {
+			return 0, false
+		}
+		v = v*10 + d
+	}
+	return v, true
+}
+
 // runknown handles a member the target has no field for: skipped, or a fault when strict.
 fn runknown(p mut Parser, key str) {
 	if p.strict {

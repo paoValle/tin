@@ -1,0 +1,67 @@
+package main
+
+// argo.Get reads the integer-keyed maps argo.Put writes, keys parsed as Go parses them (#716).
+
+import "argo"
+import "say"
+
+type V value struct {
+	a i64
+}
+
+type R struct {
+	a map[i64]str
+	b map[u8]i64
+	c map[i32]bool
+	d map[u64]f64
+	e map[i64]V
+	f map[i16][]i64
+}
+
+fn fresh() R {
+	return R{a: map[i64]str{}, b: map[u8]i64{}, c: map[i32]bool{}, d: map[u64]f64{}, e: map[i64]V{}, f: map[i16][]i64{}}
+}
+
+fn get(t str) {
+	mut r = fresh()
+	argo.Get(t, mut r) catch err {
+		say.Line(t, "=> fault:", err)
+		return
+	}
+	say.Line(t, "=>", r)
+}
+
+fn main() {
+	mut r = fresh()
+	r.a[-5] = "neg"
+	r.a[3] = "p"
+	r.b[255] = 1
+	r.c[-2147483648] = true
+	r.d[18446744073709551615] = 1.5
+	r.e[7] = V{a: 9}
+	r.f[-1] = []i64{1, 2}
+	mut b = make([]u8, 0, 64)
+	argo.Put(mut b, r)
+	say.Line(str(b))
+	get(str(b))
+	get(`{"a": {"+7": "plus", "007": "zeros", "-0": "negzero"}}`)
+	get(`{"a": {"-9223372036854775808": "min", "9223372036854775807": "max"}}`)
+	get(`{"a": {"9223372036854775808": "over"}}`)
+	get(`{"a": {"x": "bad"}}`)
+	get(`{"a": {"": "empty"}}`)
+	get(`{"a": {"1.5": "frac"}}`)
+	get(`{"b": {"256": 1}}`)
+	get(`{"b": {"-1": 1}}`)
+	get(`{"b": {"+1": 1}}`)
+	get(`{"d": {"18446744073709551616": 1}}`)
+	get(`{"c": {"2147483648": true}}`)
+	get(`{"f": {"-32768": [3]}}`)
+	mut m = map[i64]i64{9: 9}
+	argo.Get(`{"1": 1, "x": 2}`, mut m) catch err {
+		say.Line("unchanged on fault:", err, m)
+	}
+	mut sm = map[i64]i64{}
+	argo.GetStrict(`{"1": 1, "1": 2}`, mut sm) catch err {
+		say.Line("strict dup:", err)
+	}
+}

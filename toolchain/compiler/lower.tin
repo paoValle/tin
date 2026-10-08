@@ -5802,6 +5802,28 @@ fn argo_bound(pos i64, body []i64, p i64, x i64, t Ty) {
 	body = append(body, cast(i64, ifs))
 }
 
+// argo_int_key reads member name k (a str Sym) as a key of integer type t: argo.rkeyint
+// within t's range, or argo.rkeyuint for an unsigned t (#716).
+fn argo_int_key(pos i64, p i64, k i64, t Ty) i64 {
+	let w = t.width
+	if t.signed == 0 {
+		mut hi = -1
+		if w < 8 {
+			hi = (1 << (8 * w)) - 1
+		}
+		let c = call_fn(pos, argo_lib(pos, "argo.rkeyuint"), args3(sym_ref_node(pos, cast(Sym, p)), sym_ref_node(pos, cast(Sym, k)), mk_int(pos, hi, ty_u64)), ty_u64)
+		return mk_conv(pos, cast(i64, c), CV_INT, cast(i64, t))
+	}
+	mut lo = -9223372036854775807 - 1
+	mut hi = 9223372036854775807
+	if w < 8 {
+		lo = 0 - (1 << (8 * w - 1))
+		hi = (1 << (8 * w - 1)) - 1
+	}
+	let c = call_fn(pos, argo_lib(pos, "argo.rkeyint"), args4(sym_ref_node(pos, cast(Sym, p)), sym_ref_node(pos, cast(Sym, k)), mk_int(pos, lo, ty_int), mk_int(pos, hi, ty_int)), ty_int)
+	return mk_conv(pos, cast(i64, c), CV_INT, cast(i64, t))
+}
+
 // argo_dfn returns (generating on first use) argo$dN(p mut argo.Parser, x mut T), which
 // fills x from the JSON value at p.
 fn argo_dfn(pos i64, t Ty) i64 {
@@ -5821,8 +5843,8 @@ fn argo_dfn(pos i64, t Ty) i64 {
 		return 0
 	}
 	let k = kind_of(t)
-	if k == K_MAP && kind_of(cast(Ty, t.key)) != K_STRING {
-		err_code_type(pos, "E281 ARGO", "argo.Get decodes maps with str keys, not ", cast(i64, t), "")
+	if k == K_MAP && kind_of(cast(Ty, t.key)) != K_STRING && kind_of(cast(Ty, t.key)) != K_INT {
+		err_code_type(pos, "E281 ARGO", "argo.Get decodes maps with str or integer keys, not ", cast(i64, t), "")
 		return 0
 	}
 	lifted_count = lifted_count + 1
@@ -6001,15 +6023,23 @@ fn argo_dfn(pos i64, t Ty) i64 {
 		let mk = temp(pos, argo_rd(pos, cast(i64, p), "argo.rkey", ty_string), ty_string)
 		wb3 = append(wb3, cast(i64, mk))
 		argo_err_return(pos, wb3, cast(i64, p))
+		mut ks = cast(Sym, mk.sym)
+		if kind_of(cast(Ty, t.key)) == K_INT {
+			// An integer key comes as a member name: "7" (#716).
+			let ik = temp(pos, argo_int_key(pos, cast(i64, p), cast(i64, ks), cast(Ty, t.key)), t.key)
+			wb3 = append(wb3, cast(i64, ik))
+			argo_err_return(pos, wb3, cast(i64, p))
+			ks = cast(Sym, ik.sym)
+		}
 		let mv = argo_value(pos, wb3, cast(i64, p), cast(Ty, t.elem))
 		if mv != 0 && is_value_struct(cast(Ty, t.elem)) != 0 {
 			// A value struct goes in a cell of the map's own (#669).
-			wb3 = append(wb3, expr_stmt(cast(Node, map_set_vcell(pos, sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, mk.sym)), mv, 0))))
+			wb3 = append(wb3, expr_stmt(cast(Node, map_set_vcell(pos, sym_ref_node(pos, x), sym_ref_node(pos, ks), mv, 0))))
 		} else if mv != 0 && is_dyn_value(cast(Ty, t.elem)) != 0 {
 			// Two-word values go in cells of the map's own (#632).
-			wb3 = append(wb3, expr_stmt(cast(Node, map_set_dyn(pos, sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, mk.sym)), mv, 0))))
+			wb3 = append(wb3, expr_stmt(cast(Node, map_set_dyn(pos, sym_ref_node(pos, x), sym_ref_node(pos, ks), mv, 0))))
 		} else if mv != 0 {
-			wb3 = append(wb3, expr_stmt(cast(Node, rt_call(pos, "rt_map_set", args4(sym_ref_node(pos, x), sym_ref_node(pos, cast(Sym, mk.sym)), to_bits(cast(Node, mv)), mk_int(pos, 1, ty_int)), ty_void))))
+			wb3 = append(wb3, expr_stmt(cast(Node, rt_call(pos, "rt_map_set", args4(sym_ref_node(pos, x), to_bits(cast(Node, sym_ref_node(pos, ks))), to_bits(cast(Node, mv)), mk_int(pos, 1, ty_int)), ty_void))))
 		}
 		argo_err_return(pos, wb3, cast(i64, p))
 		argo_more(pos, wb3, cast(i64, p), '}')
@@ -6097,7 +6127,7 @@ fn argo_vfn(pos i64, t Ty) i64 {
 	}
 	let pt = argo_parser_type(pos)
 	let k = kind_of(t)
-	if pt == 0 || (k == K_MAP && kind_of(cast(Ty, t.key)) != K_STRING) {
+	if pt == 0 || (k == K_MAP && kind_of(cast(Ty, t.key)) != K_STRING && kind_of(cast(Ty, t.key)) != K_INT) {
 		return 0
 	}
 	lifted_count = lifted_count + 1
@@ -6202,7 +6232,13 @@ fn argo_vfn(pos i64, t Ty) i64 {
 		body = append(body, cast(i64, w))
 		mut wb = cast(Block, w.body).stmts
 		argo_vbound(pos, wb, p, cnt, t)
-		if k == K_MAP {
+		if k == K_MAP && kind_of(cast(Ty, t.key)) == K_INT {
+			// An integer key must parse and fit (#716).
+			let vk = temp(pos, argo_rd(pos, p, "argo.rkey", ty_string), ty_string)
+			wb = append(wb, cast(i64, vk))
+			wb = append(wb, expr_stmt(cast(Node, argo_int_key(pos, p, cast(i64, vk.sym), cast(Ty, t.key)))))
+			argo_err_return(pos, wb, p)
+		} else if k == K_MAP {
 			wb = append(wb, expr_stmt(cast(Node, argo_rd(pos, p, "argo.rkey", ty_string))))
 			argo_err_return(pos, wb, p)
 		}
