@@ -55,3 +55,10 @@ Double click selects a word, triple click a line; the wheel scrolls what is unde
 (the script language is at the top of `editor/script.tin`); `snap:path.png` draws the text area on the GPU and writes the pixels (nothing is written on a machine without a GPU).
 `tests/scripts/editor.script` is the test that runs in CI on macOS (`tests/run.sh`). How the packages fit together is in
 [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Settings and keys
+
+`Tinland > Settings...` (Cmd+,) opens `~/.config/tinland/settings`, creating it with a commented template. One `name = value` per line:
+`theme = dark` or `light`, `font_size`, `code_font` and `ui_font` (PostScript names), and key bindings by menu title: `key.toggle-terminal =
+ctrl+\`` (the title in lower case with dashes; `cmd`, `shift`, `alt` and `ctrl` then the key; `none` removes the key). Restart Tinland to
+apply them.

@@ -7,8 +7,12 @@ import "../workspace"
 
 // item adds a menu item: its title, the key shown beside it and its command (the tag OnCommand gets).
 fn item(m appkit.Menu, menu i64, title str, key str, mods i64, cmd i64) {
-	appkit.AddItem(m, menu, title, key, mods, cmd)
+	let (k, mo) = menuSettings.Binding(title, key, mods)
+	appkit.AddItem(m, menu, title, k, mo, cmd)
 }
+
+// menuSettings holds the user's settings while the menus are built, for their key bindings.
+mut menuSettings = DefaultSettings()
 
 const cmd = appkit.ModCmd
 const shift = appkit.ModShift
@@ -17,7 +21,8 @@ const ctrl = appkit.ModCtrl
 
 // BuildMenus installs the menu bar, in the order and with the names Zed uses: the application, File, Edit, Selection, View, Go,
 // Run, Window and Help.
-fn BuildMenus(win gpuwin.Window) appkit.Menu {
+fn BuildMenus(win gpuwin.Window, cfg Settings) appkit.Menu {
+	menuSettings = keep(cfg)
 	let m = gpuwin.NewMenuBar(win)
 	let app = appkit.AddMenu(m, "Tinland")
 	appkit.AddSystemItem(app, "About Tinland", "orderFrontStandardAboutPanel:", "", 0)
@@ -25,6 +30,8 @@ fn BuildMenus(win gpuwin.Window) appkit.Menu {
 	appkit.AddSystemItem(app, "Hide Tinland", "hide:", "h", cmd)
 	appkit.AddSystemItem(app, "Hide Others", "hideOtherApplications:", "h", cmd | alt)
 	appkit.AddSystemItem(app, "Show All", "unhideAllApplications:", "", 0)
+	appkit.AddSeparator(app)
+	item(m, app, "Settings...", ",", cmd, workspace.CmdOpenSettings)
 	appkit.AddSeparator(app)
 	item(m, app, "Quit Tinland", "q", cmd, editor.CmdQuit)
 

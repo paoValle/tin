@@ -1,0 +1,36 @@
+package main
+
+import "../../app"
+import "../../theme"
+import "appkit"
+import "quarry"
+import "say"
+import "trail"
+
+// The settings file: defaults without one, values from it, key bindings by menu title, the template.
+fn main() {
+	let home = trail.Clean(quarry.TempDir() + "/tinland_settings_test")
+	quarry.RemoveAll(home) catch _ {
+	}
+	quarry.Setenv("HOME", home) catch _ {
+	}
+	let d = app.LoadSettings()
+	say.Line("defaults", d.Theme, d.FontSize, len(d.Keys))
+	let path = app.EnsureSettingsFile()
+	say.Line("template written", quarry.Exists(path), path == home + "/.config/tinland/settings")
+	let t = app.LoadSettings()
+	say.Line("template changes nothing", t.Theme, t.FontSize, len(t.Keys))
+	quarry.WriteFile(path, "theme = light\nfont_size = 15\ncode_font = SFMono-Regular\n# comment\nkey.toggle-terminal = cmd+shift+j\nkey.go-to-file = none\nbad line\nfont_size = 99\n") catch _ {
+	}
+	let s = app.LoadSettings()
+	say.Line("read", s.Theme, s.FontSize, s.CodeFont, len(s.Keys))
+	let (k1, m1) = s.Binding("Toggle Terminal", "`", appkit.ModCtrl)
+	say.Line("rebound", k1, m1 == appkit.ModCmd | appkit.ModShift)
+	let (k2, m2) = s.Binding("Go to File...", "p", appkit.ModCmd)
+	say.Line("removed", k2 == "", m2)
+	let (k3, m3) = s.Binding("Save", "s", appkit.ModCmd)
+	say.Line("untouched", k3, m3 == appkit.ModCmd)
+	say.Line("themes differ", theme.ByName("light").Editor != theme.ByName("dark").Editor, theme.ByName("nonsense").Editor == theme.Dark().Editor)
+	quarry.RemoveAll(home) catch _ {
+	}
+}

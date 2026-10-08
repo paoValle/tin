@@ -17,7 +17,10 @@ import "../workspace"
 // is queued and draws a frame when something changed. It reports false when the machine has no GPU.
 fn Run(paths []str) bool {
 	// the workspace is a local of this function: an arena may use a local but not a mut parameter
-	mut ws = workspace.New(theme.Dark(), editor.New(textedit.New()))
+	let cfg = LoadSettings()
+	mut ws = workspace.New(theme.ByName(cfg.Theme), editor.New(textedit.New()))
+	ws.CodeSize = cfg.FontSize
+	render.UseFonts(cfg.UIFont, cfg.CodeFont)
 	if len(paths) == 0 {
 		ws.RestoreSession()
 	}
@@ -35,7 +38,7 @@ fn Run(paths []str) bool {
 	}
 	render.Init(gpu, appkit.Scale(win.Win), ws.CodeSize)
 	ws.UseFont()
-	BuildMenus(win)
+	BuildMenus(win, cfg)
 	mut idle = 0
 	for !ws.Quit {
 		let pool = appkit.PoolPush()
@@ -69,6 +72,10 @@ fn Run(paths []str) bool {
 			got = gpuwin.Pump(win, 0.0)
 		}
 		take(mut ws, win)
+		if ws.WantSettings {
+			ws.WantSettings = false
+			ws.OpenFile(EnsureSettingsFile())
+		}
 		// the window moved to a screen with another scale (Retina and not): the glyphs are drawn again for it
 		let scale = appkit.Scale(win.Win)
 		if scale != render.Scale() {

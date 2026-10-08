@@ -75,3 +75,46 @@ fn Dark() Theme {
 		Func: ui.Hex(0x7cc4f0)
 	}
 }
+
+// Light is the light counterpart: warm paper and slate text with the same copper accent.
+fn Light() Theme {
+	return Theme{
+		Background: ui.Hex(0xf4f2ee),
+		Panel: ui.Hex(0xebe8e2),
+		TitleBar: ui.Hex(0xe4e0d9),
+		StatusBar: ui.Hex(0xe4e0d9),
+		Editor: ui.Hex(0xfbfaf7),
+		TabBar: ui.Hex(0xe4e0d9),
+		TabActive: ui.Hex(0xfbfaf7),
+		Border: ui.Hex(0xd3cec5),
+		Hover: ui.Hex(0xe0dcd3),
+		Selected: ui.Hex(0xd6d1c6),
+		Accent: ui.Hex(0xc2692a),
+		Text: ui.Hex(0x2a303b),
+		Muted: ui.Hex(0x5b6577),
+		Faint: ui.Hex(0x8a93a3),
+		Error: ui.Hex(0xc8383c),
+		Warning: ui.Hex(0xa87400),
+		Gutter: ui.Hex(0xa4abb8),
+		GutterActive: ui.Hex(0x2a303b),
+		Cursor: ui.Hex(0xc2692a),
+		Selection: ui.Hex(0xcfe0ec),
+		LineHighlight: ui.Hex(0xf1eee8),
+		Match: ui.HexA(0xc2692a, 0.30),
+		Keyword: ui.Hex(0xc2492a),
+		String: ui.Hex(0x2a8a63),
+		Number: ui.Hex(0xa86a00),
+		Comment: ui.Hex(0x8a93a3),
+		Constant: ui.Hex(0xb03a78),
+		Type: ui.Hex(0x4a5bc8),
+		Func: ui.Hex(0x1f78b4)
+	}
+}
+
+// ByName is the theme with the name ("light"; anything else is the dark one).
+fn ByName(name str) Theme {
+	if name == "light" {
+		return Light()
+	}
+	return Dark()
+}

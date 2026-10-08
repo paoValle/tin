@@ -40,3 +40,4 @@ renamed true false
 deleted false
 fuzzy [main.tin src/mount.tin]
 fuzzy none -1
+name first [products/tinland/workspace/build.tin docker/builder.Dockerfile]

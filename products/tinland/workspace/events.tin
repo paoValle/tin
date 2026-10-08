@@ -26,6 +26,7 @@ const CmdZoomReset = 116
 const CmdToggleTerminal = 117
 const CmdSplit = 118
 const CmdCloseSplit = 119
+const CmdOpenSettings = 120
 
 // Event kinds of an NSEvent that the workspace reads.
 const evMouseDown = 1
@@ -300,6 +301,8 @@ fn (ws mut Workspace) Perform(cmd i64) {
 		}
 	} else if cmd == editor.CmdQuit {
 		ws.RequestQuit()
+	} else if cmd == CmdOpenSettings {
+		ws.WantSettings = true
 	} else if cmd == CmdSplit {
 		ws.Split()
 	} else if cmd == CmdCloseSplit {

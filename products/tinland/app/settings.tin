@@ -1,0 +1,133 @@
+package app
+
+import "appkit"
+import "quarry"
+import "twine"
+
+// Settings are what the user can change in ~/.config/tinland/settings: one `name = value` per line, `#` starts a comment.
+//
+//	theme = dark              dark or light
+//	font_size = 13            code font size in points
+//	code_font = Menlo-Regular PostScript name of the code font
+//	ui_font = .AppleSystemUIFont
+//	key.toggle-terminal = ctrl+`      a menu item's key: its title in lower case with dashes, then the modifiers (cmd, shift, alt,
+//	                                  ctrl) and the key; `none` removes the key
+type Settings struct {
+	Theme str
+	FontSize f64
+	CodeFont str
+	UIFont str
+	Keys map[str]str
+}
+
+// SettingsPath is where the settings file is.
+fn SettingsPath() str {
+	return quarry.Getenv("HOME") + "/.config/tinland/settings"
+}
+
+// DefaultSettings is what a missing file means.
+fn DefaultSettings() Settings {
+	return Settings{Theme: "dark", FontSize: 13.0, Keys: map[str]str{}}
+}
+
+// LoadSettings reads the settings file (the defaults, where it is missing or a line makes no sense).
+fn LoadSettings() Settings {
+	let s = DefaultSettings()
+	let text = quarry.ReadFile(SettingsPath()) catch _ {
+		return s
+	}
+	for line in twine.Split(text, "\n") {
+		let l = twine.TrimSpace(line)
+		if len(l) == 0 || l[0] == '#' {
+			continue
+		}
+		let (name, value, ok) = twine.Cut(l, "=")
+		if !ok {
+			continue
+		}
+		let n = twine.TrimSpace(name)
+		let v = twine.TrimSpace(value)
+		if n == "theme" {
+			s.Theme = v
+		} else if n == "font_size" {
+			let size = appkit.ParseNumbers(v)
+			if len(size) > 0 && size[0] >= 8.0 && size[0] <= 40.0 {
+				s.FontSize = size[0]
+			}
+		} else if n == "code_font" {
+			s.CodeFont = v
+		} else if n == "ui_font" {
+			s.UIFont = v
+		} else if twine.HasPrefix(n, "key.") {
+			s.Keys[n[4:]] = v
+		}
+	}
+	return s
+}
+
+// slug is a menu title as a keymap name: lower case, other characters as single dashes ("Toggle Terminal" is toggle-terminal).
+fn slug(title str) str {
+	mut b = twine.NewBuilder(len(title))
+	mut dash = false
+	for i in 0..len(title) {
+		let c = title[i]
+		if c >= 'A' && c <= 'Z' {
+			b.Byte(c + 32)
+			dash = false
+		} else if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.Byte(c)
+			dash = false
+		} else if !dash && b.Len() > 0 {
+			b.Byte('-')
+			dash = true
+		}
+	}
+	return twine.TrimSuffix(b.String(), "-")
+}
+
+// Binding is the key and modifiers a menu item gets: the user's, when the settings name one for the title, else the default.
+fn (s Settings) Binding(title str, key str, mods i64) (str, i64) {
+	let (spec, found) = s.Keys[slug(title)]
+	if !found {
+		return key, mods
+	}
+	if spec == "none" || len(spec) == 0 {
+		return "", 0
+	}
+	mut m = 0
+	mut k = ""
+	for part in twine.Split(spec, "+") {
+		let p = twine.TrimSpace(part)
+		if p == "cmd" {
+			m = m | appkit.ModCmd
+		} else if p == "shift" {
+			m = m | appkit.ModShift
+		} else if p == "alt" || p == "option" {
+			m = m | appkit.ModAlt
+		} else if p == "ctrl" {
+			m = m | appkit.ModCtrl
+		} else {
+			k = p
+		}
+	}
+	return k, m
+}
+
+// Template is the text of a settings file that has not been written yet.
+fn Template() str {
+	return "# Tinland settings: restart Tinland to apply them.\n# theme = dark\n# font_size = 13\n# code_font = Menlo-Regular\n# ui_font = .AppleSystemUIFont\n# key.toggle-terminal = ctrl+`\n# key.go-to-file = cmd+t\n"
+}
+
+// EnsureSettingsFile writes the template when there is no settings file yet, and returns the path.
+fn EnsureSettingsFile() str {
+	let path = SettingsPath()
+	if quarry.Exists(path) {
+		return path
+	}
+	quarry.MkdirAll(quarry.Getenv("HOME") + "/.config/tinland") catch _ {
+		return path
+	}
+	quarry.WriteFile(path, Template()) catch _ {
+	}
+	return path
+}

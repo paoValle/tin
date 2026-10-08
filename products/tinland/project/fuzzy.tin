@@ -1,5 +1,7 @@
 package project
 
+import "twine"
+
 // Fuzzy scores how well the query matches the candidate as a subsequence of its characters (case ignored): every query character
 // must appear in the candidate in order. A higher score is a better match: consecutive characters, characters right after a
 // separator (a slash, dot, underscore or dash) or at the start, and matches in the file name rather than the folders score more.
@@ -32,6 +34,15 @@ fn Fuzzy(query str, candidate str) i64 {
 	}
 	if qi < len(q) {
 		return -1
+	}
+	// a query that is the start of the file's name, or its name without the extension, is what was meant
+	let base = Lower(candidate[nameStart:len(candidate)])
+	if twine.HasPrefix(base, q) {
+		score += 40
+	}
+	let dot = twine.LastIndexByte(base, '.')
+	if dot > 0 && base[0:dot] == q {
+		score += 60
 	}
 	// shorter candidates are tighter matches
 	score -= len(c) / 8

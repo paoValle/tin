@@ -101,6 +101,8 @@ type Workspace struct {
 	Menu i64
 	// CodeSize is the size of the code font in points.
 	CodeSize f64
+	// WantSettings asks the application to open its settings file (the file is the application's).
+	WantSettings bool
 	// The bottom dock: which panel shows, and the terminal: its screen, its shell, whether the shell runs, how far it is scrolled back.
 	Bottom i64
 	Term terminal.Screen

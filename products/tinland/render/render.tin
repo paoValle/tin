@@ -42,16 +42,32 @@ type Canvas struct {
 	Code f64
 }
 
+// The font names Init uses (PostScript names): the interface font and the code font; UseFonts changes them for the next Init.
+mut uiFont = ".AppleSystemUIFont"
+mut uiBold = ".AppleSystemUIFont-Bold"
+mut codeFont = "Menlo-Regular"
+
+// UseFonts chooses the fonts (empty keeps the current one); call it before Init.
+fn UseFonts(ui str, code str) {
+	if len(ui) > 0 {
+		uiFont = keep(ui)
+		uiBold = keep(ui + "-Bold")
+	}
+	if len(code) > 0 {
+		codeFont = keep(code)
+	}
+}
+
 mut cv = Canvas{Gpu: metal.Gpu{}, Atlas: metal.EmptyAtlas(), Scale: 1.0}
 
 // Init prepares the canvas for a screen scale: the fonts (a UI font and a monospaced one, with the code font size in points) and
 // the icons. Call it once the GPU is open, and again if the window moves to a screen of another scale.
 fn Init(gpu metal.Gpu, scale f64, codePoints f64) {
 	cv = keep(Canvas{Gpu: gpu, Atlas: metal.NewAtlas(gpu, 2048), Scale: scale, Code: codePoints})
-	cv.Atlas.AddFont(".AppleSystemUIFont", 13.0 * scale)
-	cv.Atlas.AddFont(".AppleSystemUIFont-Bold", 13.0 * scale)
-	cv.Atlas.AddFont(".AppleSystemUIFont", 11.0 * scale)
-	cv.Atlas.AddFont("Menlo-Regular", codePoints * scale)
+	cv.Atlas.AddFont(uiFont, 13.0 * scale)
+	cv.Atlas.AddFont(uiBold, 13.0 * scale)
+	cv.Atlas.AddFont(uiFont, 11.0 * scale)
+	cv.Atlas.AddFont(codeFont, codePoints * scale)
 	for name in []str{"folder", "folder.fill", "doc", "chevron.left.forwardslash.chevron.right", "chevron.right", "chevron.down", "sidebar.left", "arrow.triangle.branch", "list.bullet.indent", "magnifyingglass", "exclamationmark.triangle", "terminal", "ladybug", "xmark", "plus", "gearshape", "doc.text", "photo", "arrow.clockwise"} {
 		cv.Atlas.AddIcon(name)
 	}

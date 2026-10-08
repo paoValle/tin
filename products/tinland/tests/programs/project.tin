@@ -77,6 +77,7 @@ fn helper() {}
 	say.Line("deleted", quarry.Exists(root + "/src/renamed.tin"))
 	say.Line("fuzzy", project.Ranked("mt", []str{"main.tin", "src/util.tin", "Readme.md", "src/mount.tin"}, 3))
 	say.Line("fuzzy none", project.Fuzzy("zz", "main.tin"))
+	say.Line("name first", project.Ranked("build", []str{"docker/builder.Dockerfile", "products/tinland/workspace/build.tin", "bench/builtin.go"}, 3))
 	quarry.RemoveAll(root) catch _ {
 	}
 }
