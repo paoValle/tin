@@ -392,8 +392,9 @@ number. A debugger shows them as it does a C program's:
 Limits: a variable's place is the one the backend gave it for the whole function, and a register or slot shared by
 variables whose lifetimes do not overlap shows the other's value outside its own; a variable captured by a closure (it lives in
 a heap cell), a `dyn` value, a `?T` over a number and a value struct global have no place yet; there is no unwinding information (frame pointers
-are followed), no lexical blocks and no inlined calls; `lldb` shows `str` as a pointer to its length and first byte
-(`p label->len`, `memory read`). The language of the unit is C, which is what debuggers need to print values.
+are followed), no lexical blocks and no inlined calls. `lldb` shows a `str` or a slice as a pointer to its structure
+(`p label->len`); `command script import tools/dev/tin_lldb.py` (or that line in `~/.lldbinit`) makes it show the text and the
+first elements: `label = "pt"`, `xs = len=3 cap=3 [4, 5, 6]`. The language of the unit is C, which is what debuggers need to print values.
 
 `tools/ci/test_dwarf.py` reads the sections back for all three targets without a debugger.
 
