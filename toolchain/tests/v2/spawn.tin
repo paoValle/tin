@@ -1,0 +1,96 @@
+package main
+
+// spawn: a child runs and its exit code, stdout and stderr come back; a missing program names
+// the path; LookPath finds a program in PATH; a task deadline kills and reaps a sleeping child;
+// a signal makes Wait report -1; and the pipes stream. The output is the same on Linux and
+// macOS, where the platform parts differ (clone and pidfd against posix_spawn and kqueue).
+
+import "say"
+import "spawn"
+import "fault"
+import "ore"
+
+// cmd is a Cmd with everything inherited.
+fn cmd(argv []str) spawn.Cmd {
+	return spawn.Cmd{Argv: argv, Env: spawn.Env.Inherit, Dir: "", Stdin: spawn.Stdio.Inherit, Stdout: spawn.Stdio.Inherit, Stderr: spawn.Stdio.Inherit, MaxOutput: 0}
+}
+
+fn main() {
+	// Run collects stdout and stderr separately; a non-zero exit is not a fault.
+	let r = spawn.Run(spawn.Cmd{Argv: []str{"/bin/sh", "-c", "echo out; echo err >&2; exit 4"}, Env: spawn.Env.Inherit, Dir: "",
+		Stdin: spawn.Stdio.Inherit, Stdout: spawn.Stdio.Inherit, Stderr: spawn.Stdio.Inherit, MaxOutput: 0}) catch err {
+		say.Line("run failed", err)
+		return
+	}
+	say.Line("run", r.Code, r.Stdout == "out\n", r.Stderr == "err\n")
+
+	// A missing program fails with the path and the reason.
+	spawn.Start(cmd([]str{"/no/such/tin-program"})) catch err {
+		say.Line("missing", err)
+	}
+
+	// A program name is looked up in PATH.
+	let sh = spawn.LookPath("sh") catch err {
+		say.Line("lookpath failed", err)
+		return
+	}
+	say.Line("lookpath", len(sh) > 0)
+
+	// A task deadline interrupts the wait: the child is killed, reaped and the deadline reported.
+	mut w = spawn.Start(cmd([]str{"/bin/sleep", "10"})) catch err {
+		say.Line("deadline start failed", err)
+		return
+	}
+	let dr = within 100ms {
+		try w.Wait()
+	} catch err {
+		say.Line("deadline", fault.Is(err, fault.DeadlineExceeded))
+		i64(-1)
+	}
+	say.Line("deadline result", dr)
+
+	// A signal: a sleeping child is killed and Wait reports -1.
+	mut s = spawn.Start(cmd([]str{"/bin/sleep", "10"})) catch err {
+		say.Line("kill start failed", err)
+		return
+	}
+	s.Kill() catch err {
+		say.Line("kill failed", err)
+		return
+	}
+	let killed = s.Wait() catch err {
+		say.Line("kill wait failed", err)
+		return
+	}
+	say.Line("killed", killed)
+
+	// Streaming: read the child's stdout as it writes, 0 at end of file.
+	mut e = spawn.Start(spawn.Cmd{Argv: []str{"/bin/echo", "streamed"}, Env: spawn.Env.Inherit, Dir: "",
+		Stdin: spawn.Stdio.Inherit, Stdout: spawn.Stdio.Pipe, Stderr: spawn.Stdio.Inherit, MaxOutput: 0}) catch err {
+		say.Line("stream start failed", err)
+		return
+	}
+	let buf = make([]u8, 64)
+	mut got = ""
+	for {
+		let n = e.Read(mut buf) catch err {
+			say.Line("stream read failed", err)
+			-1
+		}
+		if n <= 0 {
+			break
+		}
+		got += ore.ToStr(buf[0:n])
+	}
+	let code = e.Wait() catch err {
+		say.Line("stream wait failed", err)
+		i64(-1)
+	}
+	say.Line("stream", got == "streamed\n", code)
+
+	// More output than maxOutput fails with fault.LimitExceeded and the child is killed.
+	spawn.Run(spawn.Cmd{Argv: []str{"/bin/sh", "-c", "cat /dev/zero"}, Env: spawn.Env.Inherit, Dir: "",
+		Stdin: spawn.Stdio.Inherit, Stdout: spawn.Stdio.Inherit, Stderr: spawn.Stdio.Inherit, MaxOutput: 1000}) catch err {
+		say.Line("limit", fault.Is(err, fault.LimitExceeded))
+	}
+}

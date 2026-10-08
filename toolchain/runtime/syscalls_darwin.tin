@@ -35,3 +35,27 @@ extern fn signal(sig i64, h i64) i64
 fn rt_sys_signal(sig i64, h i64) i64 { return signal(sig, h) }
 extern fn write(fd i64, buf i64, n i64) i64
 fn rt_sys_write(fd i64, buf i64, n i64) i64 { return write(fd, buf, n) }
+extern fn access(path i64, mode i64) i64
+fn rt_sys_access(path i64, mode i64) i64 { return access(path, mode) }
+extern fn kill(pid i64, sig i64) i64
+fn rt_sys_kill(pid i64, sig i64) i64 { return kill(pid, sig) }
+extern fn posix_spawn(pid i64, path i64, actions i64, attr i64, argv i64, envp i64) i64
+fn rt_sys_posix_spawn_call(pid i64, path i64, actions i64, attr i64, argv i64, envp i64) i64 { return posix_spawn(pid, path, actions, attr, argv, envp) }
+extern fn posix_spawn_file_actions_addchdir_np(actions i64, path i64) i64
+fn rt_sys_ps_fa_addchdir(actions i64, path i64) i64 { return posix_spawn_file_actions_addchdir_np(actions, path) }
+extern fn posix_spawn_file_actions_addclose(actions i64, fd i64) i64
+fn rt_sys_ps_fa_addclose(actions i64, fd i64) i64 { return posix_spawn_file_actions_addclose(actions, fd) }
+extern fn posix_spawn_file_actions_adddup2(actions i64, fd i64, newfd i64) i64
+fn rt_sys_ps_fa_adddup2(actions i64, fd i64, newfd i64) i64 { return posix_spawn_file_actions_adddup2(actions, fd, newfd) }
+extern fn posix_spawn_file_actions_destroy(actions i64) i64
+fn rt_sys_ps_file_actions_destroy(actions i64) i64 { return posix_spawn_file_actions_destroy(actions) }
+extern fn posix_spawn_file_actions_init(actions i64) i64
+fn rt_sys_ps_file_actions_init(actions i64) i64 { return posix_spawn_file_actions_init(actions) }
+extern fn posix_spawnattr_destroy(attr i64) i64
+fn rt_sys_ps_attr_destroy(attr i64) i64 { return posix_spawnattr_destroy(attr) }
+extern fn posix_spawnattr_init(attr i64) i64
+fn rt_sys_ps_attr_init(attr i64) i64 { return posix_spawnattr_init(attr) }
+extern fn posix_spawnattr_setflags(attr i64, flags i64) i64
+fn rt_sys_ps_attr_setflags(attr i64, flags i64) i64 { return posix_spawnattr_setflags(attr, flags) }
+extern fn waitpid(pid i64, status i64, options i64) i64
+fn rt_sys_waitpid(pid i64, status i64, options i64) i64 { return waitpid(pid, status, options) }

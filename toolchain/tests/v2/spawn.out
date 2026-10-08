@@ -1,0 +1,8 @@
+run 4 true true
+missing spawn: /no/such/tin-program: no such file or directory
+lookpath true
+deadline true
+deadline result -1
+killed -1
+stream true 0
+limit true

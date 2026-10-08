@@ -122,8 +122,8 @@ they need: the runtime's `rt_sys_*` calls and the C functions the library (`tool
 open a socket (`socket`, `connect`, `bind`, `listen`, `accept`, `getaddrinfo`) or a file
 (`open`, `creat`, `opendir`, `mkdir`, `rmdir`, `unlink`, `rename`, `stat`, `lstat`,
 `chdir`, `readlink`), start a process (`fork`, `posix_spawn`) or replace it (`execve`).
-`spawn` starts child processes on Linux (`toolchain/std/spawn`, `os/exec`'s Run, Start, pipes,
-Wait, Signal and LookPath; #576 is complete for Linux and macOS is a follow-up), so `spawn` has an entry point and
+`spawn` starts child processes on Linux and macOS (`toolchain/std/spawn`, `os/exec`'s Run, Start,
+pipes, Wait, Signal and LookPath; #576), so `spawn` has an entry point and
 `exec` has none yet (a child's execve runs behind a function pointer, which the walk cannot see).
 users yet. A few library functions are sealed with what they do: the DNS resolver
 (`wire.resolve`) reads `/etc/hosts` and `/etc/resolv.conf` as part of `net`, and a server

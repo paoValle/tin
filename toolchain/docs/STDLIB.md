@@ -809,7 +809,7 @@ Package quarry is the operating system interface (like Go's os): arguments, envi
 
 ## spawn
 
-Package spawn starts child processes, like Go's os/exec: Run a program and collect its output, or Start it, talk to it through pipes, signal it or kill it. A program is never run through a shell: write []str{"sh", "-c", script} for one. Linux is the target and is complete (#576); macOS is not implemented yet, so the package fails clearly there instead of compiling to something that cannot work.
+Package spawn starts child processes, like Go's os/exec: Run a program and collect its output, or Start it, talk to it through pipes, signal it or kill it. A program is never run through a shell: write []str{"sh", "-c", script} for one. On Linux the child is a clone that execs, and waits block on a pidfd; on macOS it is posix_spawn with file actions (POSIX_SPAWN_CLOEXEC_DEFAULT keeps the runtime's descriptors out of it) and waits block on a kqueue EVFILT_PROC, both through the scheduler's deadlines (#576).
 
 - `type Stdio enum`: Stdio says where a child's standard descriptor points.
 - `type Env enum`: Env says which environment a child gets. A Tin slice has no nil, so where Go's exec.Cmd says "nil inherits and an empty list is empty", this package says so with a variant.

@@ -1,26 +1,198 @@
 package spawn
 
 import "say"
+import "quarry"
 
-// macOS is not implemented yet (a follow-up to #576): the package fails clearly instead of
-// compiling to something that cannot work.
+// The macOS part of #576: the child record, posix_spawn with file actions, the scheduler's wait
+// and the PATH search. The runtime does the raw work (toolchain/runtime/spawn_darwin.tin), and
+// POSIX_SPAWN_CLOEXEC_DEFAULT keeps the runtime's descriptors out of the child.
 
+// spawnStart starts c: build the child's argument and environment vectors and its standard
+// descriptors, posix_spawn it, and keep the pipe ends the parent talks through. macOS has no
+// pidfd, so the Process carries -1 and the wait polls (the runtime's rt_spawn_wait).
 fn spawnStart(c Cmd) !Process {
-	fail say.Fault("spawn: macOS is not supported yet")
+	let prog = try resolveProgram(c.Argv[0])
+	mut cargv = calloc(len(c.Argv)+1, 8)
+	for i, a in c.Argv {
+		cargv[i] = rt_cstr(a)
+	}
+	cargv[len(c.Argv)] = 0
+	mut cenvp = i64(0)
+	match c.Env {
+		Inherit => {}
+		Empty => {
+			cenvp = calloc(1, 8)
+		}
+		Set(vars) => {
+			let e = calloc(len(vars)+1, 8)
+			for i, v in vars {
+				e[i] = rt_cstr(v)
+			}
+			e[len(vars)] = 0
+			cenvp = e
+		}
+	}
+	mut dirp = i64(0)
+	if len(c.Dir) > 0 {
+		dirp = rt_cstr(c.Dir)
+	}
+	let rec = rt_spawn_rec()
+	rt_spawn_set(rec, 0, cargv)
+	rt_spawn_set(rec, 1, cenvp)
+	rt_spawn_set(rec, 2, rt_cstr(prog))
+	rt_spawn_set(rec, 3, dirp)
+	let (pin, cin) = try stdioOpen(c.Stdin, true)
+	let (pout, cout) = try stdioOpen(c.Stdout, false)
+	let (perr, cerr) = try stdioOpen(c.Stderr, false)
+	if cin >= 0 {
+		rt_spawn_set(rec, 4, cin)
+	}
+	if cout >= 0 {
+		rt_spawn_set(rec, 5, cout)
+	}
+	if cerr >= 0 {
+		rt_spawn_set(rec, 6, cerr)
+	}
+	let (pid, e) = rt_sys_posix_spawn(rec)
+	// The child has its own copies now: the descriptors the parent opened for it are closed here.
+	if cin >= 0 {
+		rt_sys_close(cin)
+	}
+	if cout >= 0 {
+		rt_sys_close(cout)
+	}
+	if cerr >= 0 {
+		rt_sys_close(cerr)
+	}
+	rt_spawn_free(rec)
+	free(cargv)
+	if cenvp != 0 {
+		free(cenvp)
+	}
+	if e != 0 {
+		closeAll(pin, pout, perr)
+		fail say.Fault("spawn: %s: %s", prog, errnoText(e))
+	}
+	let pidfd = rt_spawn_pidfd(pid)
+	return Process{pid: pid, pidfd: pidfd, in: pin, out: pout, err: perr, done: false}
 }
 
+// resolveProgram is the program to spawn: a name with a slash is used as it is, so posix_spawn
+// reports "no such file or directory" itself; a bare name goes through PATH.
+fn resolveProgram(name str) !str {
+	if containsSlash(name) {
+		return name
+	}
+	return try LookPath(name)
+}
+
+// spawnWait waits for the child through the scheduler; a deadline kills and reaps it.
 fn spawnWait(p mut Process) !i64 {
-	fail say.Fault("spawn: macOS is not supported yet")
+	let (code, sig, waited) = rt_spawn_wait(p.pid, p.pidfd, 0)
+	if !waited {
+		fail cast(fault, rt_wait_fault())
+	}
+	if p.pidfd >= 0 {
+		rt_sys_close(p.pidfd)
+	}
+	closeAll(p.in, p.out, p.err)
+	p.in = -1
+	p.out = -1
+	p.err = -1
+	if sig != 0 {
+		return -1
+	}
+	return code
 }
 
+// spawnSignal sends sig to the child.
 fn spawnSignal(pid i64, sig i64) ! {
-	fail say.Fault("spawn: macOS is not supported yet")
+	let r = rt_sys_kill(pid, sig)
+	if r < 0 {
+		fail say.Fault("spawn: kill %d: %s", pid, errnoText(rt_errno()))
+	}
 }
 
+// spawnExecutable reports whether path is an executable file (access with X_OK).
 fn spawnExecutable(path str) bool {
-	return false
+	return rt_sys_access(rt_cstr(path), 1) == 0
 }
 
+// spawnPathVar is the PATH environment variable, empty when unset.
 fn spawnPathVar() str {
-	return ""
+	return quarry.Getenv("PATH")
+}
+
+// stdioOpen returns a Stdio's two ends: the parent's (-1 for anything but Pipe) and the child's.
+// For a pipe the parent writes to a child's stdin and reads a child's stdout or stderr.
+fn stdioOpen(s Stdio, input bool) !(i64, i64) {
+	match s {
+		Inherit => {
+			return -1, -1
+		}
+		Null => {
+			let fd = try openPath("/dev/null", input)
+			return -1, fd
+		}
+		Pipe => {
+			let fds = calloc(2, 4)
+			let r = rt_sys_pipe(fds)
+			if r < 0 {
+				free(fds)
+				fail say.Fault("spawn: pipe: %s", errnoText(rt_errno()))
+			}
+			let a = i64(i32(__ld(fds, 4)))
+			let b = i64(i32(__ld(fds+4, 4)))
+			free(fds)
+			// macOS has no pipe2: mark both ends close-on-exec, so a later child never inherits
+			// them (the child of this spawn gets its end through the file actions).
+			rt_sys_fcntl(a, 2, 1) // F_SETFD, FD_CLOEXEC
+			rt_sys_fcntl(b, 2, 1)
+			if input {
+				return b, a // the parent writes, the child reads
+			}
+			return a, b // the parent reads, the child writes
+		}
+		File(path) => {
+			let fd = try openPath(path, input)
+			return -1, fd
+		}
+	}
+}
+
+// closeAll closes every descriptor that is open (-1 is not).
+fn closeAll(a i64, b i64, c i64) {
+	if a >= 0 {
+		rt_sys_close(a)
+	}
+	if b >= 0 {
+		rt_sys_close(b)
+	}
+	if c >= 0 {
+		rt_sys_close(c)
+	}
+}
+
+// openPath opens path for the descriptor's direction; the runtime adds O_CLOEXEC, so a second
+// child never inherits it.
+fn openPath(path str, input bool) !i64 {
+	mut flags = i64(0)
+	if !input {
+		flags |= 1 | 0x200 | 0x400 // O_WRONLY | O_CREAT | O_TRUNC
+	}
+	let fd = rt_sys_open(rt_cstr(path), flags, 420)
+	if fd < 0 {
+		fail say.Fault("spawn: %s: %s", path, errnoText(rt_errno()))
+	}
+	return fd
+}
+
+// errnoText is rt_sys_strerror with its first letter lowered, as Go spells errno texts.
+fn errnoText(e i64) str {
+	let p = rt_sys_strerror(e)
+	let s = rt_str_from_raw(p, strlen(p))
+	if len(s) > 0 && s[0] >= 'A' && s[0] <= 'Z' {
+		store8(cast(i64, s)+8, i64(s[0])+32)
+	}
+	return s
 }

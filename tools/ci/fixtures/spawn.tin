@@ -58,6 +58,30 @@ fn main() {
 		say.Line("missing", err)
 	}
 
+	// A working directory changes the child's own directory (pwd prints it).
+	mut d = spawn.Start(spawn.Cmd{Argv: []str{"/bin/sh", "-c", "pwd"}, Env: spawn.Env.Inherit, Dir: "/tmp",
+		Stdin: spawn.Stdio.Inherit, Stdout: spawn.Stdio.Pipe, Stderr: spawn.Stdio.Inherit, MaxOutput: 0}) catch err {
+		say.Line("dir start failed", err)
+		return
+	}
+	let dbuf = make([]u8, 256)
+	mut dout = ""
+	for {
+		let n = d.Read(mut dbuf) catch err {
+			say.Line("dir read failed", err)
+			-1
+		}
+		if n <= 0 {
+			break
+		}
+		dout += ore.ToStr(dbuf[0:n])
+	}
+	let dcode = d.Wait() catch err {
+		say.Line("dir wait failed", err)
+		i64(-1)
+	}
+	say.Line("dir", dcode, dout == "/tmp\n" || dout == "/private/tmp\n")
+
 	// A program name is looked up in PATH.
 	let path = spawn.LookPath("sh") catch err {
 		say.Line("lookpath failed", err)
@@ -79,12 +103,9 @@ fn main() {
 	say.Line("deadline result", r)
 
 	// Two hundred runs in a row leak no descriptors and leave no zombies (each Wait reaps).
-	let dirsBefore = quarry.ReadDir("/proc/self/fd") catch _ {
-		[]str{}
-	}
-	let fdsBefore = len(dirsBefore)
+	let fdsBefore = fdCount()
 	for i in 0..200 {
-		mut r2 = spawn.Start(cmd([]str{"/bin/true"})) catch err {
+		mut r2 = spawn.Start(cmd([]str{"/usr/bin/true"})) catch err {
 			say.Line("loop start failed", err)
 			return
 		}
@@ -96,10 +117,7 @@ fn main() {
 			say.Line("loop exit", c2)
 		}
 	}
-	let dirsAfter = quarry.ReadDir("/proc/self/fd") catch _ {
-		[]str{}
-	}
-	say.Line("loop fds equal", fdsBefore == len(dirsAfter))
+	say.Line("loop fds equal", fdsBefore == fdCount())
 
 	// stdin piped to cat: 1 MiB round trips through the pipe into a file.
 	let outPath = "/tmp/tin-spawn-cat.txt"
@@ -200,3 +218,17 @@ fn main() {
 	}
 	say.Line("killed", killed)
 }
+
+// fdCount is the number of open descriptors: /proc/self/fd on Linux, /dev/fd on macOS.
+fn fdCount() i64 {
+	mut names = quarry.ReadDir("/proc/self/fd") catch _ {
+		[]str{}
+	}
+	if len(names) == 0 {
+		names = quarry.ReadDir("/dev/fd") catch _ {
+			[]str{}
+		}
+	}
+	return len(names)
+}
+

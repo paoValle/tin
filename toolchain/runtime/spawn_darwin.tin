@@ -1,0 +1,191 @@
+// Starting child processes (#576), the macOS part: posix_spawn with file actions, which is the
+// supported way to start a process there (and, with POSIX_SPAWN_CLOEXEC_DEFAULT, closes every
+// other descriptor in the child, so the runtime's descriptors never reach it), and a waitpid
+// wait that sleeps through the scheduler, so a task's deadline cuts it.
+//
+// There is no pidfd on macOS and a kqueue descriptor is not pollable, so the wait checks with
+// waitpid(WNOHANG) and sleeps with rt_task_sleep, which parks the task (other tasks run
+// meanwhile) and returns early at the task's deadline. The sleep backs off to 20 ms, so a
+// long-running child costs a handful of wakeups a second.
+
+const spawnArgv = 0   // pointer to argv, NULL-terminated
+const spawnEnvp = 1   // pointer to envp, NULL-terminated, or 0 to inherit
+const spawnPath = 2   // the program, a C string
+const spawnDir = 3    // the working directory, a C string, or 0
+const spawnIn = 4     // the descriptor for 0, or -1 to leave it
+const spawnOut = 5    // the descriptor for 1, or -1 to leave it
+const spawnErr = 6    // the descriptor for 2, or -1 to leave it
+const spawnStatus = 7 // 4 bytes waitpid writes the status into
+const spawnWords = 8
+
+const posixSpawnCloexecDefault = 0x4000
+
+extern fn _NSGetEnviron() i64
+
+// rt_spawn_environ is the parent's environment vector, for Cmd's Inherit.
+fn rt_spawn_environ() i64 {
+	let p = _NSGetEnviron()
+	return (p)[0]
+}
+
+// rt_spawn_rec returns a child record with its status word.
+fn rt_spawn_rec() i64 {
+	let rec = calloc(spawnWords, 8)
+	rec[spawnIn] = -1
+	rec[spawnOut] = -1
+	rec[spawnErr] = -1
+	rec[spawnStatus] = calloc(1, 8)
+	return rec
+}
+
+fn rt_spawn_set(rec i64, slot i64, v i64) {
+	rec[slot] = v
+}
+
+fn rt_spawn_get(rec i64, slot i64) i64 {
+	return rec[slot]
+}
+
+fn rt_spawn_free(rec i64) {
+	free(rec[spawnStatus])
+	free(rec)
+}
+
+// rt_sys_posix_spawn starts the child and returns (pid, errno). The file actions point 0, 1 and
+// 2 at the child's descriptors (and close them in the child afterwards), keep a descriptor the
+// caller inherited open, and change the directory when asked; the attributes ask for
+// POSIX_SPAWN_CLOEXEC_DEFAULT.
+fn rt_sys_posix_spawn(rec i64) (i64, i64) {
+	let faSlot = calloc(1, 8)
+	let attrSlot = calloc(1, 8)
+	mut e = rt_sys_ps_file_actions_init(faSlot)
+	if e == 0 {
+		e = rt_sys_ps_attr_init(attrSlot)
+	}
+	if e == 0 {
+		e = rt_sys_ps_attr_setflags(attrSlot, posixSpawnCloexecDefault)
+	}
+	// macOS's posix_spawn_* take a pointer to the handle, so the slots are passed on.
+	if e == 0 && rec[spawnIn] >= 0 {
+		e = rt_sys_ps_fa_adddup2(faSlot, rec[spawnIn], 0)
+		if e == 0 {
+			e = rt_sys_ps_fa_addclose(faSlot, rec[spawnIn])
+		}
+	}
+	if e == 0 && rec[spawnOut] >= 0 {
+		e = rt_sys_ps_fa_adddup2(faSlot, rec[spawnOut], 1)
+		if e == 0 {
+			e = rt_sys_ps_fa_addclose(faSlot, rec[spawnOut])
+		}
+	}
+	if e == 0 && rec[spawnErr] >= 0 {
+		e = rt_sys_ps_fa_adddup2(faSlot, rec[spawnErr], 2)
+		if e == 0 {
+			e = rt_sys_ps_fa_addclose(faSlot, rec[spawnErr])
+		}
+	}
+	// A descriptor the caller did not name (Inherit) still has to be named: with
+	// POSIX_SPAWN_CLOEXEC_DEFAULT every descriptor not in the file actions is closed, the
+	// standard ones included, and a same-descriptor dup2 keeps it open.
+	if e == 0 && rec[spawnIn] < 0 {
+		e = rt_sys_ps_fa_adddup2(faSlot, 0, 0)
+	}
+	if e == 0 && rec[spawnOut] < 0 {
+		e = rt_sys_ps_fa_adddup2(faSlot, 1, 1)
+	}
+	if e == 0 && rec[spawnErr] < 0 {
+		e = rt_sys_ps_fa_adddup2(faSlot, 2, 2)
+	}
+	if e == 0 && rec[spawnDir] != 0 {
+		e = rt_sys_ps_fa_addchdir(faSlot, rec[spawnDir])
+	}
+	mut envp = rec[spawnEnvp]
+	if envp == 0 {
+		envp = rt_spawn_environ()
+	}
+	let pidp = calloc(1, 8)
+	mut r = e
+	if e == 0 {
+		r = rt_sys_posix_spawn_call(pidp, rec[spawnPath], faSlot, attrSlot, rec[spawnArgv], envp)
+	}
+	let pid = i64(i32(pidp[0]))
+	free(pidp)
+	if attrSlot[0] != 0 {
+		rt_sys_ps_attr_destroy(attrSlot)
+	}
+	if faSlot[0] != 0 {
+		rt_sys_ps_file_actions_destroy(faSlot)
+	}
+	free(attrSlot)
+	free(faSlot)
+	if r != 0 {
+		return -1, r
+	}
+	return pid, 0
+}
+
+// rt_spawn_pidfd has no macOS counterpart (no pidfd, and a kqueue is not pollable): the wait
+// below polls, so it returns -1 and the Process carries it as "no fd to close".
+fn rt_spawn_pidfd(pid i64) i64 {
+	return -1
+}
+
+// rt_spawn_reap waits for the child's status and reaps it. It returns the exit code, or -1 when
+// a signal killed it (its number in killed).
+fn rt_spawn_reap(pid i64, pidfd i64, killFirst bool) (i64, i64) {
+	if killFirst {
+		rt_sys_kill(pid, 9)
+	}
+	let status = calloc(1, 8)
+	let r = rt_sys_waitpid(pid, status, 0)
+	if r < 0 {
+		free(status)
+		return -1, 0
+	}
+	let st = i64(i32(status[0]))
+	free(status)
+	// waitpid's status: the low 7 bits are the signal or 0, the next byte the exit code.
+	let low = st & 0x7f
+	if low == 0 {
+		return (st >> 8) & 0xff, 0
+	}
+	return -1, low
+}
+
+// rt_spawn_wait waits for the child through the scheduler, reaps it and returns (exit code,
+// signal, waited). waited is false when the timeout or the task's deadline came first; the child
+// is then killed and reaped anyway.
+fn rt_spawn_wait(pid i64, pidfd i64, timeout i64) (i64, i64, bool) {
+	mut ns = i64(2000000)
+	for {
+		let status = calloc(1, 8)
+		let r = rt_sys_waitpid(pid, status, 1) // WNOHANG
+		let st = i64(i32(status[0]))
+		free(status)
+		if r > 0 {
+			let low = st & 0x7f
+			if low == 0 {
+				return (st >> 8) & 0xff, 0, true
+			}
+			return -1, low, true
+		}
+		if r < 0 {
+			return -1, 0, false
+		}
+		if timeout > 0 && ns > timeout {
+			ns = timeout
+		}
+		// rt_task_sleep parks the task (other tasks run meanwhile) and returns true at the
+		// task's deadline.
+		if rt_task_sleep(ns) {
+			let (code, sig) = rt_spawn_reap(pid, 0, true)
+			return code, sig, false
+		}
+		if ns < 20000000 {
+			ns *= 2
+			if ns > 20000000 {
+				ns = 20000000
+			}
+		}
+	}
+}
