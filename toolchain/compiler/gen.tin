@@ -641,6 +641,42 @@ fn pow2_log(c i64) i64 {
 	return k
 }
 
+// div_magic computes ceil(2^(64+shift)/d), retaining the low word. The extra leading
+// quotient bit is implicit in the unsigned formula. Long division keeps rem below d, so
+// doubling it uses subtraction before addition and cannot overflow for d <= MaxInt64.
+@wrap fn div_magic(d i64, shift i64) (i64, i64) {
+	mut rem = 0
+	mut m = 0
+	mut bit = 0
+	mut pos = 0
+	for pos <= 64 + shift {
+		bit = 0
+		if pos == 0 {
+			bit = 1
+		}
+		if rem >= d - rem {
+			rem = rem - (d - rem) + bit
+			if rem >= d {
+				rem = rem - d
+			}
+			m = (m << 1) | 1
+		} else {
+			rem = rem + rem + bit
+			if rem >= d {
+				rem = rem - d
+				m = (m << 1) | 1
+			} else {
+				m = m << 1
+			}
+		}
+		pos = pos + 1
+	}
+	if rem != 0 {
+		m = m + 1
+	}
+	return m, shift
+}
+
 // k when c == 2^k - 1 (k ones), else 0.
 fn low_mask_bits(c i64) i64 {
 	if c <= 0 || (c & (c + 1)) != 0 {
@@ -1743,12 +1779,87 @@ fn gen_uconst(op str, dst i64, l i64, c i64) i64 {
 		emit3(I_LSRI, dst, l, c & 63)
 		return 1
 	}
-	if op == "/" || op == "%" {
+	// The signed constant slot also carries unsigned divisors with bit 63 set. Keep those
+	// on the existing unsigned hardware path until the magic generator handles 64-bit d.
+	if (op == "/" || op == "%") && c <= 0 {
 		load_imm(X17, c)
 		emit_arith(op, dst, l, X17)
 		return 1
 	}
 	return 0
+}
+
+fn div_const_shift(c i64) i64 {
+	mut k = 0
+	for k < 62 && (1 << (k + 1)) <= c {
+		k = k + 1
+	}
+	return k
+}
+
+fn signed_div_magic_ok(c i64) i64 {
+	if c == 0 || c == 1 || c == -1 || c == -9223372036854775807 - 1 {
+		return 0
+	}
+	mut d = c
+	if d < 0 {
+		d = -d
+	}
+	return i64(pow2_log(d) < 0)
+}
+
+fn gen_signed_magic(dst i64, l i64, c i64, op str) {
+	mut d = c
+	if d < 0 {
+		d = -d
+	}
+	let k = div_const_shift(d)
+	let (magic, shift) = div_magic(d, k)
+	load_imm(X17, magic)
+	emit3(I_SMULH, X17, l, X17)
+	if magic < 0 {
+		emit4(I_ADD, X17, X17, l, 0)
+	}
+	if shift != 0 {
+		emit3(I_ASRI, X17, X17, shift)
+	}
+	// Arithmetic right shift rounds down; remove one for negative inputs to round toward zero.
+	emit3(I_ASRI, X16, l, 63)
+	emit4(I_SUB, X17, X17, X16, 0)
+	if op == "/" {
+		if c < 0 {
+			emit2(I_NEG, dst, X17)
+		} else {
+			mov(dst, X17)
+		}
+	} else {
+		if c < 0 {
+			emit2(I_NEG, X17, X17)
+		}
+		load_imm(X16, c)
+		emit4(I_MSUB, dst, X17, X16, l)
+	}
+}
+
+fn gen_unsigned_magic(dst i64, l i64, c i64, op str) {
+	let k = div_const_shift(c) + 1
+	let (magic, shift) = div_magic(c, k)
+	load_imm(X17, magic)
+	emit3(I_UMULH, X17, l, X17)
+	// floor((x + high(x*m))/2) without overflowing the word.
+	emit3(I_AND, X16, l, X17)
+	emit3(I_EOR, X17, l, X17)
+	emit3(I_LSRI, X17, X17, 1)
+	emit4(I_ADD, X16, X16, X17, 0)
+	if shift > 1 {
+		emit3(I_LSRI, X16, X16, shift - 1)
+	}
+	if op == "%" {
+		load_imm(X17, c)
+		emit4(I_MSUB, dst, X16, X17, l)
+	} else {
+		mov(dst, X16)
+	}
 }
 
 fn gen_fbinary(e Binary, dst i64, d i64) {
@@ -2306,7 +2417,11 @@ fn round_bias(l i64, k i64) {
 }
 
 fn gen_binary_const(op str, dst i64, l i64, c i64) {
-	if op == "+" {
+	if (op == "/" || op == "%") && arith_unsigned != 0 && c > 1 && pow2_log(c) < 0 {
+		gen_unsigned_magic(dst, l, c, op)
+	} else if (op == "/" || op == "%") && arith_unsigned == 0 && signed_div_magic_ok(c) != 0 {
+		gen_signed_magic(dst, l, c, op)
+	} else if op == "+" {
 		add_imm(dst, l, c)
 	} else if op == "-" && c != -9223372036854775807 - 1 {
 		add_imm(dst, l, -c)

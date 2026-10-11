@@ -1,15 +1,20 @@
-# x64 constant division avoids IDIV; arm64 keeps its existing SDiv lowering.
+# Constant division by 10 and 7 uses high multiplication on both targets.
 
 [arm64]
-CHECK: _quotient:
-CHECK: sdiv
-CHECK: _remainder:
-CHECK: sdiv
+CHECK: _quotient7:
+CHECK-NOT: sdiv
+CHECK: smulh
+CHECK-NOT: sdiv
+CHECK: _unsignedQuotient7:
+CHECK-NOT: udiv
+CHECK: umulh
 
 [amd64]
 CHECK: # L1: quotient
 CHECK: # L2: remainder
-CHECK: # L3: main.main
+CHECK: # L3: quotient7
+CHECK: # L4: unsignedQuotient7
+CHECK: # L5: main.main
 CHECK: \nL1:\n
 CHECK-NOT: idiv
 CHECK: imul r
@@ -19,3 +24,11 @@ CHECK-NOT: idiv
 CHECK: imul r
 CHECK-NOT: idiv
 CHECK: \nL3:\n
+CHECK-NOT: idiv
+CHECK: imul r
+CHECK-NOT: idiv
+CHECK: \nL4:\n
+CHECK-NOT: div r
+CHECK: mul r
+CHECK-NOT: div r
+CHECK: \nL5:\n

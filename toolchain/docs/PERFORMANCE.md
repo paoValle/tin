@@ -308,9 +308,14 @@ From the assembly analysis of the benchmarks:
   - bounds checks that require range or alias facts beyond a stable local length alias,
     such as masked or modular indexes.
 - **string building:** single-byte string appends now have a direct byte path (see
-  [Single-byte string appends](#single-byte-string-appends)); signed `/10` and `%10` use
-  multiply-high on x64, while the arm64 backend and other divisors still use hardware
-  division.
+  [Single-byte string appends](#single-byte-string-appends)); signed and unsigned division
+  and remainder by non-power-of-two constants use multiply-high on x64 and arm64. Signed
+  divisors are covered through magnitude `MaxInt64`; unsigned divisors are covered through
+  `MaxInt64`. Positive powers of two keep their shift/mask paths. Signed division by `-1`
+  keeps its overflow check and zero keeps its panic path. Signed `MinInt64` and unsigned
+  divisors with bit 63 set stay on hardware division because their magnitudes do not fit the
+  code generator's positive signed constant representation; negative signed powers of two
+  also retain the existing hardware path.
 - **Constant materialization:** 64-bit constants are rebuilt with movz/movk inside
   loops.
 

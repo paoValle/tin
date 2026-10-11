@@ -662,35 +662,87 @@ fn x_shift_imm(op i64, dst i64, l i64, k i64) {
 	}
 }
 
-// x_signed_div10 mirrors the exact signed multiply-high sequence used by Go.
-fn x_signed_div10(op str, dst i64, l i64, c i64) {
-	x_mov(RAX, l)
-	x_load_imm(XSCR, -3689348814741910323)
+fn x_signed_magic(op str, dst i64, l i64, c i64) {
+	mut d = c
+	if d < 0 {
+		d = -d
+	}
+	let k = div_const_shift(d)
+	let (magic, shift) = div_magic(d, k)
+	// IMULH consumes RAX and overwrites it; keep the original operand across the
+	// multiply because it may itself live in RAX (the last-resort temp register).
+	x_mov(XSCR2, l)
+	x_mov(RAX, XSCR2)
+	x_load_imm(XSCR, magic)
 	emit1(X_IMULH, XSCR)
-	x_binop(X_ADD, RDX, RDX, l, 1)
-	emit2(X_SARI, RDX, 3)
-	x_mov(XSCR, l)
+	if magic < 0 {
+		x_binop(X_ADD, RDX, RDX, XSCR2, 1)
+	}
+	if shift != 0 {
+		emit2(X_SARI, RDX, shift)
+	}
+	x_mov(XSCR, XSCR2)
 	emit2(X_SARI, XSCR, 63)
 	emit2(X_SUB, RDX, XSCR)
 	if op == "/" {
-		x_mov(dst, RDX)
 		if c < 0 {
+			x_mov(dst, RDX)
 			emit1(X_NEG, dst)
+		} else {
+			x_mov(dst, RDX)
 		}
 	} else {
-		mut q10 = XSCR2
-		if dst == q10 {
-			q10 = RAX
+		if c < 0 {
+			emit1(X_NEG, RDX)
 		}
-		emit3(X_IMUL_RRI, q10, RDX, 10)
-		x_mov(dst, l)
-		emit2(X_SUB, dst, q10)
+		if x64_fits32(c) != 0 {
+			emit3(X_IMUL_RRI, XSCR, RDX, c)
+			x_mov(dst, XSCR2)
+		} else {
+			x_mov(RAX, XSCR2)
+			x_load_imm(XSCR2, c)
+			x_binop(X_IMUL_RR, XSCR, RDX, XSCR2, 1)
+			x_mov(dst, RAX)
+		}
+		emit2(X_SUB, dst, XSCR)
+	}
+}
+
+fn x_unsigned_magic(op str, dst i64, l i64, c i64) {
+	let k = div_const_shift(c) + 1
+	let (magic, shift) = div_magic(c, k)
+	x_mov(XSCR2, l)
+	x_mov(RAX, XSCR2)
+	x_load_imm(XSCR, magic)
+	emit1(X_MULU, XSCR)
+	x_binop(X_AND, XSCR, XSCR2, RDX, 1)
+	x_binop(X_XOR, RDX, XSCR2, RDX, 1)
+	emit2(X_SHRI, RDX, 1)
+	x_binop(X_ADD, RDX, XSCR, RDX, 1)
+	if shift > 1 {
+		emit2(X_SHRI, RDX, shift - 1)
+	}
+	if op == "%" {
+		if x64_fits32(c) != 0 {
+			emit3(X_IMUL_RRI, XSCR, RDX, c)
+			x_mov(dst, XSCR2)
+		} else {
+			x_mov(RAX, XSCR2)
+			x_load_imm(XSCR2, c)
+			x_binop(X_IMUL_RR, XSCR, RDX, XSCR2, 1)
+			x_mov(dst, RAX)
+		}
+		emit2(X_SUB, dst, XSCR)
+	} else {
+		x_mov(dst, RDX)
 	}
 }
 
 fn x_binary_const(op str, dst i64, l i64, c i64) {
-	if arith_unsigned == 0 && (op == "/" || op == "%") && (c == 10 || c == -10) {
-		x_signed_div10(op, dst, l, c)
+	if arith_unsigned != 0 && (op == "/" || op == "%") && c > 1 && pow2_log(c) < 0 {
+		x_unsigned_magic(op, dst, l, c)
+	} else if arith_unsigned == 0 && (op == "/" || op == "%") && signed_div_magic_ok(c) != 0 {
+		x_signed_magic(op, dst, l, c)
 	} else if op == "+" {
 		x_add_imm(dst, l, c)
 	} else if op == "-" && c != -9223372036854775807 - 1 {
@@ -796,7 +848,9 @@ fn x_uconst(op str, dst i64, l i64, c i64) i64 {
 		x_shift_imm(X_SHRI, dst, l, c & 63)
 		return 1
 	}
-	if op == "/" || op == "%" {
+	// The signed constant slot also carries unsigned divisors with bit 63 set. Keep those
+	// on the existing unsigned hardware path until the magic generator handles 64-bit d.
+	if (op == "/" || op == "%") && c <= 0 {
 		x_load_imm(XSCR2, c)
 		x_arith(op, dst, l, XSCR2)
 		return 1

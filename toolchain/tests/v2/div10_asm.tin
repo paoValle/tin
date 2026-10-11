@@ -8,6 +8,14 @@ fn remainder(n i64) i64 {
 	return n % 10
 }
 
+fn quotient7(n i64) i64 {
+	return n / 7
+}
+
+fn unsignedQuotient7(n u64) u64 {
+	return n / 7
+}
+
 fn main() {
-	_ = quotient(11) + remainder(11)
+	_ = quotient(11) + remainder(11) + quotient7(11) + i64(unsignedQuotient7(11))
 }
