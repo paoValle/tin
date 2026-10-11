@@ -2888,8 +2888,28 @@ fn value_zero(pos i64, t Ty) i64 {
 		if ek == K_MAP || ek == K_FUNC || ek == K_DYN || (ek == K_STRUCT && is_value_struct(et) == 0) {
 			err_code_type(pos, "E203 NO_ZERO_VALUE", "an inline array of ", cast(i64, et), " must be set (its elements cannot be nil)")
 		}
+		let fill = i64(ek == K_STRING || ek == K_SLICE || (is_value_struct(et) != 0 && value_has_ref(et) != 0 && opt_value(et) == 0))
+		if fill != 0 && t.key > 16 {
+			// A long array is filled by a loop: unrolled, [1000000]str was a million stores, a
+			// binary of 60 MB and a compiler that ran for seconds.
+			let js = declare_local(pos, "$", ty_int)
+			stmts = append(stmts, let_stmt(pos, cast(Sym, js), mk_int(pos, 0, ty_int)))
+			let w = cast(WhileStmt, node_new(ST_WHILE, pos))
+			w.cond = mk_bin(pos, "<", sym_ref_node(pos, cast(Sym, js)), mk_int(pos, t.key, ty_int), ty_bool)
+			w.post = assign_stmt(pos, sym_ref_node(pos, cast(Sym, js)), mk_bin(pos, "+", sym_ref_node(pos, cast(Sym, js)), mk_int(pos, 1, ty_int), ty_int))
+			let wb = cast(Block, empty_block(pos))
+			w.body = cast(i64, wb)
+			let el = mk_mem(pos, sym_ref_node(pos, cast(Sym, obj.sym)), sym_ref_node(pos, cast(Sym, js)), type_width(et), 0, cast(i64, et))
+			if ek == K_STRING || ek == K_SLICE {
+				wb.stmts = append(wb.stmts, assign_stmt(pos, el, zero_value(pos, cast(i64, et))))
+			} else {
+				wb.stmts = append(wb.stmts, assign_stmt(pos, el, value_zero(pos, et)))
+			}
+			stmts = append(stmts, cast(i64, w))
+			return mk_seq(pos, cast(i64, stmts), sym_ref_node(pos, cast(Sym, obj.sym)), 0)
+		}
 		mut j = 0
-		for j < t.key {
+		for fill != 0 && j < t.key {
 			let el = mk_mem(pos, sym_ref_node(pos, cast(Sym, obj.sym)), 0, 0, j * type_width(et), cast(i64, et))
 			if ek == K_STRING || ek == K_SLICE {
 				stmts = append(stmts, assign_stmt(pos, el, zero_value(pos, cast(i64, et))))

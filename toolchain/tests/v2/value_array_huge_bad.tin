@@ -1,0 +1,13 @@
+package main
+
+// An inline array of maps has no zero value, which the compiler reports once: it used to walk
+// every element first, so a length near 1<<63 kept it busy for most of a minute.
+
+type T value struct {
+	part [9223372036854775807]map[str]i64
+	n    i64
+}
+
+fn main() {
+	let t = T{n: 1}
+}
