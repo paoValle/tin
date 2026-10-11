@@ -140,6 +140,33 @@ writes the result once. A function with several results still returns each value
 pool copy. The two-register path for values up to 16 bytes is left for later: with no
 allocation on the result path, it would save one copy of at most 16 bytes per call.
 
+### 1.3.1 Small read-only arguments (#1179, interface proposal)
+
+The existing by-address convention for value-struct arguments needs a uniform extension for
+read-only values of 8 or 16 bytes. A direct-call-only optimization is not sufficient: a function
+may also be called through a function value or closure, and both sides must agree on the same
+argument layout.
+
+Proposed convention, subject to review before implementation:
+
+- A read-only value-struct parameter of 8 or 16 bytes whose callee does not take that parameter's
+  address is represented as one or two integer argument words. The caller copies the bytes into
+  those words; the callee stores them into its own frame area in the prologue. The parameter then
+  keeps the existing value semantics even if another argument aliases and changes the caller's
+  storage during the call.
+- A `mut` parameter remains one address word, so writes continue to reach the caller's storage.
+  A read-only parameter whose address is taken, and every value struct wider than 16 bytes, retain
+  the existing by-address convention.
+- The flattening decision must be part of the callable signature (including function values and
+  closures), or an equivalent compiler invariant must prove that every caller of a flattened
+  callee uses the same layout. It cannot be selected independently at each direct call site.
+- When the integer argument registers cannot hold all words of a flattened argument, the ABI must
+  define whether the entire argument goes on the stack or whether the existing by-address form is
+  retained. The caller and callee must use one deterministic rule on arm64 and x86-64.
+
+This issue should not implement the argument path until reviewers agree on how the flattened
+parameter property is carried through function types and how register exhaustion is classified.
+
 **As built in phase B, copies (#669).** Two copies the A1 representation made are gone:
 - **`for p in ps`** over a slice of value structs reads each element in place when the loop body
   cannot change one: it calls no function and assigns only to variables that are not value struct
