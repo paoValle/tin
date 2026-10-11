@@ -1,0 +1,58 @@
+package main
+
+import "quarry"
+import "say"
+import "twine"
+import "./ci"
+import "./strict"
+
+// Pin the generated Linux syscall leaf ABI against the assembled source disassembly.
+// Usage: syscall_abi_asm_check [arm64|amd64]
+fn main() {
+	let root = ci.Root()
+	let args = quarry.Args()
+	let machine = ci.Exec([]str{"uname", "-m"}, root, 5)
+	ci.Must(machine, "uname -m")
+	mut arch = twine.TrimSpace(machine.Stdout)
+	if len(args) > 1 {
+		arch = args[1]
+	} else if arch == "aarch64" {
+		arch = "arm64"
+	} else if arch == "x86_64" {
+		arch = "amd64"
+	}
+	ci.Check(arch == "arm64" || arch == "amd64", "syscall ABI assembly check: unsupported architecture " + arch)
+	let generated = ci.Exec([]str{"sh", "tools/ci/tin.sh", "tools/gen/syscall_fast.tin", "--check"}, root, 180)
+	ci.Must(generated, "syscall_fast.tin generated check")
+	let work = ci.TempDir(ci.Join(quarry.Getenv("TMPDIR"), "opencode"), "syscall-abi-")
+	let source = "tools/gen/arch/syscall-fast-" + arch + ".S"
+	mut target = "x86_64-linux-gnu"
+	mut defines = []str{"-DNR_READ=0", "-DNR_WRITE=1", "-DNR_CLOSE=3", "-DNR_FCNTL=72", "-DNR_ACCEPT=43", "-DNR_RECVFROM=45", "-DNR_EPOLL_CTL=233", "-DNR_EPOLL_PWAIT=281", "-DNR_TIMERFD_SETTIME=286", "-DNR_CLOCK_GETTIME=228", "-DNR_CLONE=56", "-DNR_EXIT=60"}
+	if arch == "arm64" {
+		target = "aarch64-linux-gnu"
+		defines = []str{"-DNR_READ=63", "-DNR_WRITE=64", "-DNR_CLOSE=57", "-DNR_FCNTL=25", "-DNR_ACCEPT=202", "-DNR_RECVFROM=207", "-DNR_EPOLL_CTL=21", "-DNR_EPOLL_PWAIT=22", "-DNR_TIMERFD_SETTIME=86", "-DNR_CLOCK_GETTIME=113", "-DNR_CLONE=220", "-DNR_EXIT=93"}
+	}
+	mut asmArgs = []str{"clang", "--target=" + target, "-c", "-x", "assembler-with-cpp"}
+	for define in defines {
+		asmArgs = append(asmArgs, define)
+	}
+	asmArgs = append(asmArgs, ci.Join(root, source), "-o", ci.Join(work, "syscall.o"))
+	let assemble = ci.Exec(asmArgs, root, 30)
+	ci.Must(assemble, "assemble " + source)
+	let dump = ci.Exec([]str{"objdump", "-d", ci.Join(work, "syscall.o")}, root, 10)
+	ci.Must(dump, "objdump syscall leaf object")
+	// The check pins GNU objdump's spelling: CI only runs it on Linux (runner.os == 'Linux'), and a
+	// Mac's LLVM objdump spells the same operands differently, so say so rather than fail confusingly.
+	if twine.Contains(dump.Stdout, "file format") && twine.Contains(dump.Stderr, "LLVM") {
+		ci.Fail("objdump is not GNU objdump: this check pins the GNU dialect, run it on Linux")
+		return
+	}
+	let directives = strict.ParseChecks(ci.Join(root, "tools/ci/syscall_abi_asm.check"), arch) catch err {
+		ci.Fail(say.Str(err))
+		return
+	}
+	let (ok, why) = strict.CheckAsm(dump.Stdout, directives)
+	ci.Check(ok, "syscall ABI assembly: " + why)
+	ci.Remove(work)
+	ci.Pass(arch + " syscall numbers, argument registers, return and error path")
+}

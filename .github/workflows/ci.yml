@@ -213,6 +213,9 @@ jobs:
       - name: Raw Linux syscall ABI, signals, errors and directory iteration
         if: runner.os == 'Linux'
         run: sh tools/ci/tin.sh syscall_check
+      - name: Raw syscall leaf assembly ABI on the native Linux CPU
+        if: runner.os == 'Linux'
+        run: sh tools/ci/tin.sh syscall_abi_asm_check
       - name: Linux clone threads (returning cores, stack reaping, masks, child faults)
         if: runner.os == 'Linux'
         run: sh tools/ci/tin.sh thread_check
