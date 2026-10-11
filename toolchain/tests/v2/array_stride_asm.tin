@@ -1,0 +1,16 @@
+package main
+
+fn sum(xs []i64) i64 {
+	mut total = 0
+	for i in 0..len(xs) {
+		total += xs[i]
+	}
+	return total
+}
+
+fn main() {
+	let xs = []i64{1, 2, 3, 4}
+	if sum(xs) != 10 {
+		panic("array stride")
+	}
+}

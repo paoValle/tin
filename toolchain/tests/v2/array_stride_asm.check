@@ -1,0 +1,13 @@
+# A proven unit-step slice loop advances a running address by one element.
+
+[arm64]
+CHECK: _sum:
+CHECK: add x10, x10, #8
+CHECK: _main.main:
+
+[amd64]
+CHECK: # L1: sum
+CHECK: # L2: main.main
+CHECK: \nL1:\n
+CHECK: add r\w+,0x8
+CHECK: \nL2:\n

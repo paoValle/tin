@@ -867,6 +867,10 @@ shared mut lc_exprs []i64
 shared mut lc_syms []Sym
 shared mut lc_pre []i64
 shared mut lc_calls i64 // the loop makes calls, so headers may change under it
+shared mut lc_iv i64 // counted loop's induction local when its post adds one
+shared mut lc_addr_sym i64 // running address for a proven in-range element access
+shared mut lc_addr_seq i64
+shared mut lc_addr_size i64
 
 fn licm_fn(f Fn) {
 	analyze_fn(f)
@@ -1138,6 +1142,10 @@ fn licm_loop(w WhileStmt) i64 {
 	lc_syms = cast([]Sym, []i64{})
 	lc_pre = []i64{}
 	lc_calls = i64(loop_stmts_have_call(cast(Block, w.body).stmts) != 0 || contains_call(w.cond) != 0 || stmt_has_call(w.post) != 0)
+	lc_iv = loop_unit_iv(w.post)
+	lc_addr_sym = 0
+	lc_addr_seq = 0
+	lc_addr_size = 0
 	collect_assigned(cast(Block, w.body).stmts)
 	if w.post != 0 {
 		mut one = []i64{}
@@ -1146,12 +1154,36 @@ fn licm_loop(w WhileStmt) i64 {
 	}
 	hoist_expr(w.cond)
 	hoist_stmts(cast(Block, w.body).stmts)
+	if lc_addr_sym != 0 {
+		let pos = cast(Node, w).pos
+		let step = assign_stmt(pos, sym_ref_node(pos, cast(Sym, lc_addr_sym)), binary_node(pos, "+", sym_ref_node(pos, cast(Sym, lc_addr_sym)), int_node(pos, lc_addr_size)))
+		if w.post == 0 {
+			w.post = step
+		} else {
+			let both = cast(Block, node_new(ST_BLOCK, pos))
+			both.stmts = []i64{w.post, step}
+			both.flat = 1
+			w.post = cast(i64, both)
+		}
+	}
 	if w.post != 0 {
 		mut two = []i64{}
 		two = append(two, w.post)
 		hoist_stmts(cast([]i64, two))
 	}
 	return cast(i64, lc_pre)
+}
+
+// loop_unit_iv recognizes the counted-loop post `i = i + 1`.
+fn loop_unit_iv(post i64) i64 {
+	if post == 0 || cast(Node, post).kind != ST_ASSIGN {
+		return 0
+	}
+	let a = cast(AssignStmt, post)
+	if cast(Node, a.target).kind != EX_IDENT || cast(Sym, cast(IdentExpr, a.target).ref).name == "$" || cast(Node, a.value).kind != EX_BINARY || cast(Binary, a.value).op != "+" || cast(Node, cast(Binary, a.value).l).kind != EX_IDENT || cast(IdentExpr, cast(Binary, a.value).l).ref != cast(IdentExpr, a.target).ref || is_const(cast(Binary, a.value).r) == 0 || const_val(cast(Binary, a.value).r) != 1 {
+		return 0
+	}
+	return cast(IdentExpr, a.target).ref
 }
 
 fn collect_assigned(stmts []i64) {
@@ -1304,6 +1336,8 @@ fn hoist_stmts(stmts []i64) {
 				hoist_stmts(cast([]i64, one))
 			}
 		} else if k == ST_WHILE {
+			let saved_iv = lc_iv
+			lc_iv = 0
 			hoist_expr(cast(WhileStmt, s).cond)
 			hoist_stmts(cast(Block, cast(WhileStmt, s).body).stmts)
 			if cast(WhileStmt, s).post != 0 {
@@ -1311,6 +1345,7 @@ fn hoist_stmts(stmts []i64) {
 				one = append(one, cast(WhileStmt, s).post)
 				hoist_stmts(cast([]i64, one))
 			}
+			lc_iv = saved_iv
 		} else if k == ST_CALLMULTI {
 			hoist_expr(cast(CallMultiStmt, s).call)
 		}
@@ -1336,6 +1371,9 @@ fn hoist_expr(e i64) {
 		return
 	}
 	if k == EX_ELEM {
+		if elem_stride_reduce(e) != 0 {
+			return
+		}
 		elem_specialize(e)
 		k = cast(Node, e).kind
 	}
@@ -1431,6 +1469,46 @@ fn replace_with_temp(e i64) {
 	cast(Node, e).w5 = 0
 	cast(Node, e).type_ = t
 	cast(Node, e).w7 = 0
+}
+
+// elem_stride_reduce turns a proven-safe element read in a unit counted loop into a
+// load through a running address. The loop post advances it, so continue follows the same
+// path as the induction variable. Unsafe or mutable/call-containing loops retain normal access.
+fn elem_stride_reduce(e i64) i64 {
+	let el = cast(ElemExpr, e)
+	if lc_iv == 0 || lc_calls != 0 || el.str != 0 || el.safe == 0 || invariant(el.seq) == 0 || is_reg_local(el.seq) == 0 || cast(Node, el.idx).kind != EX_IDENT || cast(IdentExpr, el.idx).ref != lc_iv || el.size <= 0 || el.size > 8 {
+		return 0
+	}
+	if lc_addr_sym != 0 && (lc_addr_size != el.size || expr_equal(lc_addr_seq, el.seq) == 0) {
+		return 0
+	}
+	let pos = cast(Node, e).pos
+	if lc_addr_sym == 0 {
+		let data = mk_hdr(pos, node_copy(el.seq), 2)
+		let mul = binary_node(pos, "*", node_copy(el.idx), int_node(pos, el.size))
+		cast(Node, mul).type_ = ty_int
+		cast(Binary, mul).ovf = OVF_NONE
+		let init = binary_node(pos, "+", data, mul)
+		cast(Node, init).type_ = ty_int
+		cast(Binary, init).ovf = OVF_NONE
+		let s = sym_new(SYM_LOCAL, "stride", pos)
+		s.type_ = ty_int
+		s.slot = cast(Fn, lc_fn).slots
+		cast(Fn, lc_fn).slots = cast(Fn, lc_fn).slots + 1
+		cast(Fn, lc_fn).locals = append(cast(Fn, lc_fn).locals, cast(Sym, s))
+		let l = cast(LetStmt, node_new(ST_LET, pos))
+		l.name = s.name
+		l.init = cast(i64, init)
+		l.sym = cast(i64, s)
+		lc_pre = append(lc_pre, cast(i64, l))
+		lc_addr_sym = cast(i64, s)
+		lc_assigned = append(lc_assigned, cast(i64, s))
+		lc_addr_seq = node_copy(el.seq)
+		lc_addr_size = el.size
+	}
+	let m = mk_mem(pos, sym_ref_node(pos, cast(Sym, lc_addr_sym)), int_node(pos, 0), 1, 0, cast(Node, e).type_)
+	replace_node(e, m)
+	return 1
 }
 
 // elem_specialize turns s[i] in a loop that cannot change s into a plain load from the
