@@ -1599,5 +1599,14 @@
       "stdout": "1 2 3 4 5 6 7 8 0\n1 2 3 4 5 6 7 8 9\n1 2 3 4 5 6 7 8 9 0\n1 2 3 4 154 156 132 182 0\n1 2 3 4 20 24 28 32 0\n",
       "stderr": ""
     }
+  },
+  {
+    "source": "const-composite-literal-bad.tin",
+    "issue": 1239,
+    "expected": {
+      "phase": "compile",
+      "exit": 1,
+      "stderr_contains": "E220 NOT_CONSTANT"
+    }
   }
 ]

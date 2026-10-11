@@ -1,0 +1,27 @@
+package main
+
+// A constant's value is computed by the compiler, so it uses only literals, other constants and
+// operators. A composite literal takes a pool word, so it is never a constant: the checker used to
+// build one while checking the const's initializer with no function in progress, and the temporary
+// it needed had no scope to live in, which crashed the compiler.
+
+const words = []str{"a", "b"}
+
+const lengths = [3]i64{1, 2, 3}
+
+const empty = []i64{}
+
+fn total(xs []i64) i64 {
+	mut n = 0
+	for x in xs {
+		n += x
+	}
+	return n
+}
+
+const viaCall = total([]i64{1, 2})
+
+const viaLen = len([]i64{1, 2})
+
+fn main() {
+}

@@ -4161,7 +4161,11 @@ fn has_break(stmts []i64) i64 {
 fn declare_scoped(s Sym) {
 	let pos = s.pos
 	let name = s.name
-	let start = sc_marks[len(sc_marks) - 1]
+	// A constant's initializer is checked with no function, so it pushes no scope mark.
+	mut start = 0
+	if len(sc_marks) > 0 {
+		start = sc_marks[len(sc_marks) - 1]
+	}
 	if i64(byte_at(name, 0)) != '$' {
 		mut i = len(sc_syms) - 1
 		for i >= start {
@@ -4187,6 +4191,11 @@ fn declare_local(pos i64, name str, t i64) i64 {
 	s.type_ = t
 	s.scope_at = ck_scope_depth
 	declare_scoped(s)
+	if cast(i64, ck_fn) == 0 {
+		// A constant's initializer is checked with no function, so its temporaries have no frame to
+		// live in; the const is reported as not constant and checking stops before code generation.
+		return cast(i64, s)
+	}
 	s.slot = cast(Fn, ck_fn).slots
 	cast(Fn, ck_fn).slots = cast(Fn, ck_fn).slots + 1
 	cast(Fn, ck_fn).locals = append(cast(Fn, ck_fn).locals, cast(Sym, s))
