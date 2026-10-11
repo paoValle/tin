@@ -1,6 +1,7 @@
 // Package lever parses command-line flags (like Go's flag): register handles, Parse the arguments, then read .Val().
 package lever
 
+import "mint"
 import "say"
 
 const kindStr = 0
@@ -431,7 +432,8 @@ fn parseFloat(s str) (f64, i64) {
 		return 1.0 / 0.0, 0
 	}
 	if i == 0 && n == 3 && prefixFold(s, 0, "nan") {
-		return 0.0 / 0.0, 0
+		// Go's math.NaN bits: 0.0 / 0.0 is the negative quiet NaN on x86-64.
+		return mint.F64frombits(0x7ff8000000000001), 0
 	}
 	mut hex = false
 	if i+2 < n && s[i] == '0' && lower(s[i+1]) == 'x' {

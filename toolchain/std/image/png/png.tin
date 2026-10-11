@@ -1,16 +1,16 @@
 // Package png decodes and encodes PNG images. Decode validates chunk checksums, bounds the inflated image data, and
-// implements the PNG scanline filters and every PNG color type and bit depth. Interlaced input is refused because
-// Adam7 is not supported.
+// implements the PNG scanline filters, Adam7 interlacing and every PNG color type and bit depth.
 package png
 
 import "image"
 import "image/color"
+import "say"
 import "squash"
 import "stamp"
 
 const maxPixels = 64 * 1024 * 1024
 
-// Decode reads a non-interlaced PNG and returns its pixels, preserving all 16-bit channel values.
+// Decode reads a PNG, interlaced or not, and returns its pixels, preserving all 16-bit channel values.
 fn Decode(data str) !dyn image.Image {
 	if len(data) < 8 || u8(data[0]) != 137 || data[1:8] != "PNG\r\n\x1a\n" {
 		fail "png: invalid signature"
@@ -41,7 +41,8 @@ fn Decode(data str) !dyn image.Image {
 		let body = data[at+8:at+8+n]
 		let want = be32(data, at+8+n)
 		if want != i64(stamp.Crc32(data[at+4:at+8+n])) {
-			fail "png: invalid checksum {name} {want} {stamp.Crc32(data[at+4:at+8+n])}"
+			// The chunk name is quoted: it is input, and may hold any byte.
+			fail say.Fault("png: invalid checksum %q %d %d", name, want, stamp.Crc32(data[at+4:at+8+n]))
 		}
 		if name == "IHDR" {
 			if n != 13 || width != 0 {
@@ -55,8 +56,8 @@ fn Decode(data str) !dyn image.Image {
 				fail "png: unsupported compression or filter method"
 			}
 			interlace = i64(body[12])
-			if interlace != 0 {
-				fail "png: interlaced images are not supported"
+			if interlace > 1 {
+				fail "png: invalid interlace method"
 			}
 			if width <= 0 || height <= 0 || width > maxPixels || height > maxPixels || width*height > maxPixels {
 				fail "png: image dimensions exceed limit"
@@ -118,19 +119,71 @@ fn Decode(data str) !dyn image.Image {
 		_ => 4
 	}
 	let bpp = max(1, (channels*depth+7)/8)
-	let rowBytes = (width*channels*depth+7)/8
-	let raw = try squash.Unzlib(str(compressed), height*(rowBytes+1))
-	if len(raw) != height*(rowBytes+1) {
+	let px = pixelFormat{typ: typ, channels: channels, depth: depth, palette: palette, trans: trans, gray: transparentGray, red: transparentRed, green: transparentGreen, blue: transparentBlue}
+	mut out = image.NewNRGBA64(image.Rect(0, 0, width, height))
+	if interlace == 0 {
+		let rowBytes = (width*channels*depth+7)/8
+		let raw = try squash.Unzlib(str(compressed), height*(rowBytes+1))
+		if len(raw) != height*(rowBytes+1) {
+			fail "png: incorrect image data length"
+		}
+		let scan = try unfilter(raw, 0, height, rowBytes, bpp)
+		for y in 0..height {
+			for x in 0..width {
+				let c = try px.at(scan, y*rowBytes, x)
+				out.SetNRGBA64(x, y, c)
+			}
+		}
+		return out
+	}
+	// Adam7: seven passes, each a reduced image of every dx-th pixel from x0 in every dy-th row from y0, filtered on its
+	// own; a pass with no pixels has no data, as in Go's decoder.
+	let x0s = []i64{0, 4, 0, 2, 0, 1, 0}
+	let y0s = []i64{0, 0, 4, 0, 2, 0, 1}
+	let dxs = []i64{8, 8, 4, 4, 2, 2, 1}
+	let dys = []i64{8, 8, 8, 4, 4, 2, 2}
+	mut total = i64(0)
+	for p in 0..7 {
+		let pw = (width - x0s[p] + dxs[p] - 1) / dxs[p]
+		let ph = (height - y0s[p] + dys[p] - 1) / dys[p]
+		if pw > 0 && ph > 0 {
+			total += ph*((pw*channels*depth+7)/8+1)
+		}
+	}
+	let raw = try squash.Unzlib(str(compressed), total)
+	if len(raw) != total {
 		fail "png: incorrect image data length"
 	}
-	mut scan = make([]u8, height*rowBytes)
-	for y in 0..height {
-		let f = i64(raw[y*(rowBytes+1)])
+	mut at2 = i64(0)
+	for p in 0..7 {
+		let pw = (width - x0s[p] + dxs[p] - 1) / dxs[p]
+		let ph = (height - y0s[p] + dys[p] - 1) / dys[p]
+		if pw <= 0 || ph <= 0 {
+			continue
+		}
+		let rowBytes = (pw*channels*depth+7)/8
+		let scan = try unfilter(raw, at2, ph, rowBytes, bpp)
+		at2 += ph*(rowBytes+1)
+		for y in 0..ph {
+			for x in 0..pw {
+				let c = try px.at(scan, y*rowBytes, x)
+				out.SetNRGBA64(x0s[p]+x*dxs[p], y0s[p]+y*dys[p], c)
+			}
+		}
+	}
+	return out
+}
+
+// unfilter undoes the row filters of the h rows of rowBytes bytes (each after its filter byte) at raw[at:].
+fn unfilter(raw str, at i64, h i64, rowBytes i64, bpp i64) ![]u8 {
+	mut scan = make([]u8, h*rowBytes)
+	for y in 0..h {
+		let f = i64(raw[at+y*(rowBytes+1)])
 		if f > 4 {
 			fail "png: invalid row filter"
 		}
 		for x in 0..rowBytes {
-			let v = i64(raw[y*(rowBytes+1)+1+x])
+			let v = i64(raw[at+y*(rowBytes+1)+1+x])
 			mut left = i64(0)
 			mut up = i64(0)
 			mut ul = i64(0)
@@ -153,50 +206,64 @@ fn Decode(data str) !dyn image.Image {
 			scan[y*rowBytes+x] = u8(v+add)
 		}
 	}
-	mut out = image.NewNRGBA64(image.Rect(0, 0, width, height))
-	for y in 0..height {
-		for x in 0..width {
-			let base = y*rowBytes
-			let i = x*channels
-			mut c = color.NRGBA64{}
-			if typ == 0 {
-				let gray = sample(scan, base, i, depth)
-				mut alpha = u16(0xffff)
-				if i64(gray) == transparentGray {
-					alpha = 0
-				}
-				let v = scaleSample(gray, depth)
-				c = color.NRGBA64{R: v, G: v, B: v, A: alpha}
-			} else if typ == 2 {
-				let red = sample(scan, base, i, depth)
-				let green = sample(scan, base, i+1, depth)
-				let blue = sample(scan, base, i+2, depth)
-				mut alpha = u16(0xffff)
-				if i64(red) == transparentRed && i64(green) == transparentGreen && i64(blue) == transparentBlue {
-					alpha = 0
-				}
-				c = color.NRGBA64{R: scaleSample(red, depth), G: scaleSample(green, depth), B: scaleSample(blue, depth), A: alpha}
-			} else if typ == 3 {
-				let k = i64(sample(scan, base, x, depth))
-				if k >= len(palette) {
-					fail "png: palette index out of range"
-				}
-				let p = palette[k]
-				c = color.NRGBA64{R: u16(p.R)*0x101, G: u16(p.G)*0x101, B: u16(p.B)*0x101, A: u16(p.A)*0x101}
-				if k < len(trans) {
-					c.A = u16(trans[k])*0x101
-				}
-			} else if typ == 4 {
-				let gray = scaleSample(sample(scan, base, i, depth), depth)
-				let alpha = scaleSample(sample(scan, base, i+1, depth), depth)
-				c = color.NRGBA64{R: gray, G: gray, B: gray, A: alpha}
-			} else {
-				c = color.NRGBA64{R: scaleSample(sample(scan, base, i, depth), depth), G: scaleSample(sample(scan, base, i+1, depth), depth), B: scaleSample(sample(scan, base, i+2, depth), depth), A: scaleSample(sample(scan, base, i+3, depth), depth)}
-			}
-			out.SetNRGBA64(x, y, c)
+	return scan
+}
+
+// pixelFormat is what turns a scanline's samples into colors: the color type and depth, the palette and the
+// transparency of the image.
+type pixelFormat struct {
+	typ      i64
+	channels i64
+	depth    i64
+	palette  []color.NRGBA
+	trans    []u8
+	gray     i64
+	red      i64
+	green    i64
+	blue     i64
+}
+
+// at returns the color of pixel x of the scanline that starts at base.
+fn (f pixelFormat) at(scan []u8, base i64, x i64) !color.NRGBA64 {
+	let depth = f.depth
+	let i = x*f.channels
+	if f.typ == 0 {
+		let gray = sample(scan, base, i, depth)
+		mut alpha = u16(0xffff)
+		if i64(gray) == f.gray {
+			alpha = 0
 		}
+		let v = scaleSample(gray, depth)
+		return color.NRGBA64{R: v, G: v, B: v, A: alpha}
 	}
-	return out
+	if f.typ == 2 {
+		let red = sample(scan, base, i, depth)
+		let green = sample(scan, base, i+1, depth)
+		let blue = sample(scan, base, i+2, depth)
+		mut alpha = u16(0xffff)
+		if i64(red) == f.red && i64(green) == f.green && i64(blue) == f.blue {
+			alpha = 0
+		}
+		return color.NRGBA64{R: scaleSample(red, depth), G: scaleSample(green, depth), B: scaleSample(blue, depth), A: alpha}
+	}
+	if f.typ == 3 {
+		let k = i64(sample(scan, base, x, depth))
+		if k >= len(f.palette) {
+			fail "png: palette index out of range"
+		}
+		let p = f.palette[k]
+		mut c = color.NRGBA64{R: u16(p.R)*0x101, G: u16(p.G)*0x101, B: u16(p.B)*0x101, A: u16(p.A)*0x101}
+		if k < len(f.trans) {
+			c.A = u16(f.trans[k])*0x101
+		}
+		return c
+	}
+	if f.typ == 4 {
+		let gray = scaleSample(sample(scan, base, i, depth), depth)
+		let alpha = scaleSample(sample(scan, base, i+1, depth), depth)
+		return color.NRGBA64{R: gray, G: gray, B: gray, A: alpha}
+	}
+	return color.NRGBA64{R: scaleSample(sample(scan, base, i, depth), depth), G: scaleSample(sample(scan, base, i+1, depth), depth), B: scaleSample(sample(scan, base, i+2, depth), depth), A: scaleSample(sample(scan, base, i+3, depth), depth)}
 }
 
 // Encode writes Gray, Gray16, Paletted, RGBA, RGBA64, NRGBA and NRGBA64 images using their PNG color type and bit depth.

@@ -30,9 +30,10 @@ type Config struct {
 	Height i64
 }
 
-// Decode reads the first image in a GIF stream.
+// Decode reads the first image in a GIF stream. Like Go's gif.Decode it stops there: what follows the first frame,
+// a damaged block or a missing trailer among it, is not read.
 fn Decode(data str) !dyn image.Image {
-	let all = try DecodeAll(data)
+	let all = try decodeFrames(data, true)
 	if len(all.Image) == 0 {
 		fail "gif: no image frames"
 	}
@@ -54,6 +55,12 @@ fn DecodeConfig(data str) !Config {
 
 // DecodeAll reads every image, delay, disposal method and loop count in a GIF stream.
 fn DecodeAll(data str) !GIF {
+	return try decodeFrames(data, false)
+}
+
+// decodeFrames is DecodeAll, or with first only the stream up to the end of its first frame, as Go's decoder reads it
+// when it does not keep every frame.
+fn decodeFrames(data str, first bool) !GIF {
 	let config = try DecodeConfig(data)
 	let screenW = config.Width
 	let screenH = config.Height
@@ -131,7 +138,7 @@ fn DecodeAll(data str) !GIF {
 		if width < 2 || width > 8 { fail "gif: invalid LZW code size" }
 		let (compressed, end) = try readBlocks(data, at)
 		at = end
-		let indices = try squash.UnlzwWidth(str(compressed), squash.LSB, w*h, width)
+		let indices = try squash.UnlzwExact(str(compressed), squash.LSB, w*h, width)
 		if len(indices) != w*h { fail "gif: incorrect frame data length" }
 		mut frame = image.NewPaletted(image.Rect(x, y, x+w, y+h), palette)
 		if flags & 0x40 == 0 {
@@ -163,6 +170,9 @@ fn DecodeAll(data str) !GIF {
 		delay = 0
 		disposal = 0
 		transparent = -1
+		if first {
+			return out
+		}
 	}
 	if !trailer { fail "gif: missing trailer" }
 	if len(out.Image) == 0 { fail "gif: no image frames" }

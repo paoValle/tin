@@ -142,6 +142,27 @@ fn (h mut huff) build(lengths []i64) bool {
 	return true
 }
 
+// complete reports whether h may code a dynamic block, as Go's huffmanDecoder.init and zlib's
+// inflate_table decide: every bit sequence is a code, or there is no code at all, or there is one
+// code of one bit. Any other incomplete code is a damaged header.
+fn (h huff) complete() bool {
+	mut left = 1
+	mut max = 0
+	for l in 1..16 {
+		left = left * 2 - h.count[l]
+		if h.count[l] > 0 {
+			max = l
+		}
+	}
+	if max == 0 {
+		return true
+	}
+	if max == 1 && h.count[1] == 1 {
+		return true
+	}
+	return left == 0
+}
+
 // decode reads one symbol, or -1 for a code that is not in h.
 fn (r mut bitReader) decode(h huff) i64 {
 	// Try the table with the bits there are (near the end of the input there may be fewer).
@@ -263,7 +284,7 @@ fn inflateInto(r mut bitReader, out mut []u8, max i64, z mut inflater) ! {
 			for i in 0..hclen {
 				z.cls[clOrder[i]] = r.bits(3)
 			}
-			if !z.cl.build(z.cls) {
+			if !z.cl.build(z.cls) || !z.cl.complete() {
 				fail "squash: a dynamic block's code-length code is damaged"
 			}
 			let total = hlit + hdist
@@ -302,7 +323,7 @@ fn inflateInto(r mut bitReader, out mut []u8, max i64, z mut inflater) ! {
 			if z.lens[256] == 0 {
 				fail "squash: a dynamic block has no end-of-block code"
 			}
-			if !z.lit.build(z.lens[:hlit]) || !z.dist.build(z.lens[hlit:total]) {
+			if !z.lit.build(z.lens[:hlit]) || !z.dist.build(z.lens[hlit:total]) || !z.lit.complete() || !z.dist.complete() {
 				fail "squash: a dynamic block's codes are damaged"
 			}
 			lit = z.lit

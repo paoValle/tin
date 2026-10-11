@@ -1,7 +1,7 @@
 package lasso
 
 // Simplification, following Go's regexp/syntax simplify.go: a counted repeat x{n,m} becomes the
-// concat of n copies and m-n nested optional copies (or a star when m is unbounded), so the
+// concat of n copies and m-n nested optional copies (or n-1 copies and a plus when m is unbounded), so the
 // compiler sees only Star, Plus and Quest.
 
 // simplify rewrites the tree's repeats.
@@ -9,15 +9,23 @@ fn simplify(re regexp) regexp {
 	if re.op == opRepeat {
 		let sub = simplify(re.sub[0])
 		mut subs = []regexp{}
-		for i in 0..re.min {
-			subs = append(subs, sub)
-		}
 		if re.max < 0 {
-			mut star = node(opStar)
-			star.flags = re.flags
-			star.sub = []regexp{sub}
-			subs = append(subs, star)
+			// x{n,} is n-1 copies and x+, and x{0,} is x*, as Go's simplify builds them: n copies and x* differ from Go
+			// in which iteration a group that can match empty records, as (a{0,2}){2,} on "aaa" shows.
+			for i in 1..re.min {
+				subs = append(subs, sub)
+			}
+			mut loop = node(opPlus)
+			if re.min == 0 {
+				loop = node(opStar)
+			}
+			loop.flags = re.flags
+			loop.sub = []regexp{sub}
+			subs = append(subs, loop)
 		} else {
+			for i in 0..re.min {
+				subs = append(subs, sub)
+			}
 			// The optional tail nests to the right, (x(x(x)?)?)?, as Go's simplify builds it.
 			mut opt = node(opEmptyMatch)
 			mut j = re.max - 1

@@ -1,0 +1,90 @@
+package main
+
+// A dynamic DEFLATE block whose Huffman code is incomplete is damaged, as Go's compress/flate and zlib say: only a code
+// with no symbols or a single one-bit code may leave bit sequences unused. Inflate and InflateStream used to decode such
+// a block; InflateReader already refused it. The first six streams are header mutations Go 1.27's flate.NewReader
+// refuses with "corrupt input", the last is Deflate's output, which Go reads to the same 41 bytes. Each line is the
+// answer of Inflate, InflateStream and InflateReader.
+
+import "say"
+import "seal"
+import "squash"
+
+type Source struct {
+	data str
+	pos  i64
+}
+
+fn (s mut Source) Read(buf mut []u8) !i64 {
+	mut n = 0
+	for n < len(buf) && s.pos < len(s.data) {
+		buf[n] = s.data[s.pos]
+		n += 1
+		s.pos += 1
+	}
+	return n
+}
+
+fn oneShot(d str) str {
+	let out = squash.Inflate(d, 1 << 20) catch _ {
+		return "corrupt"
+	}
+	return say.Fmt("%d bytes", len(out))
+}
+
+fn stream(d str) str {
+	mut st = squash.NewInflateStream(Source{data: d, pos: 0}, 1 << 20)
+	mut total = 0
+	mut buf = make([]u8, 64)
+	for {
+		let n = st.Read(mut buf) catch _ {
+			return "corrupt"
+		}
+		if n == 0 {
+			break
+		}
+		total += n
+	}
+	return say.Fmt("%d bytes", total)
+}
+
+fn reader(d str) str {
+	mut z = squash.NewInflateReader(d, 0, len(d))
+	mut total = 0
+	mut buf = make([]u8, 64)
+	for {
+		let n = z.Read(mut buf) catch _ {
+			return "corrupt"
+		}
+		if n == 0 {
+			break
+		}
+		total += n
+	}
+	return say.Fmt("%d bytes", total)
+}
+
+fn main() {
+	let streams = []str{
+		"1cc93111c04010c4b0de288edadafc3964f26b7587796ad054b406a375cf1f14e8f6010000ffff2259036000",
+		"0dc6310100300202b11d15670d1efc5b68336542cd517304075a37519177d6d0eed73eb0376d0f",
+		"0d88b10d00000c8276aff03535feff424d6080c6bc535881971161c3eb599046ad5457d731ece801",
+		"1d88b10d00300c8376aec86b72ecff5f68548901c06dba43329871b407b572d18adee52faf74221e",
+		"0dc9310100301002b11d156f0d78fc5b68b326630d0b0755151367d994a3ab666eb4f1fd07ffb6ecddb57a",
+		"0dca390d00000cc3c0bd28422d1f7f0aede693ac226b2b6009e281298599c4fa5d87cd64fe00a934deee0e",
+		"GO",
+	}
+	for h in streams {
+		mut d = ""
+		if h == "GO" {
+			d = squash.Deflate("abcabcabd abcabcabd xyz xyz xyz abcabcabd", 6)
+		} else {
+			let b = seal.HexDecode(h) catch _ {
+				say.Line("bad hex")
+				continue
+			}
+			d = str(b)
+		}
+		say.Line(oneShot(d), stream(d), reader(d))
+	}
+}

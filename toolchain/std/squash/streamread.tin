@@ -198,7 +198,7 @@ fn (r mut InflateStream[R]) header() ! {
 		for i in 0..hclen {
 			r.z.cls[clOrder[i]] = try r.bits(3)
 		}
-		if !r.z.cl.build(r.z.cls) {
+		if !r.z.cl.build(r.z.cls) || !r.z.cl.complete() {
 			fail "squash: a dynamic block's code-length code is damaged"
 		}
 		let total = hlit + hdist
@@ -237,7 +237,7 @@ fn (r mut InflateStream[R]) header() ! {
 		if r.z.lens[256] == 0 {
 			fail "squash: a dynamic block has no end-of-block code"
 		}
-		if !r.z.lit.build(r.z.lens[:hlit]) || !r.z.dist.build(r.z.lens[hlit:total]) {
+		if !r.z.lit.build(r.z.lens[:hlit]) || !r.z.dist.build(r.z.lens[hlit:total]) || !r.z.lit.complete() || !r.z.dist.complete() {
 			fail "squash: a dynamic block's codes are damaged"
 		}
 	}

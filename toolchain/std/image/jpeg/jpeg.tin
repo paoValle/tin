@@ -55,17 +55,28 @@ fn Decode(data str) !dyn image.Image {
 	mut restart = i64(0)
 	mut scans = i64(0)
 	mut pos = i64(2)
-	for pos < len(data) {
-		if data[pos] != 0xff { fail "jpeg: expected marker" }
-		for pos < len(data) && data[pos] == 0xff { pos += 1 }
-		if pos >= len(data) { fail "jpeg: truncated marker" }
-		let marker = i64(u8(data[pos]))
-		pos += 1
+	// The markers are read as Go's decoder reads them: bytes before a 0xff are skipped as extraneous data, as is
+	// "\xff\x00", fill bytes before a marker are skipped, and the image ends at EOI, never at the end of the data.
+	for {
+		if pos+2 > len(data) { fail "jpeg: unexpected EOF" }
+		for data[pos] != 0xff {
+			pos += 1
+			if pos+2 > len(data) { fail "jpeg: unexpected EOF" }
+		}
+		mut marker = i64(u8(data[pos+1]))
+		pos += 2
+		if marker == 0 { continue }
+		for marker == 0xff {
+			if pos >= len(data) { fail "jpeg: unexpected EOF" }
+			marker = i64(u8(data[pos]))
+			pos += 1
+		}
 		if marker == 0xd9 { break }
-		if marker == 0xd8 || (marker >= 0xd0 && marker <= 0xd7) { continue }
-		if pos+2 > len(data) { fail "jpeg: truncated segment" }
+		if marker >= 0xd0 && marker <= 0xd7 { continue }
+		if pos+2 > len(data) { fail "jpeg: unexpected EOF" }
 		let n = be16(data, pos)
-		if n < 2 || n > len(data)-pos { fail "jpeg: invalid segment length" }
+		if n < 2 { fail "jpeg: short segment length" }
+		if n > len(data)-pos { fail "jpeg: unexpected EOF" }
 		let body = pos+2
 		let end = pos+n
 		if marker == 0xc0 || marker == 0xc1 || marker == 0xc2 {
@@ -85,6 +96,10 @@ fn Decode(data str) !dyn image.Image {
 			pos = try decodeScan(mut f, huff, data, body, end, restart)
 			scans += 1
 			continue
+		} else if !(marker >= 0xe0 && marker <= 0xef) && marker != 0xfe {
+			// Only the APPn and COM segments are skipped; any other marker is one Go does not know either.
+			if marker < 0xc0 { fail "jpeg: unknown marker" }
+			fail "jpeg: unsupported marker"
 		}
 		pos = end
 	}
@@ -219,12 +234,17 @@ fn decodeScan(f mut frame, huff []Huffman, data str, body i64, end i64, restart 
 		f.comps[found].ac = selector & 15
 		members = append(members, found)
 	}
-	let ss = i64(u8(data[end-3]))
-	let se = i64(u8(data[end-2]))
-	let ah = i64(u8(data[end-1])) >> 4
-	let al = i64(u8(data[end-1])) & 15
+	mut ss = i64(u8(data[end-3]))
+	mut se = i64(u8(data[end-2]))
+	mut ah = i64(u8(data[end-1])) >> 4
+	mut al = i64(u8(data[end-1])) & 15
 	if !f.progressive {
-		if ss != 0 || se != 63 || ah != 0 || al != 0 { fail "jpeg: unsupported scan parameters" }
+		// A baseline scan always covers the whole block: Go reads its spectral selection and approximation as 0, 63, 0 and 0
+		// whatever the header says.
+		ss = 0
+		se = 63
+		ah = 0
+		al = 0
 	} else {
 		if se > 63 || ss > se { fail "jpeg: invalid spectral selection" }
 		if ss == 0 && se != 0 { fail "jpeg: invalid spectral selection" }
@@ -303,7 +323,7 @@ fn decodeBlockAt(bits mut Bits, st mut scanState, f mut frame, c i64, idx i64, h
 	let ac = huff[4+f.comps[c].ac]
 	mut coef = f.comps[c].coef
 	if !f.progressive {
-		f.comps[c].prev = try decodeBaseline(mut bits, dc, ac, mut coef, base, f.comps[c].prev, order)
+		f.comps[c].prev = try decodeBaseline(mut bits, mut st, dc, ac, mut coef, base, f.comps[c].prev, order)
 	} else if ss == 0 && ah == 0 {
 		f.comps[c].prev = try decodeDCFirst(mut bits, dc, mut coef, base, f.comps[c].prev, al)
 	} else if ss == 0 {
@@ -315,24 +335,39 @@ fn decodeBlockAt(bits mut Bits, st mut scanState, f mut frame, c i64, idx i64, h
 	}
 }
 
-fn decodeBaseline(bits mut Bits, dc Huffman, ac Huffman, coef mut []i64, base i64, previous i64, order []i64) !i64 {
+// decodeBaseline reads one block of a baseline scan as Go's decoder does, which is lenient with damaged data: a DC
+// category up to 16 is read, a run past the last coefficient ends the block, and an end-of-block code with a run count
+// starts an end-of-band run over the next blocks, as in a progressive scan.
+fn decodeBaseline(bits mut Bits, st mut scanState, dc Huffman, ac Huffman, coef mut []i64, base i64, previous i64, order []i64) !i64 {
 	let category = try bits.symbol(dc)
-	if category > 11 { fail "jpeg: invalid DC category" }
+	if category > 16 { fail "jpeg: invalid DC category" }
 	let delta = try receiveExtend(mut bits, category)
 	let value = previous+delta
 	coef[base] = value
+	if st.eobrun > 0 {
+		st.eobrun -= 1
+		return value
+	}
 	mut k = i64(1)
 	for k < 64 {
 		let rs = try bits.symbol(ac)
 		let run = rs >> 4
 		let size = rs & 15
 		if size == 0 {
-			if run != 15 { break }
+			if run != 15 {
+				st.eobrun = i64(1) << run
+				if run > 0 {
+					let extra = try bits.take(run)
+					st.eobrun += extra
+				}
+				st.eobrun -= 1
+				break
+			}
 			k += 16
 			continue
 		}
 		k += run
-		if k >= 64 || size > 10 { fail "jpeg: invalid AC coefficient" }
+		if k >= 64 { break }
 		let v = try receiveExtend(mut bits, size)
 		coef[base+order[k]] = v
 		k += 1
@@ -342,7 +377,7 @@ fn decodeBaseline(bits mut Bits, dc Huffman, ac Huffman, coef mut []i64, base i6
 
 fn decodeDCFirst(bits mut Bits, dc Huffman, coef mut []i64, base i64, previous i64, al i64) !i64 {
 	let category = try bits.symbol(dc)
-	if category > 11 { fail "jpeg: invalid DC category" }
+	if category > 16 { fail "jpeg: invalid DC category" }
 	let delta = try receiveExtend(mut bits, category)
 	let value = previous+delta
 	coef[base] = value << al
@@ -379,7 +414,8 @@ fn decodeACFirst(bits mut Bits, st mut scanState, ac Huffman, coef mut []i64, ba
 			continue
 		}
 		k += run
-		if k > se || size > 10 { fail "jpeg: invalid AC coefficient" }
+		// A run past the band's end ends the block, as in Go.
+		if k > se { break }
 		let v = try receiveExtend(mut bits, size)
 		coef[base+order[k]] = v << al
 		k += 1

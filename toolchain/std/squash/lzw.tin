@@ -173,6 +173,17 @@ fn Unlzw(data str, order i64, max i64) !str {
 
 // UnlzwWidth decompresses an LZW stream with the given literal width (2 through 8).
 fn UnlzwWidth(data str, order i64, max i64, litWidth i64) !str {
+	return try unlzw(data, order, max, litWidth, false)
+}
+
+// UnlzwExact decompresses an LZW stream of exactly n bytes, as Go's image/gif reads a frame: the stream may end
+// without its end code once it has made the n bytes (giflib writes such streams), and more than n bytes is a fault.
+fn UnlzwExact(data str, order i64, n i64, litWidth i64) !str {
+	return try unlzw(data, order, n, litWidth, true)
+}
+
+// unlzw is UnlzwWidth, or with exact UnlzwExact.
+fn unlzw(data str, order i64, max i64, litWidth i64, exact bool) !str {
 	if litWidth < 2 || litWidth > 8 {
 		fail say.Fault("squash: lzw: invalid literal width")
 	}
@@ -192,6 +203,9 @@ fn UnlzwWidth(data str, order i64, max i64, litWidth i64) !str {
 	for {
 		let code = r.code(width)
 		if code < 0 {
+			if exact && i64(len(out)) == max {
+				return str(out)
+			}
 			fail say.Fault("squash: lzw: unexpected end of stream")
 		}
 		if code < clear {

@@ -135,6 +135,7 @@ D value "1 " invalid value "1 " for flag -f: parse error -1.5e-07
 D value "0x" invalid value "0x" for flag -f: parse error -1.5e-07
 D value "0x.p1" invalid value "0x.p1" for flag -f: parse error -1.5e-07
 D next arg <nil> -2.5 [tail]
+D nan bits <nil> 0x7ff8000000000001 false
 D usage "  -f float"
 D usage "    \ta float (default 0.25)"
 E dash value <nil> "-foo" ""

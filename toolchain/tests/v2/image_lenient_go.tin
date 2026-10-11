@@ -1,0 +1,79 @@
+package main
+
+// Damaged GIF and JPEG streams that Go 1.27's image/gif and image/jpeg decode, and two they refuse. Each line is what Go
+// gives: the bounds (and for a GIF the hash of every pixel, which Go's matches), or "fault".
+//
+// gif: Decode stops after the first frame (a bad block or a missing trailer after it is not read), and a frame's LZW data
+// may end without its end code once it has every pixel. jpeg: bytes before a marker are skipped, an AC run past the end of
+// a block ends it, a DC category up to 16 is read, a baseline scan's spectral selection is ignored, and the image ends at
+// EOI, never at the end of the data. The last line is a damaged PNG chunk's fault, whose name is quoted.
+
+import "image"
+import "image/gif"
+import "image/jpeg"
+import "image/png"
+import "say"
+import "seal"
+
+fn unhex(s str) str {
+	let b = seal.HexDecode(s) catch _ {
+		return ""
+	}
+	return str(b)
+}
+
+fn sum(img dyn image.Image) str {
+	let b = img.Bounds()
+	mut h = u64(1469598103934665603)
+	for y in b.Min.Y..b.Max.Y {
+		for x in b.Min.X..b.Max.X {
+			let c = img.At(x, y)
+			for v in []u64{u64(c.R), u64(c.G), u64(c.B), u64(c.A)} {
+				h = h ^ v
+				h = h *% 1099511628211
+			}
+		}
+	}
+	return say.Fmt("%x", h)
+}
+
+fn bounds(img dyn image.Image) str {
+	let b = img.Bounds()
+	return say.Fmt("(%d,%d)-(%d,%d)", b.Min.X, b.Min.Y, b.Max.X, b.Max.Y)
+}
+
+fn gifLine(d str) str {
+	let img = gif.Decode(d) catch _ {
+		return "fault"
+	}
+	return bounds(img) + " " + sum(img)
+}
+
+fn jpegLine(d str) str {
+	let img = jpeg.Decode(d) catch _ {
+		return "fault"
+	}
+	return bounds(img)
+}
+
+fn main() {
+	// A bad block after the first frame, a frame and no trailer, and a frame whose LZW data has no end code.
+	say.Line("gif", gifLine(unhex("47494638396105000a008000000000000000002c0000000005000a00000206848fa9cb9d050033")))
+	say.Line("gif", gifLine(unhex("474946383961080005008100000000000000440000880000cc2c000000000800050000020e841e7133c9c28c32910d04c13b0500")))
+	say.Line("gif", gifLine(unhex("4749463839610e0001008400000000000000440000880000cc0044000044440044880044cc0088000088440088880088cc00cc0000cc4400cc8800cccc00dddd1111110000550000990000dd005500005555004c990049dd00990000994c0099990093dd00dd0000dd4900dd932c000000000e00010000050c60f144cab629cf1641500302003b")))
+	// An AC run past the end of a block, a DC category over 11, and a baseline scan whose header says Ss=0, Se=47.
+	let ac = unhex("ffd8ffdb008400160f1113110e161312131917161a213724211e1e214430332837504654534f464d4c58637f6c585e785f4c4d6e96707883878e908e566a9ca79b8aa67f8b8e8901171919211d2141242441895b4d5b8989898989898989898989898989898989898989898989898989898989898989898989898989898989898989898989898989ffc0000b080005000801011100ffc400d20000010501010101010100000000000000000102030405060708090a0b100002010303020403050504040000017d01020300041105bb2131410613516107227114328191a1082342b1c11552d1f02433627282090a161718191a25262728292a3435363738393a434445464748494a535455565758595a636465666768696a737475767778797a838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae1e2e3e4e5e6e7e8e9eaf1f2f3f4f5f6f7f8f9faffda0008010100003f0086dd93ec7631ec60b72e578720af0003c75c64fe99ce2bffd9")
+	say.Line("jpeg", jpegLine(ac))
+	say.Line("jpeg", jpegLine(unhex("ffd8ffdb0084000d090a0b0a080d0b0a0b0e0e0d0f13201513121213271c1e17202e2931302e292d2c333a4a3e333646372c2d405741464c4e525352323e5a615a50604a51524f010e060e131113261515264f352d354f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4fffc0000b080012000201011100ffc400d20000010501010101010100000000000000000102030c05060708090a0b100002010303020403050504040000017d01020300041105122131410613516107227114328191a1082342b1c11552d1f02433627282090a161718191a25262728292a3435363738393a434445464748494a535455565758595a636465666768696a737475767778797a838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae1e2e3e4e5e6e7e8e9eaf1f2f3f4f5f6f7f8f9faffda0008010100003f0046b4903102d49c1ea232c3f3c1cfe7564699ad919b68f53101ff005607185edc1b907a7a807d85646a3a9ea16da95d416f7f7514314ce91c69332aa2824000038000ed5fffd9")))
+	say.Line("jpeg", jpegLine(unhex("ffd8ffdb008400ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff01ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc0000b080005001601011100ffc400d20000010501010101010100000000000000000102030405060708090a0b100002010303020403050504040000017d01020300041105122131410613516107227114328191a1082342b1c11552d1f02433627282090a161718191a25262728292a3435363738393a434445464748494a535455565758595a636465666768696a737475767778797a838485868788898a92939495969798999aa2a3a4a5a6a7a8a9a2b2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae1e2e3e4e5e6e7e8e9eaf1f2f3f4f5f6f7f8f9faffda0008010100002f004e3d3a67fa9fe94a0e78f6ff0023b5283d7ea457ffd9")))
+	// Junk before the first segment, "\xff\x00" and fill bytes before it, no EOI, and an SOI where the EOI was.
+	say.Line("jpeg", jpegLine(ac[:2] + "junk" + ac[2:]))
+	say.Line("jpeg", jpegLine(ac[:2] + "\xff\x00\xff\xff" + ac[2:]))
+	say.Line("jpeg", jpegLine(ac[:len(ac)-2]))
+	say.Line("jpeg", jpegLine(ac[:len(ac)-1] + "\xd8"))
+	// A PNG whose IHDR checksum fails after its name was damaged to "IH\nR".
+	let p = png.Encode(image.NewGray(image.Rect(0, 0, 1, 1)))
+	png.Decode(p[:14] + "\n" + p[15:]) catch err {
+		say.Line("png", err)
+	}
+}

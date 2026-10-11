@@ -1,0 +1,30 @@
+package main
+
+// A counted repeat with no upper bound, x{n,}, of a group that can match empty records the iteration Go's regexp records:
+// lasso builds n-1 copies and x+, as Go's simplify does, not n copies and x*. Every line is Go 1.27's FindStringSubmatchIndex.
+
+import "lasso"
+import "say"
+
+fn main() {
+	let cases = [][]str{
+		[]str{"(a{{0,1}}){{1,}}", "axaxx"},
+		[]str{"(b*||){{1,}}", "b xb a"},
+		[]str{"(.{{3,}}||){{1,}}", "aab "},
+		[]str{"(a{{0,2}}){{2,}}", "aaa"},
+		[]str{"(a{{0,2}}){{2,3}}", "aaa"},
+		[]str{"(.*?.{{1,3}}|){{2,}}", " aba"},
+		[]str{"((x+?){{0,2}}){{1,}}\\b{{2,}}", "x"},
+		[]str{"^+((.?)+?){{1,}}", "a"},
+		[]str{"(?:((a+){{0,}}${{1,3}})+){{1,}}", "ba"},
+		[]str{"(\\P{{L}}{{0,2}}){{2,}}", "-- 0b"},
+		[]str{"(a|){{3,}}", "aa"},
+		[]str{"(a?){{0,}}", "aa"},
+		[]str{"(a?){{1,}}?", "aa"},
+		[]str{"(a?){{2,}}?b", "aab"},
+	}
+	for c in cases {
+		let re = lasso.MustCompile(c[0])
+		say.Line(say.Fmt("%q %q %v", c[0], c[1], re.SubmatchIndex(c[1])))
+	}
+}

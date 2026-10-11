@@ -1936,6 +1936,7 @@ let back = try squash.Gunzip(z, 64mb)
 - `LzwWidth(data str, order i64, litWidth i64) str`: LzwWidth compresses bytes with the given literal width (2 through 8), as GIF requires.
 - `Unlzw(data str, order i64, max i64) !str`: Unlzw decompresses an LZW stream of the given order, failing past max bytes.
 - `UnlzwWidth(data str, order i64, max i64, litWidth i64) !str`: UnlzwWidth decompresses an LZW stream with the given literal width (2 through 8).
+- `UnlzwExact(data str, order i64, n i64, litWidth i64) !str`: UnlzwExact decompresses an LZW stream of exactly n bytes, as Go's image/gif reads a frame: the stream may end without its end code once it has made the n bytes (giflib writes such streams), and more than n bytes is a fault.
 - `Snappy(data str) str`: Snappy compresses data as one Snappy block.
 - `Unsnappy(data str, max i64) !str`: Unsnappy decompresses one Snappy block whose length is at most max.
 - `shape Writer`: Writer is what a streaming compressor writes to: io.Writer's method.
@@ -1989,6 +1990,7 @@ let back = try squash.Gunzip(z, 64mb)
 - `LzwWidth(data str, order i64, litWidth i64) str`: LzwWidth compresses bytes with the given literal width (2 through 8), as GIF requires.
 - `Unlzw(data str, order i64, max i64) !str`: Unlzw decompresses an LZW stream of the given order, failing past max bytes.
 - `UnlzwWidth(data str, order i64, max i64, litWidth i64) !str`: UnlzwWidth decompresses an LZW stream with the given literal width (2 through 8).
+- `UnlzwExact(data str, order i64, n i64, litWidth i64) !str`: UnlzwExact decompresses an LZW stream of exactly n bytes, as Go's image/gif reads a frame: the stream may end without its end code once it has made the n bytes (giflib writes such streams), and more than n bytes is a fault.
 - `Snappy(data str) str`: Snappy compresses data as one Snappy block.
 - `Unsnappy(data str, max i64) !str`: Unsnappy decompresses one Snappy block whose length is at most max.
 - `shape Writer`: Writer is what a streaming compressor writes to: io.Writer's method.

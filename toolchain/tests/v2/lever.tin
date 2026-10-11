@@ -1,7 +1,8 @@
 package main
 
-import "say"
+import "gauge"
 import "lever"
+import "say"
 
 // dump prints each line of s quoted after tag, so tabs and indentation are visible.
 fn dump(tag str, s str) {
@@ -60,6 +61,8 @@ fn main() {
 		say.Line("D value", say.Fmt("%q", s), lever.Parse([]str{"-f=" + s}), f.Val())
 	}
 	say.Line("D next arg", lever.Parse([]str{"-f", "-2.5", "tail"}), f.Val(), lever.Rest())
+	// NaN is Go's math.NaN, positive, not the negative NaN 0.0 / 0.0 gives on x86-64.
+	say.Line("D nan bits", lever.Parse([]str{"-f=NaN"}), say.Fmt("%#x", gauge.F64bits(f.Val())), gauge.Signbit(f.Val()))
 	dump("D usage", lever.Usage())
 
 	// E: strings, termination, errors, Set.
