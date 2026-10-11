@@ -9,11 +9,12 @@ package atomic
 // Int is an integer that cores read and change with indivisible operations.
 type Int struct {
 	v i64
+	lse bool
 }
 
 // NewInt returns an Int holding v.
 fn NewInt(v i64) Int {
-	return Int{v: v}
+	return Int{v: v, lse: __atomic_lse_available()}
 }
 
 // Load returns the value.
@@ -28,30 +29,85 @@ fn (c Int) Store(v i64) {
 
 // Add adds n (negative to subtract) and returns the new value.
 fn (c Int) Add(n i64) i64 {
+	if c.lse {
+		return __atomic_add_lse(cast(i64, c), n) + n
+	}
 	return __atomic_add(cast(i64, c), n) + n
+}
+
+// Bump adds n and discards the result. On an LSE CPU this lowers to stadd.
+fn (c Int) Bump(n i64) {
+	if c.lse {
+		__atomic_stadd_lse(cast(i64, c), n)
+		return
+	}
+	__atomic_add(cast(i64, c), n)
+}
+
+// And atomically applies a bitwise AND and returns the previous value.
+fn (c Int) And(mask i64) i64 {
+	if c.lse { return __atomic_and_lse(cast(i64, c), mask) }
+	mut old = c.Load()
+	for {
+		let next = old & mask
+		if c.CompareSwap(old, next) { return old }
+		old = c.Load()
+	}
+	return 0
+}
+
+// Or atomically applies a bitwise OR and returns the previous value.
+fn (c Int) Or(mask i64) i64 {
+	if c.lse { return __atomic_or_lse(cast(i64, c), mask) }
+	mut old = c.Load()
+	for {
+		let next = old | mask
+		if c.CompareSwap(old, next) { return old }
+		old = c.Load()
+	}
+	return 0
+}
+
+// Xor atomically applies a bitwise XOR and returns the previous value.
+fn (c Int) Xor(mask i64) i64 {
+	if c.lse { return __atomic_xor_lse(cast(i64, c), mask) }
+	mut old = c.Load()
+	for {
+		let next = old ^ mask
+		if c.CompareSwap(old, next) { return old }
+		old = c.Load()
+	}
+	return 0
 }
 
 // Swap sets the value to v and returns the one it replaced.
 fn (c Int) Swap(v i64) i64 {
+	if c.lse {
+		return __atomic_swap_lse(cast(i64, c), v)
+	}
 	return __atomic_swap(cast(i64, c), v)
 }
 
 // CompareSwap sets the value to next if it is old, and reports whether it did.
 fn (c Int) CompareSwap(old i64, next i64) bool {
+	if c.lse {
+		return __atomic_cas_lse(cast(i64, c), old, next) == old
+	}
 	return __atomic_cas(cast(i64, c), old, next) == old
 }
 
 // Bool is a flag that cores read and change with indivisible operations.
 type Bool struct {
 	v i64
+	lse bool
 }
 
 // NewBool returns a Bool holding v.
 fn NewBool(v bool) Bool {
 	if v {
-		return Bool{v: 1}
+		return Bool{v: 1, lse: __atomic_lse_available()}
 	}
-	return Bool{v: 0}
+	return Bool{v: 0, lse: __atomic_lse_available()}
 }
 
 // Load returns the flag.
@@ -71,8 +127,10 @@ fn (c Bool) Store(v bool) {
 // Swap sets the flag to v and returns the value it replaced.
 fn (c Bool) Swap(v bool) bool {
 	if v {
+		if c.lse { return __atomic_swap_lse(cast(i64, c), 1) != 0 }
 		return __atomic_swap(cast(i64, c), 1) != 0
 	}
+	if c.lse { return __atomic_swap_lse(cast(i64, c), 0) != 0 }
 	return __atomic_swap(cast(i64, c), 0) != 0
 }
 
@@ -86,5 +144,6 @@ fn (c Bool) CompareSwap(old bool, next bool) bool {
 	if next {
 		n = 1
 	}
+	if c.lse { return __atomic_cas_lse(cast(i64, c), o, n) == o }
 	return __atomic_cas(cast(i64, c), o, n) == o
 }

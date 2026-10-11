@@ -265,6 +265,9 @@ extern fn unsetenv(name i64) i64
 
 // The environment stays in libSystem on macOS.
 fn rt_os_start(argc i64, argv i64) {}
+
+// LSE feature detection is Linux-only; macOS builds use the exclusive-loop lowering.
+fn rt_atomic_lse_available() bool { return false }
 fn rt_getenv(name i64) i64 { return getenv(name) }
 fn rt_setenv(name i64, value i64) i64 { return i64(i32(setenv(name, value, 1))) }
 fn rt_unsetenv(name i64) i64 { return i64(i32(unsetenv(name))) }

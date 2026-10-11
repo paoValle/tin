@@ -1,0 +1,18 @@
+package main
+
+import "atomic"
+import "hearth"
+import "say"
+
+shared let hits = atomic.NewInt(0)
+
+fn worker(core i64) {
+	for i in 0..500000 {
+		hits.Add(1)
+	}
+}
+
+fn main() {
+	hearth.Run(8, worker)
+	say.Line(hits.Load())
+}

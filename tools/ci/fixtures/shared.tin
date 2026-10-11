@@ -14,6 +14,18 @@ shared let table = build(12500000)
 shared let hits = atomic.NewInt(0)
 shared let index = buildIndex(30000)
 
+fn atomicProbe() bool {
+	let n = atomic.NewInt(5)
+	if n.Load() != 5 || n.Add(2) != 7 { return false }
+	n.Bump(3)
+	if n.Load() != 10 || n.Swap(4) != 10 { return false }
+	if !n.CompareSwap(4, 8) || n.CompareSwap(4, 9) { return false }
+	if n.And(6) != 8 || n.Or(5) != 0 || n.Xor(3) != 5 || n.Load() != 6 { return false }
+	let flag = atomic.NewBool(false)
+	if flag.Load() || flag.Swap(true) || !flag.CompareSwap(true, false) || flag.Load() { return false }
+	return true
+}
+
 // buildIndex makes a map big enough to be chunked (past 4096 entries).
 fn buildIndex(n i64) map[i64]i64 {
 	let m = map[i64]i64{}
@@ -59,6 +71,7 @@ fn count(q anvil.Req, w mut anvil.Out) {
 }
 
 fn main() {
+	if !atomicProbe() { panic("atomic operation check failed") }
 	let r = anvil.NewRouter()
 	r.Get("/sum", sum)
 	r.Get("/lookup", lookup)

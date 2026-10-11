@@ -2854,13 +2854,79 @@ fn gen_runtime_intrinsic(e Call, dst i64, d i64) i64 {
 		gen_to(args[0], 28, d)
 		return 1
 	}
-	if name == "__atomic_add" {
-		// Returns the old value: ldaddal adds v to [p] atomically.
-		gen_pair(args[0], args[1], d)
-		emit3(I_LDADDAL, pr, X17, pl)
-		if dst >= 0 {
-			mov(dst, X17)
+	if name == "__atomic_lse_available" {
+		let f = find_fn("rt_atomic_lse_available")
+		if cast(i64, f) != 0 {
+			emit1(I_BL, cast(i64, f))
+			if dst >= 0 { mov(dst, 0) }
+			return 1
 		}
+		if dst >= 0 { load_imm(dst, 0) }
+		return 1
+	}
+	if name == "__atomic_add_lse" {
+		gen_pair(args[0], args[1], d)
+		if dst < 0 {
+			emit2(I_STADDAL, pr, pl)
+			return 1
+		}
+		emit3(I_LDADDAL, pr, X17, pl)
+		if dst >= 0 { mov(dst, X17) }
+		return 1
+	}
+	if name == "__atomic_stadd_lse" {
+		gen_pair(args[0], args[1], d)
+		emit2(I_STADDAL, pr, pl)
+		return 1
+	}
+	if name == "__atomic_add" {
+		// Returns the old value. Retry the sequentially consistent exclusive pair on failure.
+		gen_pair(args[0], args[1], d)
+		let retry = new_label()
+		let failed = new_label()
+		let done = new_label()
+		label(retry)
+		emit1(I_PUSH, 15)
+		emit2(I_LDAXR, X16, pl)
+		emit4(I_ADD, X17, X16, pr, 0)
+		emit3(I_STLXR, 15, X17, pl)
+		emit2(I_CBNZ, 15, failed)
+		emit1(I_POP, 15)
+		emit1(I_B, done)
+		label(failed)
+		emit1(I_POP, 15)
+		emit1(I_B, retry)
+		label(done)
+		if dst >= 0 {
+			mov(dst, X16)
+		}
+		return 1
+	}
+	if name == "__atomic_and_lse" || name == "__atomic_or_lse" || name == "__atomic_xor_lse" {
+		gen_pair(args[0], args[1], d)
+		mut op = I_LDSETAL
+		mut operand = pr
+		if name == "__atomic_and_lse" {
+			op = I_LDCLRAL
+			mov(X17, pr)
+			emit2(I_MVN, X17, X17)
+			operand = X17
+		} else if name == "__atomic_xor_lse" {
+			op = I_LDEORAL
+		}
+		emit3(op, operand, X17, pl)
+		if dst >= 0 { mov(dst, X17) }
+		return 1
+	}
+	if name == "__atomic_cas_lse" {
+		let p = gen_val(args[0], d)
+		let d1 = next_depth(p, d)
+		let o = gen_val(args[1], d1)
+		let d2 = next_depth(o, d1)
+		let n = gen_val(args[2], d2)
+		mov(X17, o)
+		emit3(I_CASAL, X17, n, p)
+		if dst >= 0 { mov(dst, X17) }
 		return 1
 	}
 	if name == "__atomic_cas" {
@@ -2870,19 +2936,82 @@ fn gen_runtime_intrinsic(e Call, dst i64, d i64) i64 {
 		let o = gen_val(args[1], d1)
 		let d2 = next_depth(o, d1)
 		let n = gen_val(args[2], d2)
-		mov(X17, o)
-		emit3(I_CASAL, X17, n, p)
+		let retry = new_label()
+		let failed = new_label()
+		let mismatch = new_label()
+		let done = new_label()
+		label(retry)
+		emit1(I_PUSH, 15)
+		emit2(I_LDAXR, X16, p)
+		emit2(I_CMP, X16, o)
+		emit2(I_BCOND, C_NE, mismatch)
+		emit3(I_STLXR, 15, n, p)
+		emit2(I_CBNZ, 15, failed)
+		emit1(I_POP, 15)
+		emit1(I_B, done)
+		label(failed)
+		emit1(I_POP, 15)
+		emit1(I_B, retry)
+		label(mismatch)
+		emit1(I_POP, 15)
+		emit1(I_CLREX, 0)
+		label(done)
 		if dst >= 0 {
-			mov(dst, X17)
+			mov(dst, X16)
 		}
+		return 1
+	}
+	if name == "__atomic_swap_lse" {
+		gen_pair(args[0], args[1], d)
+		emit3(I_SWPAL, pr, X17, pl)
+		if dst >= 0 { mov(dst, X17) }
 		return 1
 	}
 	if name == "__atomic_swap" {
 		gen_pair(args[0], args[1], d)
-		emit3(I_SWPAL, pr, X17, pl)
+		let retry = new_label()
+		let failed = new_label()
+		let done = new_label()
+		label(retry)
+		emit1(I_PUSH, 15)
+		emit2(I_LDAXR, X16, pl)
+		emit3(I_STLXR, 15, pr, pl)
+		emit2(I_CBNZ, 15, failed)
+		emit1(I_POP, 15)
+		emit1(I_B, done)
+		label(failed)
+		emit1(I_POP, 15)
+		emit1(I_B, retry)
+		label(done)
 		if dst >= 0 {
-			mov(dst, X17)
+			mov(dst, X16)
 		}
+		return 1
+	}
+	if name == "__atomic_and" || name == "__atomic_or" || name == "__atomic_xor" {
+		gen_pair(args[0], args[1], d)
+		let retry = new_label()
+		let failed = new_label()
+		let done = new_label()
+		label(retry)
+		emit1(I_PUSH, 15)
+		emit2(I_LDAXR, X16, pl)
+		if name == "__atomic_and" {
+			emit4(I_AND, X17, X16, pr, 0)
+		} else if name == "__atomic_or" {
+			emit4(I_ORR, X17, X16, pr, 0)
+		} else {
+			emit4(I_EOR, X17, X16, pr, 0)
+		}
+		emit3(I_STLXR, 15, X17, pl)
+		emit2(I_CBNZ, 15, failed)
+		emit1(I_POP, 15)
+		emit1(I_B, done)
+		label(failed)
+		emit1(I_POP, 15)
+		emit1(I_B, retry)
+		label(done)
+		if dst >= 0 { mov(dst, X16) }
 		return 1
 	}
 	if name == "__atomic_load" {

@@ -1,0 +1,14 @@
+package main
+
+import "atomic"
+
+shared let counter = atomic.NewInt(0)
+
+fn main() {
+	counter.Add(1)
+	counter.Bump(1)
+	counter.And(7)
+	counter.Or(8)
+	counter.Xor(3)
+	counter.CompareSwap(1, 2)
+}

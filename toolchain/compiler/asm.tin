@@ -92,6 +92,13 @@ const I_SWPAL = 88 // a=xs b=xt c=xn: xt = [xn]; [xn] = xs
 const I_LDAR = 89 // a=xt b=xn
 const I_STLR = 90 // a=xt b=xn
 const I_YIELD = 91
+const I_LDAXR = 123 // a=xt b=xn: acquire exclusive load
+const I_STLXR = 124 // a=ws b=xt c=xn: release exclusive store, ws = status
+const I_CLREX = 125
+const I_LDCLRAL = 126 // a=xs b=xt c=xn: xt = [xn]; [xn] &= ~xs
+const I_LDEORAL = 127 // a=xs b=xt c=xn: xt = [xn]; [xn] ^= xs
+const I_LDSETAL = 128 // a=xs b=xt c=xn: xt = [xn]; [xn] |= xs
+const I_STADDAL = 129 // a=xs b=xn: [xn] += xs, result discarded
 // Sized memory access. d (kind) = size log2 | signed << 2 | float << 3 | scaled << 4.
 const I_LD = 92 // a=rt b=rn c=byte offset
 const I_ST = 93
@@ -614,9 +621,15 @@ fn print_ins(b []u8, ins i64) {
 	} else if op == I_BLR {
 		buf_str(b, "\tblr ")
 		pr_reg(b, cast(i64, x))
-	} else if op == I_LDADDAL || op == I_CASAL || op == I_SWPAL {
+	} else if op == I_LDADDAL || op == I_LDCLRAL || op == I_LDEORAL || op == I_LDSETAL || op == I_CASAL || op == I_SWPAL {
 		if op == I_LDADDAL {
 			pr_regs(b, "ldaddal", cast(i64, x), y, -1)
+		} else if op == I_LDCLRAL {
+			pr_regs(b, "ldclral", cast(i64, x), y, -1)
+		} else if op == I_LDEORAL {
+			pr_regs(b, "ldeoral", cast(i64, x), y, -1)
+		} else if op == I_LDSETAL {
+			pr_regs(b, "ldsetal", cast(i64, x), y, -1)
 		} else if op == I_CASAL {
 			pr_regs(b, "casal", cast(i64, x), y, -1)
 		} else {
@@ -624,6 +637,12 @@ fn print_ins(b []u8, ins i64) {
 		}
 		buf_str(b, ", [")
 		pr_reg(b, z)
+		buf_byte(b, ']')
+	} else if op == I_STADDAL {
+		buf_str(b, "\tstaddal ")
+		pr_reg(b, cast(i64, x))
+		buf_str(b, ", [")
+		pr_reg(b, y)
 		buf_byte(b, ']')
 	} else if op == I_LDAR || op == I_STLR {
 		if op == I_LDAR {
@@ -633,6 +652,18 @@ fn print_ins(b []u8, ins i64) {
 		}
 	} else if op == I_YIELD {
 		buf_str(b, "\tyield")
+	} else if op == I_LDAXR {
+		pr_mem(b, "ldaxr", cast(i64, x), y, 0)
+	} else if op == I_STLXR {
+		buf_str(b, "\tstlxr ")
+		pr_wreg(b, cast(i64, x))
+		buf_str(b, ", ")
+		pr_reg(b, y)
+		buf_str(b, ", [")
+		pr_reg(b, z)
+		buf_byte(b, ']')
+	} else if op == I_CLREX {
+		buf_str(b, "\tclrex")
 	} else if op == I_LD || op == I_ST || op == I_LDX || op == I_STX {
 		pr_sized(b, op, cast(i64, x), y, z, w)
 	} else if op == I_SXT {
@@ -1142,8 +1173,18 @@ fn encode(ins i64, pc i64) i64 {
 	if op == I_BLR {
 		return 0xD63F0000 | (rn(x) << 5)
 	}
-	if op == I_LDADDAL {
-		return 0xF8E00000 | (rn(x) << 16) | (rn(z) << 5) | rn(y)
+	if op == I_LDADDAL || op == I_LDCLRAL || op == I_LDEORAL || op == I_LDSETAL || op == I_STADDAL {
+		mut base = 0xF8E00000
+		if op == I_LDCLRAL { base = 0xF8E01000 }
+		if op == I_LDEORAL { base = 0xF8E02000 }
+		if op == I_LDSETAL { base = 0xF8E03000 }
+		mut rt = y
+		mut addr = z
+		if op == I_STADDAL {
+			rt = ZR
+			addr = y
+		}
+		return base | (rn(x) << 16) | (rn(addr) << 5) | rn(rt)
 	}
 	if op == I_CASAL {
 		return 0xC8E0FC00 | (rn(x) << 16) | (rn(z) << 5) | rn(y)
@@ -1159,6 +1200,15 @@ fn encode(ins i64, pc i64) i64 {
 	}
 	if op == I_YIELD {
 		return 0xD503203F
+	}
+	if op == I_LDAXR {
+		return 0xC85FFC00 | (rn(y) << 5) | rn(x)
+	}
+	if op == I_STLXR {
+		return 0xC800FC00 | (rn(x) << 16) | (rn(z) << 5) | rn(y)
+	}
+	if op == I_CLREX {
+		return 0xD5033F5F
 	}
 	if op == I_LD || op == I_ST {
 		let size = w & 3

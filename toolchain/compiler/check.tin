@@ -44,16 +44,16 @@ fn intrinsic_arity(name str) i64 {
 	if name == "load8" || name == "__set_ctx" || name == "__atomic_load" {
 		return 1
 	}
-	if name == "store8" || name == "__atomic_add" || name == "__atomic_swap" || name == "__atomic_store" {
+	if name == "store8" || name == "__atomic_add" || name == "__atomic_add_lse" || name == "__atomic_stadd_lse" || name == "__atomic_and_lse" || name == "__atomic_or_lse" || name == "__atomic_xor_lse" || name == "__atomic_swap" || name == "__atomic_swap_lse" || name == "__atomic_store" {
 		return 2
 	}
-	if name == "__atomic_cas" || name == "__st" {
+	if name == "__atomic_cas" || name == "__atomic_cas_lse" || name == "__st" {
 		return 3
 	}
 	if name == "__ld" || name == "__mulhu" {
 		return 2
 	}
-	if name == "__ctx" || name == "__yield" || name == "__empty" || name == "__fp" || name == "__tin_symbols" || name == "__image_base" {
+	if name == "__ctx" || name == "__yield" || name == "__empty" || name == "__fp" || name == "__tin_symbols" || name == "__image_base" || name == "__atomic_lse_available" {
 		return 0
 	}
 	return -1

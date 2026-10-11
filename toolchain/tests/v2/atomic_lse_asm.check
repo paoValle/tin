@@ -1,0 +1,14 @@
+# Both paths are emitted: the runtime feature flag chooses LSE or the exclusive-loop fallback.
+
+[arm64]
+CHECK: ldaddal
+CHECK: staddal
+CHECK: ldclral
+CHECK: ldsetal
+CHECK: ldeoral
+CHECK: casal
+CHECK: ldaxr
+CHECK: stlxr
+
+[amd64]
+CHECK: lock cmpxchg

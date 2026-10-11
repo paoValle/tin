@@ -74,6 +74,19 @@ fn rt_getauxval(key i64) i64 {
 	return 0
 }
 
+// rt_atomic_lse_available reuses the Linux auxiliary-vector feature query used by seal's AES path.
+// HWCAP_ATOMICS is bit 8 on arm64; x86-64 never selects the ARM-only lowering.
+fn rt_atomic_lse_available() bool {
+	if TARGET_X64 {
+		return false
+	}
+	let force = rt_getenv(cast(i64, "TIN_ATOMIC_LSE") + 8)
+	if force != 0 && load8(force) == '0' {
+		return false
+	}
+	return rt_getauxval(16)&256 != 0
+}
+
 // rt_env_value is the value in entry e when it is "name=value", or 0.
 fn rt_env_value(e i64, name i64) i64 {
 	mut i = i64(0)

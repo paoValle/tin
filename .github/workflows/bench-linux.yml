@@ -97,6 +97,16 @@ jobs:
             echo 'CPU head/base is elapsed time (lower is faster); HTTP head/base is req/s (higher is faster). >5% regressions require a rerun and profile/maintainer review; timing is not an automatic merge gate.'
           } | tee bin/bench-machine.txt
           cat bin/bench-machine.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: ARM64 atomic contention (automatic LSE versus forced fallback)
+        if: matrix.arch == 'arm64'
+        run: |
+          if grep -Eq '^Features.*(^|[[:space:]])atomics([[:space:]]|$)' /proc/cpuinfo; then
+            sh tools/ci/tin.sh atomic_perf | tee bin/bench-atomic.txt
+            cat bin/bench-atomic.txt >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Atomic contention comparison skipped: this Linux arm64 CPU does not report HWCAP_ATOMICS.' | tee bin/bench-atomic.txt
+            cat bin/bench-atomic.txt >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: CPU reference (Tin versus Go)
         run: |
           BENCH_DIR=bench/v2 sh tools/ci/tin.sh bench/run.tin --json bin/bench-cpu-reference.json | tee bin/bench-cpu-reference.txt

@@ -1,0 +1,27 @@
+package main
+
+import "../../bench/benchlib"
+import "./ci"
+import "say"
+
+// Compare automatic LSE selection with the forced exclusive-loop fallback on the same Linux arm64 host.
+fn main() {
+	let root = ci.Root()
+	let out = ci.Join(root, "bin/ci/atomic-perf")
+	ci.Mkdirs(out)
+	let exe = ci.Join(out, "atomic-contention")
+	ci.BuildTin("tools/ci/fixtures/atomic_contention.tin", exe, "", []str{})
+	let auto = benchlib.Command{Argv: []str{exe}, Dir: "", Set: []str{"TIN_POOL_WARN_MB=0"}}
+	let fallback = benchlib.Command{Argv: []str{exe}, Dir: "", Set: []str{"TIN_POOL_WARN_MB=0", "TIN_ATOMIC_LSE=0"}}
+	let timing = benchlib.Interleaved([]str{"automatic", "fallback"}, []benchlib.Command{auto, fallback}, 7, true, benchlib.DefaultRunner()) catch err {
+		ci.Fail(say.Str(err))
+		panic("unreachable")
+	}
+	let autoMs = timing.MedianOf("automatic") * 1000.0
+	let fallbackMs = timing.MedianOf("fallback") * 1000.0
+	say.Line("| path | median ms | fallback/automatic |")
+	say.Line("|---|---:|---:|")
+	say.Line("| automatic LSE selection | " + benchlib.Fixed(autoMs, 2) + " | 1.000 |")
+	say.Line("| forced exclusive fallback | " + benchlib.Fixed(fallbackMs, 2) + " | " + benchlib.Fixed(fallbackMs / autoMs, 3) + " |")
+	say.Line("7 alternating runs per path; 8 contending cores, 500,000 atomic increments per core; output checked equal: 4000000")
+}

@@ -3104,6 +3104,10 @@ Package atomic has counters and flags that every core may change at once. Keep o
 - `(c Int) Load() i64`: Load returns the value.
 - `(c Int) Store(v i64)`: Store sets the value to v.
 - `(c Int) Add(n i64) i64`: Add adds n (negative to subtract) and returns the new value.
+- `(c Int) Bump(n i64)`: Bump adds n and discards the result. On an LSE CPU this lowers to stadd.
+- `(c Int) And(mask i64) i64`: And atomically applies a bitwise AND and returns the previous value.
+- `(c Int) Or(mask i64) i64`: Or atomically applies a bitwise OR and returns the previous value.
+- `(c Int) Xor(mask i64) i64`: Xor atomically applies a bitwise XOR and returns the previous value.
 - `(c Int) Swap(v i64) i64`: Swap sets the value to v and returns the one it replaced.
 - `(c Int) CompareSwap(old i64, next i64) bool`: CompareSwap sets the value to next if it is old, and reports whether it did.
 - `type Bool struct`: Bool is a flag that cores read and change with indivisible operations.

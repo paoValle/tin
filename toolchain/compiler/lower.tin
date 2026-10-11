@@ -4319,6 +4319,17 @@ fn chk_call(e i64, want i64) i64 {
 			return indirect_call(e)
 		}
 		if cast(i64, s) == 0 {
+			if name == "__atomic_lse_available" {
+				let f = find_fn("rt_atomic_lse_available")
+				if cast(i64, f) != 0 {
+					let c = cast(Call, e)
+					c.name = ""
+					c.fn_ = cast(i64, f)
+					c.intrinsic = 0
+					c.callee = 0
+					return result_type(f)
+				}
+			}
 			let n = intrinsic_arity(name)
 			if n >= 0 {
 				if ck_trusted == 0 {
@@ -4337,6 +4348,12 @@ fn chk_call(e i64, want i64) i64 {
 				}
 				if name == "load8" {
 					return ty_byte
+				}
+				if name == "__atomic_lse_available" {
+					return ty_bool
+				}
+				if name == "__atomic_stadd_lse" {
+					return ty_void
 				}
 				return ty_int
 			}

@@ -1896,7 +1896,38 @@ fn x_gen_runtime_intrinsic(e Call, dst i64, d i64) i64 {
 		x_gen_to(args[0], XCTX, d)
 		return 1
 	}
-	if name == "__atomic_add" {
+	if name == "__atomic_lse_available" {
+		if dst >= 0 { x_load_imm(dst, 0) }
+		return 1
+	}
+	if name == "__atomic_and_lse" || name == "__atomic_or_lse" || name == "__atomic_xor_lse" {
+		x_gen_pair(args[0], args[1], d)
+		let retry = new_label()
+		let failed = new_label()
+		let done = new_label()
+		emit3(X_LOAD, XSCR, x_mem1(pl, 0), 3)
+		x_label(retry)
+		x_mov(RAX, XSCR)
+		x_mov(XSCR2, XSCR)
+		if name == "__atomic_and_lse" {
+			emit2(X_AND, XSCR2, pr)
+		} else if name == "__atomic_or_lse" {
+			emit2(X_OR, XSCR2, pr)
+		} else {
+			emit2(X_XOR, XSCR2, pr)
+		}
+		emit2(X_LOCK_CMPXCHG, XSCR2, x_mem1(pl, 0))
+		emit2(X_JCC, XC_NE, failed)
+		if dst >= 0 { x_mov(dst, XSCR) }
+		emit1(X_JMP, done)
+		// A failed cmpxchg leaves the observed value in rax.
+		x_label(failed)
+		x_mov(XSCR, RAX)
+		emit1(X_JMP, retry)
+		x_label(done)
+		return 1
+	}
+	if name == "__atomic_add" || name == "__atomic_add_lse" {
 		// Returns the old value: lock xadd adds r11 to [p] and leaves the old value in r11.
 		x_gen_pair(args[0], args[1], d)
 		x_mov(XSCR, pr)
@@ -1906,7 +1937,12 @@ fn x_gen_runtime_intrinsic(e Call, dst i64, d i64) i64 {
 		}
 		return 1
 	}
-	if name == "__atomic_cas" {
+	if name == "__atomic_stadd_lse" {
+		x_gen_pair(args[0], args[1], d)
+		emit2(X_LOCK_XADD, pr, x_mem1(pl, 0))
+		return 1
+	}
+	if name == "__atomic_cas" || name == "__atomic_cas_lse" {
 		// __atomic_cas(p, old, new) returns the value found at p.
 		let p = x_gen_val(args[0], d)
 		let d1 = next_depth(p, d)
@@ -1924,7 +1960,7 @@ fn x_gen_runtime_intrinsic(e Call, dst i64, d i64) i64 {
 		}
 		return 1
 	}
-	if name == "__atomic_swap" {
+	if name == "__atomic_swap" || name == "__atomic_swap_lse" {
 		x_gen_pair(args[0], args[1], d)
 		x_mov(XSCR, pr)
 		emit2(X_XCHG, XSCR, x_mem1(pl, 0))

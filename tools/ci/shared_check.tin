@@ -28,9 +28,11 @@ fn bump(port i64, bumps i64) ! {
 }
 
 // run starts the server on this many cores and returns its resident memory (bytes) and the counter after the hits.
-fn run(exe str, cores i64, log str) (i64, i64) {
+fn run(exe str, cores i64, log str, lse str) (i64, i64) {
 	let port = nettest.Port()
-	let server = nettest.Start(exe, []str{}, []str{"TIN_CORES=" + mint.Itoa(cores)}, log, port)
+	mut env = []str{"TIN_CORES=" + mint.Itoa(cores)}
+	if lse != "" { env = append(env, "TIN_ATOMIC_LSE=" + lse) }
+	let server = nettest.Start(exe, []str{}, env, log, port)
 	server.Ready(20)
 	for i in 0..40 {
 		ci.Check(hit(port, "/sum") == "12500000 235076008923", "shared: /sum answered " + hit(port, "/sum"))
@@ -54,9 +56,11 @@ fn main() {
 	ci.Mkdirs(out)
 	let exe = ci.Join(out, "shared")
 	ci.BuildTin("tools/ci/fixtures/shared.tin", exe, "", []str{})
-	let (one, c1) = run(exe, 1, ci.Join(out, "one.log"))
-	let (eight, c8) = run(exe, 8, ci.Join(out, "eight.log"))
+	let (one, c1) = run(exe, 1, ci.Join(out, "one.log"), "0")
+	let (eight, c8) = run(exe, 8, ci.Join(out, "eight.log"), "0")
+	let (eightAuto, c8Auto) = run(exe, 8, ci.Join(out, "eight-auto.log"), "")
 	ci.Check(one > 90 * 1048576, "shared: one core holds only " + mint.Itoa(one) + " bytes")
 	ci.Check(eight - one < 40 * 1048576, "shared: eight cores hold " + mint.Itoa(eight) + " bytes against " + mint.Itoa(one))
-	ci.Pass("100 MB shared let: resident " + mint.Itoa(one / 1048576) + " MiB on 1 core, " + mint.Itoa(eight / 1048576) + " MiB on 8 cores; the atomic counter counted " + mint.Itoa(c1) + " and " + mint.Itoa(c8))
+	ci.Check(eightAuto - one < 40 * 1048576, "shared: automatic atomics on eight cores hold " + mint.Itoa(eightAuto) + " bytes against " + mint.Itoa(one))
+	ci.Pass("shared let: 1 core and 8 cores with forced fallback and automatic atomics; counters " + mint.Itoa(c1) + ", " + mint.Itoa(c8) + ", " + mint.Itoa(c8Auto))
 }
