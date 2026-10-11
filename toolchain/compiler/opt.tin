@@ -1217,7 +1217,7 @@ fn invariant(e i64) i64 {
 		return i64(s.kind == SYM_LOCAL && s.addr == 0 && is_assigned(cast(i64, s)) == 0)
 	}
 	if k == EX_UNARY {
-		return i64(cast(Unary, e).op != "&" && invariant(cast(Unary, e).x) != 0)
+		return i64(cast(Unary, e).op != "&" && cast(Unary, e).ovf != OVF_CHECK && invariant(cast(Unary, e).x) != 0)
 	}
 	if k == EX_BINARY {
 		return i64(cast(Binary, e).op != "&&" && cast(Binary, e).op != "||" && may_panic(cast(Binary, e)) == 0 && invariant(cast(Binary, e).l) != 0 && invariant(cast(Binary, e).r) != 0)
@@ -1227,6 +1227,10 @@ fn invariant(e i64) i64 {
 	}
 	if k == EX_CONV {
 		if (cast(Conv, e).kind == CV_LEN || cast(Conv, e).kind == CV_CAP) && lc_calls != 0 {
+			return 0
+		}
+		if cast(Conv, e).ovf == OVF_CHECK {
+			// A float to integer conversion panics out of range (#362): it stays where it is.
 			return 0
 		}
 		return invariant(cast(Conv, e).x)

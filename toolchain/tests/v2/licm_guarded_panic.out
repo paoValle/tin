@@ -1,0 +1,5 @@
+negation behind a guard = 0
+negation behind a continue = 48
+conversion behind a guard = 27
+negation reached panic
+conversion reached panic

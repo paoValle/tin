@@ -1,0 +1,109 @@
+package main
+
+// Loop-invariant code motion hoists an expression out of a loop only when it cannot panic,
+// since the hoisted copy runs even where a guard or a `continue` would have skipped it. A
+// checked negation and a float to integer conversion can panic, so they stay in place: each
+// guarded case prints its result, and a case that reaches the operation still panics.
+
+import "fault"
+import "say"
+
+fn show(name str, f fn() str) {
+	let v = guard {
+		f()
+	} catch err {
+		if fault.Is(err, fault.Panic) {
+			say.Line(name, "panic")
+		} else {
+			say.Line(name, "fault", err)
+		}
+		return
+	}
+	say.Line(name, "=", v)
+}
+
+// negGuarded negates j ^ (min + 1) only when a condition that never holds is true: j = 1
+// would make it -min.
+fn negGuarded(js []i64) i64 {
+	mut x = i64(0)
+	for j in js {
+		for i in 0..3 {
+			if i > 100 {
+				x = -(j ^ i64(-9223372036854775807))
+			}
+		}
+	}
+	return x
+}
+
+// negContinue skips the negation with a continue on the iterations where it would overflow.
+fn negContinue(js []i64) i64 {
+	mut x = i64(0)
+	for j in js {
+		for i in 0..3 {
+			if j == 1 {
+				continue
+			}
+			x += -(j ^ i64(-9223372036854775807)) >> 60
+			x += i
+		}
+	}
+	return x
+}
+
+// convGuarded converts f * 2 only when f is small: 1e30 * 2 is out of range for i64.
+fn convGuarded(fs []f64) i64 {
+	mut x = i64(0)
+	for f in fs {
+		for i in 0..3 {
+			if f < 100.0 {
+				x += i64(f * 2.0)
+			}
+		}
+	}
+	return x
+}
+
+// negReached reaches the overflowing negation: it must still panic.
+fn negReached(js []i64) i64 {
+	mut x = i64(0)
+	for j in js {
+		for i in 0..3 {
+			if i == 2 {
+				x = -(j ^ i64(-9223372036854775807))
+			}
+		}
+	}
+	return x
+}
+
+// convReached reaches the out-of-range conversion: it must still panic.
+fn convReached(fs []f64) i64 {
+	mut x = i64(0)
+	for f in fs {
+		for i in 0..3 {
+			if i == 2 {
+				x += i64(f * 2.0)
+			}
+		}
+	}
+	return x
+}
+
+fn main() {
+	show("negation behind a guard", fn() str {
+		return say.Str(negGuarded([]i64{0, 1, 2}))
+	})
+	show("negation behind a continue", fn() str {
+		return say.Str(negContinue([]i64{0, 1, 2}))
+	})
+	show("conversion behind a guard", fn() str {
+		return say.Str(convGuarded([]f64{1.5, 1e30, 3.0}))
+	})
+	show("negation reached", fn() str {
+		return say.Str(negReached([]i64{0, 1, 2}))
+	})
+	show("conversion reached", fn() str {
+		return say.Str(convReached([]f64{1.5, 1e30, 3.0}))
+	})
+}
