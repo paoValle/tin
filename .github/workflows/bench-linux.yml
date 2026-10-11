@@ -12,6 +12,10 @@ on:
         description: Enable experimental CPU safepoints in the head compiler
         type: boolean
         default: false
+      inline_sweep:
+        description: Measure inline.tin thresholds at current, half, and double values
+        type: boolean
+        default: false
   schedule:
     - cron: '0 6 * * 1'
 
@@ -76,6 +80,36 @@ jobs:
         run: |
           make bootstrap
           make -C bin/bench-base bootstrap
+      - name: Inline threshold sweep (native Linux)
+        if: ${{ inputs.inline_sweep }}
+        run: |
+          {
+            echo '### Inline threshold sweep'
+            echo 'The variants run in an interleaved current, half, double, double, half, current order on this native Linux runner. Each starts from the checked-in seed, performs the two-build fixed-point bootstrap, then runs the seven-sample Tin/Go CPU suite in bench/v2.'
+            echo '```'
+            uname -a
+            lscpu | grep -E '^(Model name|CPU\(s\)):' || true
+            go version
+            echo '```'
+          } | tee bin/bench-inline-machine.txt
+          cat bin/bench-inline-machine.txt >> "$GITHUB_STEP_SUMMARY"
+          for spec in current:1:4:40:32 half:1:2:20:16 double:1:8:80:64 double:2:8:80:64 half:2:2:20:16 current:2:4:40:32; do
+            IFS=: read -r variant repetition depth nodes literal <<< "$spec"
+            git checkout -- toolchain/compiler/inline.tin
+            if [ "$variant" != current ]; then
+              sed -i "s/il_depth < 4/il_depth < $depth/" toolchain/compiler/inline.tin
+              sed -i "s/il_size(cast(ReturnStmt, r).value) <= 40/il_size(cast(ReturnStmt, r).value) <= $nodes/" toolchain/compiler/inline.tin
+              sed -i "s/cast(StrLit, lit).len <= 32/cast(StrLit, lit).len <= $literal/" toolchain/compiler/inline.tin
+            fi
+            rm -f bin/tinc
+            rm -rf bin/s2 bin/s3
+            /usr/bin/time -f '%e' -o "bin/bench-inline-$variant-$repetition-bootstrap-seconds.txt" make -s bootstrap 2>&1 | tee "bin/bench-inline-$variant-$repetition-bootstrap.txt"
+            echo "### $variant run $repetition (depth=$depth, expression nodes=$nodes, append literal bytes=$literal)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Bootstrap fixed-point time: $(cat "bin/bench-inline-$variant-$repetition-bootstrap-seconds.txt") s" >> "$GITHUB_STEP_SUMMARY"
+            BENCH_DIR=bench/v2 sh tools/ci/tin.sh bench/run.tin --json "bin/bench-inline-$variant-$repetition.json" | tee "bin/bench-inline-$variant-$repetition.txt"
+            cat "bin/bench-inline-$variant-$repetition.txt" >> "$GITHUB_STEP_SUMMARY"
+          done
+          git checkout -- toolchain/compiler/inline.tin
       - name: Machine and measurement settings
         env:
           EXPECTED_ARCH: ${{ matrix.arch }}

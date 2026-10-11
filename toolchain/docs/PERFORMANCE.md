@@ -356,6 +356,84 @@ The generic code is slower than `Ints` for the same reason the math functions ar
 comparisons that Go inlines are calls here (the comparator form), and Tin's inliner takes only
 single-statement functions. `Ints` and `Strs` stay for programs that sort those and nothing else.
 
+## 3d. Inliner thresholds
+
+`toolchain/compiler/inline.tin` has two small-call inlining budgets: `il_depth < 4`
+(maximum nested expansion depth) and `il_size(...) <= 40` (expression nodes in the
+callee's single return expression). There is no call-count budget. The same file's
+append-string fast path has a separate literal-length cutoff of 32 bytes. This sweep
+scaled those three values together: current (4, 40, 32), half (2, 20, 16), and double
+(8, 80, 64). The append copy widths (8, 4, 2, 1 bytes) are fixed safe load/store sizes,
+not a candidate-inlining budget.
+
+Each variant rebuilt from the checked-in seed, ran `make bootstrap` to verify the
+self-hosting fixed point, and ran `bench/v2` with seven Tin/Go repetitions. The order
+was current, half, double, double, half, current on each machine. The table combines
+the 14 raw Tin samples per benchmark and variant: current is the current-threshold
+median in milliseconds, and the other columns are median elapsed-time ratios against
+current (below 1 is faster). The current milliseconds are context only on these shared
+runners; the ratios are the comparison.
+
+**Machines:** GitHub-hosted shared `ubuntu-24.04-arm`, Neoverse-N2, Linux 6.17.0-1022-azure,
+Go 1.27.2 linux/arm64; and GitHub-hosted shared `ubuntu-24.04`, AMD EPYC 7763, Linux
+6.17.0-1022-azure, Go 1.27.2 linux/amd64. Both sweep steps and artifact uploads succeeded
+in [workflow run 38091592358](https://github.com/yasserreslan/tin/actions/runs/38091592358);
+the remaining workflow benchmarks were cancelled after the threshold measurements.
+
+| architecture | thresholds | bootstrap median | change vs current |
+|---|---|---:|---:|
+| arm64 | current (4, 40, 32) | 2.08 s | — |
+| arm64 | half (2, 20, 16) | 2.08 s | 0.0% |
+| arm64 | double (8, 80, 64) | 2.07 s | -0.5% |
+| amd64 | current (4, 40, 32) | 3.94 s | — |
+| amd64 | half (2, 20, 16) | 3.91 s | -0.8% |
+| amd64 | double (8, 80, 64) | 3.90 s | -1.1% |
+
+| benchmark | arm64 current ms | half/current | double/current | amd64 current ms | half/current | double/current |
+|---|---:|---:|---:|---:|---:|---:|
+| aesgcm | 18.3 | 0.994 | 0.992 | 17.6 | 1.006 | 1.000 |
+| aos | 81.6 | 0.984 | 0.989 | 116.1 | 1.005 | 1.003 |
+| appendfit | 174.2 | 0.999 | 0.992 | 246.1 | 0.998 | 0.997 |
+| arena_steps | 721.4 | 0.997 | 0.985 | 1171.8 | 1.003 | 1.004 |
+| bigint | 184.6 | 1.000 | 0.992 | 260.2 | 1.000 | 1.001 |
+| bintrees | 350.3 | 1.025 | 1.002 | 671.9 | 1.000 | 1.001 |
+| div10q | 299.7 | 1.000 | 1.000 | 86.9 | 1.000 | 0.999 |
+| fannkuch | 2902.1 | 0.999 | 1.000 | 3939.6 | 1.001 | 0.999 |
+| fmt_lines | 430.5 | 0.999 | 1.001 | 649.3 | 0.998 | 0.997 |
+| hashmap | 2718.0 | 0.936 | 0.983 | 2271.3 | 0.984 | 0.995 |
+| heap_generic | 433.7 | 0.997 | 0.995 | 642.7 | 0.984 | 0.992 |
+| heap_int | 370.7 | 0.999 | 0.998 | 407.6 | 0.989 | 0.993 |
+| indexsum | 43.9 | 1.000 | 1.000 | 33.9 | 1.000 | 0.999 |
+| json | 2124.4 | 1.003 | 0.998 | 2670.1 | 0.999 | 0.997 |
+| lcg | 1545.2 | 1.000 | 1.000 | 1762.4 | 1.000 | 1.000 |
+| mandelbrot | 944.0 | 0.999 | 1.000 | 1553.9 | 1.000 | 1.000 |
+| memory_16 | 212.7 | 1.010 | 1.008 | 406.9 | 1.000 | 1.001 |
+| memory_1k | 14.6 | 1.000 | 0.997 | 12.1 | 0.998 | 0.999 |
+| memory_1m | 20.6 | 0.996 | 0.995 | 20.1 | 0.995 | 1.001 |
+| mlkem768 | 58.9 | 1.004 | 0.996 | 75.4 | 1.001 | 1.003 |
+| nbody | 3571.5 | 1.000 | 1.000 | 5691.3 | 0.992 | 0.986 |
+| optlookup | 94.5 | 0.996 | 0.997 | 114.3 | 1.002 | 0.998 |
+| ordered_less | 36.1 | 0.996 | 0.997 | 40.2 | 0.996 | 0.996 |
+| p256ecdh | 45.3 | 0.994 | 0.995 | 60.3 | 1.001 | 1.003 |
+| regex | 44.3 | 0.999 | 0.995 | 69.2 | 1.001 | 1.001 |
+| rem10 | 322.9 | 1.000 | 1.000 | 128.8 | 0.999 | 0.998 |
+| rsa2048 | 151.7 | 0.998 | 0.999 | 163.7 | 0.997 | 0.998 |
+| sha512 | 499.8 | 1.037 | 0.998 | 601.9 | 1.134 | 0.999 |
+| sieve | 479.7 | 0.905 | 0.917 | 528.8 | 0.982 | 0.980 |
+| sort_bench | 2008.2 | 0.998 | 0.998 | 2949.8 | 0.998 | 0.999 |
+| spectral | 1787.7 | 1.000 | 1.000 | 7785.6 | 1.000 | 0.999 |
+| strbuild | 153.2 | 0.998 | 0.994 | 145.7 | 1.000 | 1.001 |
+| tls13keys | 50.3 | 1.001 | 1.001 | 72.5 | 1.000 | 0.998 |
+| vec_results | 987.0 | 1.003 | 1.000 | 1143.5 | 1.002 | 1.000 |
+| x25519 | 68.5 | 1.000 | 0.998 | 101.7 | 1.000 | 0.999 |
+
+The geometric mean of elapsed-time ratios is 0.996 (half) and 0.995 (double) on arm64,
+and 1.002 (half) and 0.998 (double) on amd64. Halving makes `sha512` 13.4% slower on
+amd64 (3.7% on arm64); doubling returns it to parity. Other changes are mixed, with
+the `sieve` gains not appearing consistently at the same size across architectures.
+Bootstrap times are effectively unchanged. The current budgets remain: neither wider
+threshold shows a repeatable suite-wide gain, while halving has a material regression.
+
 ## 4. Compile times and binary sizes
 
 The compiler (about 35k lines, all backends) builds itself in 0.07 s
