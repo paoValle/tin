@@ -2121,7 +2121,7 @@ one of `vdbcoOqxXUeEfFgGstp` (`%%` is a percent sign), formats its value's type 
 integer, `%s` a `str` or fault, `%f` a float, `%t` a bool, `%v` anything), and every verb has a
 value and every value a verb. The spec of an interpolated value (`"{x:5.2f}"`) is checked the
 same way: `[flags][width][.precision][verb]`. A format that is not a literal is checked when it
-runs, which prints Go's `%!d(MISSING)` and `%!(EXTRA ...)` markers.
+runs, which prints Go's `%!d(MISSING)`, `%!(EXTRA ...)` and `%!d(x)` (a wrong verb) markers.
 
 ```tin edition=1
 package main

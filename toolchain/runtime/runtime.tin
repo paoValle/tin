@@ -4053,8 +4053,15 @@ fn rt_fmt_next(f i64) i64 {
 			fb_str(f, "%!(NOVERB)")
 			break
 		}
-		let verb = i64(load8(p + i))
-		i += 1
+		mut verb = i64(load8(p + i))
+		if verb < 0x80 {
+			i += 1
+		} else {
+			// As Go: a verb is a whole character, which a mark such as %!é(1) repeats.
+			let r = rt_utf8(s, i)
+			verb = r & 0xffffffff
+			i += r >> 32
+		}
 		if verb == '%' {
 			// Go's %% after flags, a width or a precision: a percent sign that takes no value.
 			fb_byte(f, '%')
@@ -4071,6 +4078,10 @@ fn rt_fmt_next(f i64) i64 {
 // rt_fmt_arg starts one argument: the separator for Print/Println, or the next verb
 // for Printf. It returns the verb to use.
 fn rt_fmt_arg(f i64, isstr bool) i64 {
+	if f[fNest] != 0 && f[fMode] == 0 {
+		// As Go: every element of a slice, map or struct takes the operand's verb and flags.
+		return f[fVerb]
+	}
 	if f[fNest] != 0 {
 		f[fWidth] = 0
 		f[fPrec] = -1
@@ -4088,6 +4099,13 @@ fn rt_fmt_arg(f i64, isstr bool) i64 {
 			f[fVerb] = 'v'
 			f[fWidth] = 0
 			f[fPrec] = -1
+			// Go clears every flag before the extra values.
+			f[fMinus] = 0
+			f[fPlus] = 0
+			f[fZero] = 0
+			f[fSharp] = 0
+			f[fSpace] = 0
+			f[fPlusV] = 0
 		}
 		f[fCount] += 1
 		if f[fVerb] == 'v' && f[fPlus] != 0 {
@@ -4170,6 +4188,16 @@ fn fmt_uint_buf(buf i64, v i64, base i64, upper bool) i64 {
 mut fmtUnsigned bool
 
 fn fmt_int(f i64, v i64, verb i64) {
+	if !fmt_verb_in(verb, "vdbcoOqxXU") {
+		fmt_bad_verb(f, verb)
+		fmt_int(f, v, 'd')
+		fb_byte(f, ')')
+		return
+	}
+	if verb == 'v' && f[fSharp] != 0 && fmtUnsigned {
+		// Go's %#v of an unsigned integer is its Go syntax: hexadecimal with 0x.
+		verb = 'x'
+	}
 	let buf = fmt_frame_scratch(f, 160+f[fWidth]+f[fPrec])
 	if verb == 'c' {
 		let n = rt_utf8_put(buf, v)
@@ -4331,12 +4359,62 @@ fn rt_fmt_p(v i64) {
 
 fn rt_fmt_b(b bool) {
 	let f = rt_frame()
-	rt_fmt_arg(f, false)
+	fmt_bool(f, b, rt_fmt_arg(f, false))
+}
+
+// fmt_bool writes true or false padded to the width; a verb other than %t and %v gets Go's mark.
+fn fmt_bool(f i64, b bool, verb i64) {
+	if verb != 't' && verb != 'v' {
+		fmt_bad_verb(f, verb)
+		fmt_bool(f, b, 'v')
+		fb_byte(f, ')')
+		return
+	}
 	if b {
 		fmt_pad(f, cast(i64, "true")+8, 4)
 	} else {
 		fmt_pad(f, cast(i64, "false")+8, 5)
 	}
+}
+
+// fmt_bad_verb opens Go's mark for a verb that cannot format its value, as in %!d(x): the
+// caller writes the value as %v does, with the same flags, and closes the mark with ')'. Go
+// also names the value's type (%!d(string=x)); like %!(EXTRA ...), the mark leaves it out.
+fn fmt_bad_verb(f i64, verb i64) {
+	fb_str(f, "%!")
+	fb_verb(f, verb)
+	fb_byte(f, '(')
+}
+
+// fb_verb writes a verb, which is a character, in UTF-8.
+fn fb_verb(f i64, verb i64) {
+	fb_reserve(f, 4)
+	f[fLen] += rt_utf8_put(f[fData]+f[fLen], verb)
+}
+
+// fmt_slice_pointer writes %p of a slice as Go does: the address of its first element (0x0
+// for a nil slice) in hexadecimal with 0x, which the # flag leaves out, padded to the width.
+fn fmt_slice_pointer(f i64, s i64) {
+	mut p = 0
+	if s != 0 {
+		p = s[2]
+	}
+	let sharp = f[fSharp]
+	f[fSharp] = 1 - sharp
+	fmtUnsigned = true
+	fmt_int(f, p, 'x')
+	fmtUnsigned = false
+	f[fSharp] = sharp
+}
+
+// fmt_verb_in reports whether verb is one of the bytes of verbs.
+fn fmt_verb_in(verb i64, verbs str) bool {
+	for i in 0..len(verbs) {
+		if i64(verbs[i]) == verb {
+			return true
+		}
+	}
+	return false
 }
 
 // fmt_quote_hex writes v as exactly n lower-case hex digits.
@@ -4509,6 +4587,19 @@ fn rt_can_backquote(s str) bool {
 }
 
 fn fmt_string(f i64, s str, verb i64) {
+	if !fmt_verb_in(verb, "vsqxX") {
+		fmt_bad_verb(f, verb)
+		fmt_string(f, s, 's')
+		fb_byte(f, ')')
+		return
+	}
+	if verb == 'v' && f[fSharp] != 0 {
+		// Go's %#v of a string is its Go syntax: double-quoted, never backquoted.
+		f[fSharp] = 0
+		fmt_string(f, s, 'q')
+		f[fSharp] = 1
+		return
+	}
 	if verb == 'q' {
 		// Go's %q: precision counts runes of the input; # backquotes when the string allows it,
 		// + escapes every non-ASCII rune; width pads the quoted text (#149).
@@ -4838,6 +4929,13 @@ fn rt_float_json(x f64) str {
 }
 
 fn fmt_float(f i64, x f64, verb i64) {
+	if !fmt_verb_in(verb, "vbeEfFgGxX") {
+		// Go prints the value of a wrong verb as %v, and for a float its %v is %g.
+		fmt_bad_verb(f, verb)
+		fmt_float(f, x, 'g')
+		fb_byte(f, ')')
+		return
+	}
 	if fmt_nonfinite(f, x, verb) {
 		return
 	}
@@ -5131,6 +5229,10 @@ fn rt_fmt_f32(x f64) {
 fn rt_fmt_slf32(s []f32) {
 	let f = rt_frame()
 	let verb = rt_fmt_arg(f, false)
+	if verb == 'p' && f[fNest] == 0 {
+		fmt_slice_pointer(f, cast(i64, s))
+		return
+	}
 	shortF32 = true
 	fb_byte(f, '[')
 	for i, v in s {
@@ -5148,6 +5250,10 @@ fn rt_fmt_slf32(s []f32) {
 fn rt_fmt_sli(s []i64) {
 	let f = rt_frame()
 	let verb = rt_fmt_arg(f, false)
+	if verb == 'p' && f[fNest] == 0 {
+		fmt_slice_pointer(f, cast(i64, s))
+		return
+	}
 	fb_byte(f, '[')
 	for i, v in s {
 		if i > 0 {
@@ -5161,7 +5267,11 @@ fn rt_fmt_sli(s []i64) {
 fn rt_fmt_slb(s []u8) {
 	let f = rt_frame()
 	let verb = rt_fmt_arg(f, false)
-	if verb == 's' || verb == 'q' || verb == 'x' {
+	if verb == 'p' && f[fNest] == 0 {
+		fmt_slice_pointer(f, cast(i64, s))
+		return
+	}
+	if verb == 's' || verb == 'q' || verb == 'x' || verb == 'X' {
 		fmt_string(f, rt_str_from_bytes(s), verb)
 		return
 	}
@@ -5178,6 +5288,10 @@ fn rt_fmt_slb(s []u8) {
 fn rt_fmt_sls(s []str) {
 	let f = rt_frame()
 	let verb = rt_fmt_arg(f, false)
+	if verb == 'p' && f[fNest] == 0 {
+		fmt_slice_pointer(f, cast(i64, s))
+		return
+	}
 	fb_byte(f, '[')
 	for i, v in s {
 		if i > 0 {
@@ -5191,6 +5305,10 @@ fn rt_fmt_sls(s []str) {
 fn rt_fmt_slf(s []f64) {
 	let f = rt_frame()
 	let verb = rt_fmt_arg(f, false)
+	if verb == 'p' && f[fNest] == 0 {
+		fmt_slice_pointer(f, cast(i64, s))
+		return
+	}
 	fb_byte(f, '[')
 	for i, v in s {
 		if i > 0 {
@@ -5203,17 +5321,18 @@ fn rt_fmt_slf(s []f64) {
 
 fn rt_fmt_slt(s []bool) {
 	let f = rt_frame()
-	rt_fmt_arg(f, false)
+	let verb = rt_fmt_arg(f, false)
+	if verb == 'p' && f[fNest] == 0 {
+		fmt_slice_pointer(f, cast(i64, s))
+		return
+	}
 	fb_byte(f, '[')
 	for i, v in s {
 		if i > 0 {
 			fb_byte(f, ' ')
 		}
-		if v {
-			fb_str(f, "true")
-		} else {
-			fb_str(f, "false")
-		}
+		// Each element is padded to the width, as Go pads them.
+		fmt_bool(f, v, verb)
 	}
 	fb_byte(f, ']')
 }
@@ -5225,7 +5344,7 @@ fn rt_fmt_finish() i64 {
 	if f[fMode] == 0 {
 		for rt_fmt_next(f) != 0 {
 			fb_str(f, "%!")
-			fb_byte(f, f[fVerb])
+			fb_verb(f, f[fVerb])
 			fb_str(f, "(MISSING)")
 		}
 		if f[fExtra] != 0 {
@@ -5485,9 +5604,18 @@ fn rt_fmt_u(v i64) {
 fn rt_fmt_slint(s i64, width i64, signed i64) {
 	let f = rt_frame()
 	let verb = rt_fmt_arg(f, false)
-	fb_byte(f, '[')
+	if verb == 'p' && f[fNest] == 0 {
+		fmt_slice_pointer(f, s)
+		return
+	}
 	let n = s[0]
 	let d = s[2]
+	if width == 1 && signed == 0 && (verb == 's' || verb == 'q' || verb == 'x' || verb == 'X') {
+		// Go formats a []u8 as a string of bytes under %s, %q, %x and %X.
+		fmt_string(f, rt_str_from_raw(d, n), verb)
+		return
+	}
+	fb_byte(f, '[')
 	for i in i64(0)..n {
 		if i > 0 {
 			fb_byte(f, ' ')

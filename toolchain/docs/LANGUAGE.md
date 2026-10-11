@@ -2059,6 +2059,17 @@ or `<nil>`.
 `%+v` is not `%v` with a sign: it prints no `+` on numbers and gives structs their field
 names (`{a:1 b:2.5}`). `%+d`, `%+g`, `%+f` and `%+e` do print the sign.
 
+A verb and its flags apply to every element of a slice, map or struct, as in Go: `%3d` of
+`[]i64{1, 20}` is `[  1  20]`. `%x`, `%X` and `%q` of a `[]u8` format its bytes as one string
+(`%x` of `[]u8{1, 255}` is `01ff`). `%#v` of a `str` is its Go syntax (`"a"`), and of an
+unsigned integer too (`0xff`); a slice, map or struct does not have its Go syntax yet (#1251).
+
+A format that is not a literal is checked as it runs, as Go's is. A verb with no value prints
+`%!d(MISSING)`, values with no verb print `%!(EXTRA 1, x)`, and a verb that does not fit its
+value, or is not a verb, prints the value as `%v` would inside a mark: `%d` of `"x"` is
+`%!d(x)`, for each element of a slice, map or struct too. Go's marks also name the value's type
+(`%!d(string=x)`); Tin's leave it out. `%p` of a slice is the address of its first element.
+
 Output to stdout is written at every newline, to a terminal, a pipe or a file alike, as Go's is
 (#747): `say.Line` and a format ending in `\n` reach a server's log collector before its response
 does, and survive a SIGKILL. Text without a newline (`say.Text`) waits in a 64 KiB buffer for

@@ -1,0 +1,58 @@
+package main
+
+// A format that is not a literal can give a value a verb that does not fit it. say.Fmt then
+// writes Go's mark, %!d(x), around the value as %v prints it, for each element of a slice, map
+// or struct too. Every line is Go 1.27's output with the type names taken out of the marks,
+// which Tin leaves out as it does in %!(EXTRA ...).
+
+import "say"
+import "twine"
+
+type P struct {
+	A i64
+	B str
+	C f64
+	D bool
+}
+
+fn row(f str) str {
+	mut m = make(map[str]i64)
+	m["k"] = 1
+	mut parts = []str{}
+	parts = append(parts, say.Fmt(f, -42))
+	parts = append(parts, say.Fmt(f, "héllo"))
+	parts = append(parts, say.Fmt(f, 1.5))
+	parts = append(parts, say.Fmt(f, f32(0.1)))
+	parts = append(parts, say.Fmt(f, true))
+	parts = append(parts, say.Fmt(f, u8(200)))
+	parts = append(parts, say.Fmt(f, i32(7)))
+	parts = append(parts, say.Fmt(f, []i64{1, -20}))
+	parts = append(parts, say.Fmt(f, []str{"a"}))
+	parts = append(parts, say.Fmt(f, []bool{false}))
+	parts = append(parts, say.Fmt(f, []f64{2.5}))
+	parts = append(parts, say.Fmt(f, []u8{65, 200}))
+	parts = append(parts, say.Fmt(f, []i16{-3}))
+	parts = append(parts, say.Fmt(f, P{A: 7, B: "s", C: 2.5, D: true}))
+	parts = append(parts, say.Fmt(f, m))
+	return twine.Join(parts, " ")
+}
+
+fn main() {
+	let fs = []str{"%d", "%5s|", "%-6t|", "%.2d", "%#d", "%+x", "%z", "%é", "%c", "%e", "%U", "%q"}
+	for f in fs {
+		say.Line(say.Fmt("%-6q %s", f, row(f)))
+	}
+	// Extra values take no flags; a verb past the values, or a format that is all verb, is MISSING.
+	mut extra = "%d"
+	mut flags = "%+ #08.3v|"
+	mut missing = "%5d %d"
+	mut lone = "%é"
+	say.Line(say.Fmt(extra, 1, "x", true), say.Fmt(flags, 1.5, -2.25), say.Fmt(missing, 1), say.Fmt(lone))
+	// %p of a slice is the address of its first element: 0x0 for an empty one.
+	mut p = "%p|%5p|%-5p|%#p|%#05p"
+	let none = []str{}
+	say.Line(say.Fmt(p, none, none, none, none, none))
+	let xs = []i64{1, 2}
+	let at = say.Fmt(p, xs, xs, xs, xs, xs)
+	say.Line(twine.HasPrefix(at, "0x"), twine.HasPrefix(say.Fmt("%p", xs), "0x"), say.Fmt("%p", xs) == say.Fmt("%p", xs[0:1]), say.Fmt("%p", xs) == say.Fmt("%p", xs[1:]))
+}

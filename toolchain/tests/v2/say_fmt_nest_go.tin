@@ -1,0 +1,71 @@
+package main
+
+// say.Fmt applies a verb and its flags to every element of a slice, map or struct, and formats a
+// []u8 as a string of bytes under %q, %x and %X, as Go's fmt does; %#v of a str or an unsigned
+// integer is its Go syntax. Every line is Go 1.27's output.
+
+import "say"
+
+type In struct {
+	x i64
+	s str
+}
+
+type T struct {
+	a  i64
+	b  str
+	f  f64
+	ok bool
+	in In
+	l  []i64
+	m  map[str]f64
+}
+
+fn main() {
+	mut m = make(map[str]f64)
+	m["k"] = 0.5
+	let t = T{a: 7, b: "hi", f: 2.5, ok: true, in: In{x: -3, s: "z"}, l: []i64{1, 20}, m: m}
+	let ts = []T{t, t}
+	mut mm = make(map[str][]i64)
+	mm["a"] = []i64{1, 2}
+	mm["b"] = []i64{}
+	mut mf = make(map[str]f64)
+	mf["a"] = 1.25
+	mf["b"] = -2.0
+	mut mf2 = make(map[str]f64)
+	mf2["a"] = 1.25
+	mut mi = make(map[i64]i64)
+	mi[1] = 10
+	mi[2] = 255
+	mut mq = make(map[i64]i64)
+	mq[65] = 66
+	slices()
+	say.Line(say.Fmt("%#v|%#v|%#v|%#v|%#8v|%#.2v|%#v|%#v|%#v", "a\"b`", "", u8(255), u64(1) << 63, u32(7), "hello", i64(-5), true, 2.5))
+	say.Line(say.Fmt("%v|%+v|%6v|%-4v", t, t, t, t))
+	say.Line(say.Fmt("%v|%4v|%+v", ts, ts, ts))
+	say.Line(say.Fmt("%v|%3v|%x|%+v", mm, mm, mm, mm))
+	say.Line(say.Fmt("%x", mf2))
+	say.Line(say.Fmt("%3d|%x|%q", mi, mi, mq))
+	say.Line(say.Fmt("%q|%x|%5s", []str{"a b", "c"}, [][]str{[]str{"ab"}, []str{"c"}}, [][]str{[]str{"ab"}, []str{"c"}}))
+}
+
+fn slices() {
+	let a = []i64{1, -2, 300}
+	let s = []str{"a", "b c", ""}
+	let f = []f64{1.5, -0.25, 1e21}
+	let b = []u8{1, 255, 'A'}
+	let u = []u8{}
+	let t = []bool{true, false}
+	mut m = make(map[str]i64)
+	m["b"] = 2
+	m["a"] = 1
+	let n = [][]i64{[]i64{1, 2}, []i64{3}}
+	say.Line(say.Fmt("%5d|%-4d|%x|%X|%o|%+d|%05d|%v|%#x|%q|%c|%U", a, a, a, a, a, a, a, a, a, a, a, a))
+	say.Line(say.Fmt("%5s|%-4s|%q|%x|%X|% x|%v|%.1s|%#q", s, s, s, s, s, s, s, s, s))
+	say.Line(say.Fmt("%5.1f|%e|%g|%v|%x|%8.2f|%+.1e", f, f, f, f, f, f, f))
+	say.Line(say.Fmt("%v|%d|%x|% x|%X|%q|%5d|%c|%#x|%# x", b, b, b, b, b, b, b, b, b, b))
+	say.Line(say.Fmt("%v|%x|%d", u, u, u))
+	say.Line(say.Fmt("%v|%t|%6v|%-6t|", t, t, t, t))
+	say.Line(say.Fmt("%v|%5v|%+v", m, m, m))
+	say.Line(say.Fmt("%v|%d|%3d|%x", n, n, n, n))
+}
