@@ -56,8 +56,9 @@ The Linux amd64 port:
   aligned to 16), and system calls are `syscall` leaves.
 - Layout differences: `struct epoll_event` is packed (12 bytes), `st_mode` is at offset
   24.
-- `seal.Sha256` uses the portable code until SHA-NI is added (also on arm64 CPUs without
-  the SHA-2 instructions, detected through `AT_HWCAP`).
+- `seal.Sha256` uses SHA-NI on x86-64 CPUs that report the SHA extensions, SSSE3 and SSE4.1
+  through CPUID; `TIN_SEAL_SOFT=1` forces its portable code. On arm64, it uses the SHA-2
+  instructions when `AT_HWCAP` reports them and otherwise uses the portable code.
 - Correctness and self-hosting run natively on GitHub's `ubuntu-24.04` x86-64 runner.
   `tools/dev/x64fuzz/linuxtest_amd64.sh` also checks the strict and regression suites in a
   container, emulated when the host is arm64. Dedicated x86-64 performance benchmarks

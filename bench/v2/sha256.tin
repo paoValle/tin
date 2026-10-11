@@ -1,0 +1,13 @@
+package main
+
+import "say"
+import "seal"
+
+// SHA-256 of 100 MB. On x86-64 this uses SHA-NI when the CPU supports it.
+fn main() {
+	let b = make([]u8, 100_000_000)
+	for i in 0..len(b) {
+		b[i] = u8(i * 31)
+	}
+	say.Line(seal.Hex(seal.Sha256(str(b))))
+}
