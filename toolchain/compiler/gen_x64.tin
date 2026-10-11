@@ -2210,7 +2210,9 @@ fn x_restore_temps(d i64) {
 // x_gen_call leaves the result in rax (or xmm0 for a float). Live temps are saved first;
 // then the callee and every argument are evaluated left to right and pushed, and popped in
 // reverse into their registers (or copied into the stack-argument area reserved below the
-// pushes), so evaluating one argument can never clobber another.
+// pushes), so evaluating one argument can never clobber another. This stack staging keeps
+// earlier argument values out of the temp registers across nested calls; the arm64
+// speculable argument scheduling has no equivalent register-pressure win here.
 fn x_gen_call(e i64, d i64) {
 	if cast(Node, e).kind == EX_SEQ {
 		x_gen_seq(e, -1, d)
@@ -3233,6 +3235,9 @@ fn x_float_cmp(c_in i64) i64 {
 
 // x_try_select compiles `if c { x = a; } else { x = b; }` as x = cmov(c, a, b), like
 // Go's branchelim: both values are cheap, so computing both beats a mispredicted branch.
+// single_reg_assign uses speculable from gen.tin, so this backend already shares its safety
+// rules. Keep a checked load in its arm: x_bounds_check is cmp+jcc to a cold failure call,
+// and evaluating it when that arm is not selected would introduce a panic.
 fn x_try_select(s IfStmt) i64 {
 	let c = s.cond
 	if has_effects(c) != 0 || contains_call(c) != 0 || is_const(c) != 0 || e_fp(cast(Node, c)) != 0 {

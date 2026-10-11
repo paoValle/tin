@@ -1,0 +1,15 @@
+package main
+
+// #1182: a bounds check in one arm must not be speculated into the other arm.
+fn choose(xs []i64, enabled bool) i64 {
+	mut result = i64(7)
+	if enabled {
+		result = xs[1]
+	}
+	return result
+}
+
+fn main() {
+	let xs = []i64{4, 9}
+	choose(xs, true)
+}

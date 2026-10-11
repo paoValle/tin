@@ -1,0 +1,11 @@
+# #1182: checked loads stay in the selected arm on both back ends.
+[arm64]
+CHECK: _choose:
+CHECK: cbz x11, L[0-9]+
+CHECK: cmp x17, #1
+CHECK: b.ls L[0-9]+
+CHECK: ldr x16, \[x10, #16\]
+CHECK: ldr x9, \[x16, #8\]
+
+[amd64]
+CHECK: (?ms)# L(?P<choose>[0-9]+): choose[\s\S]*?# L(?P<main>[0-9]+): main\.main[\s\S]*?^L(?P=choose):\n(?:(?!^L(?P=main):$)[\s\S])*?^test r13,r13\n(?:(?!^L(?P=main):$)[\s\S])*?^je L[0-9]+\n(?:(?!^L(?P=main):$)[\s\S])*?^cmp rcx,0x1\n(?:(?!^L(?P=main):$)[\s\S])*?^jbe L[0-9]+\n(?:(?!^L(?P=main):$)[\s\S])*?^mov r11,QWORD PTR \[r12\+0x10\]\n(?:(?!^L(?P=main):$)[\s\S])*?^mov rbx,QWORD PTR \[r11\+0x8\]
