@@ -1,0 +1,21 @@
+package main
+
+fn checked(xs []u8, i i64) bool {
+	return xs[i] == 255
+}
+
+fn loop(xs []u8) i64 {
+	mut count = i64(0)
+	for _, b in xs {
+		if b == 255 {
+			count += 1
+		}
+	}
+	return count
+}
+
+fn main() {
+	let xs = []u8{1, 255}
+	checked(xs, 1)
+	loop(xs)
+}

@@ -1,0 +1,14 @@
+# Byte comparisons load only the addressed byte in checked indexing and byte-slice iteration.
+[arm64]
+CHECK: _checked:
+CHECK: b.hs
+CHECK: ldrb w[0-9]+, \[x[0-9]+, x[0-9]+\]
+CHECK-NOT: and x[0-9]+, x[0-9]+, #255
+CHECK: cmp [xw][0-9]+, #255
+CHECK: _loop:
+CHECK: ldrb w[0-9]+, \[x[0-9]+, x[0-9]+\]
+CHECK-NOT: and x[0-9]+, x[0-9]+, #255
+CHECK: cmp [xw][0-9]+, #255
+
+[amd64]
+CHECK: (?ms)# L(?P<checked>[0-9]+): checked[\s\S]*?# L(?P<loop>[0-9]+): loop[\s\S]*?^L(?P=checked):[\s\S]*?^jae\b[\s\S]*?^movzx [a-z0-9]+,BYTE PTR \[[^\n]+\]\n(?:(?!^and\b)[\s\S])*?^cmp [^\n]+,0xff[\s\S]*?^L(?P=loop):[\s\S]*?^movzx [a-z0-9]+,BYTE PTR \[[^\n]+\]\n(?:(?!^and\b)[\s\S])*?^cmp [^\n]+,0xff
