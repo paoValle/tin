@@ -1014,10 +1014,17 @@ fn rg_in_arena() i64 {
 // function that is not an arena's closure.
 fn rg_param_fn() Fn {
 	mut f = cast(Fn, rg_fn)
-	for rg_is_arena(cast(i64, f)) != 0 && f.parent != 0 {
+	for rg_is_bound_fn(f) != 0 && f.parent != 0 {
 		f = cast(Fn, f.parent)
 	}
 	return f
+}
+
+// rg_is_bound_fn reports whether f is a boundary block's closure: arena, guard, within, limit,
+// with or a parallel line (lower.tin). Each is a func($r i64) ! whose parameter bits came in
+// through captured variables, like an arena's (#1052).
+fn rg_is_bound_fn(f Fn) i64 {
+	return i64(rg_is_arena(cast(i64, f)) != 0 || (len(f.params) == 1 && f.params[0] == "$r"))
 }
 
 // rg_arena_made reports whether a value with bits v may be memory made in the arena.

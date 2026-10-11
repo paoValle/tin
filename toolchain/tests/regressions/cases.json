@@ -1608,5 +1608,24 @@
       "exit": 1,
       "stderr_contains": "E220 NOT_CONSTANT"
     }
+  },
+  {
+    "source": "boundary-param-alias-bad.tin",
+    "issue": 1052,
+    "expected": {
+      "phase": "compile",
+      "exit": 1,
+      "stderr_contains": "E701 NOT_MUT: cannot modify parameter 'srv': declare it mut"
+    }
+  },
+  {
+    "source": "boundary-param-alias.tin",
+    "issue": 1052,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "2\n5\n6\n6\n",
+      "stderr": ""
+    }
   }
 ]

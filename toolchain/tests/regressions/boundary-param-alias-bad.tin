@@ -1,0 +1,52 @@
+package main
+
+// #1052: a limit or within block whose body changes a mut copy of a by-value parameter
+// crashed the region pass (rg_store); it now gets the same E701 as code outside the block.
+
+import "constraints"
+import "say"
+
+type S struct {
+	n i64
+	m map[str]str
+}
+
+type B struct {
+	s  str
+	at i64
+}
+
+fn handle[R constraints.Any](s mut S, body mut R, x str) i64 {
+	s.n += len(x)
+	return s.n
+}
+
+fn bounded(srv S, body B, x str) i64 {
+	mut server = srv
+	mut b = body
+	let (r, over) = limit memory 32mb {
+		handle(mut server, mut b, x)
+	}
+	if over != nil {
+		return -1
+	}
+	return r
+}
+
+fn timed(srv S, body B, x str) i64 {
+	mut server = srv
+	mut b = body
+	let (r, over) = within 1s {
+		handle(mut server, mut b, x)
+	}
+	if over != nil {
+		return -1
+	}
+	return r
+}
+
+fn main() {
+	let s = S{n: 0, m: map[str]str{}}
+	say.Line(bounded(s, B{s: "abc", at: 0}, "xy"))
+	say.Line(timed(s, B{s: "abc", at: 0}, "xy"))
+}
