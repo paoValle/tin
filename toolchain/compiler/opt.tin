@@ -1323,6 +1323,14 @@ fn hoist_expr(e i64) {
 		return
 	}
 	mut k = cast(Node, e).kind
+	// A wide integer literal becomes a ten-byte movabs whenever it is used as a
+	// register operand on amd64. Keep one register copy outside the loop instead
+	// of rematerializing it at every use. The arm64 backend has its own constant
+	// materialization strategy; leave its LICM behavior unchanged.
+	if tgt_x64 != 0 && k == EX_INT && is_const(e) != 0 && x64_fits32(const_val(e)) == 0 {
+		replace_with_temp(e)
+		return
+	}
 	if (k == EX_BINARY || k == EX_UNARY || k == EX_CONV || k == EX_FLOAT || (k == EX_INDEX && cast(IndexExpr, e).hdr != 0) || (k == EX_MEM && cast(MemExpr, e).hdr != 0)) && invariant(e) != 0 && is_const(e) == 0 && op_cost(e) >= 2 {
 		replace_with_temp(e)
 		return

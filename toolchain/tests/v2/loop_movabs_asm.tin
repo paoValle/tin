@@ -1,0 +1,17 @@
+package main
+
+fn countMask(n i64) i64 {
+	mut i = 0
+	mut count = 0
+	for i < n {
+		if i & 0x123456789abcdef0 != 0 {
+			count = count + 1
+		}
+		i = i + 1
+	}
+	return count
+}
+
+fn main() {
+	_ = countMask(10)
+}

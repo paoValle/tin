@@ -1,0 +1,15 @@
+# A wide integer used in a loop is materialized before the loop and kept in a
+# register for each iteration on amd64. The arm64 backend retains its own form.
+
+[arm64]
+CHECK: _countMask:
+
+[amd64]
+CHECK: # L1: countMask
+CHECK: # L2: main.main
+CHECK: \nL1:\n
+CHECK: movabs r\w+,0x123456789abcdef0
+CHECK: jmp L\d+
+CHECK-NOT: movabs
+CHECK: and r\w+,r\w+
+CHECK: \nL2:\n
