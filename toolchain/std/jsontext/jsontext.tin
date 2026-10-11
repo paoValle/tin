@@ -55,14 +55,23 @@ fn Uint(n u64) Token {
 	return Token{kind: '0', text: mint.FormatUint(n, 10)}
 }
 
-// Float returns the number token for n, in the shortest form that reads back (NaN and infinities are not numbers: their token is
-// the text "NaN" or "Inf", which Encoder refuses).
+// Float returns the number token for n, in the shortest form that reads back. NaN and the infinities are not JSON numbers: as in
+// Go, their tokens are the strings "NaN", "Infinity" and "-Infinity".
 fn Float(n f64) Token {
+	if n != n {
+		return String("NaN")
+	}
+	if n > 1.7976931348623157e308 {
+		return String("Infinity")
+	}
+	if n < -1.7976931348623157e308 {
+		return String("-Infinity")
+	}
 	return Token{kind: '0', text: formatFloat(n)}
 }
 
 // formatFloat writes n in the shortest digits that read back, plain for decimal exponents from -6 to 20 and with an exponent otherwise
-// (as ECMAScript and Go's jsontext do). NaN and the infinities are kept as their names, which Encoder refuses.
+// (as ECMAScript and Go's jsontext do). Float handles NaN and the infinities before it.
 fn formatFloat(n f64) str {
 	if n != n {
 		return "NaN"
@@ -223,22 +232,61 @@ fn isDigit(c u8) bool {
 }
 
 // invalidText is Go's InvalidTextError text for the invalid text what: a single rune in its quotes, text that holds a backtick, a space,
-// a control byte or a byte that is not UTF-8 in strconv.Quote form, and anything else in backquotes. Text longer than six bytes is a
-// surrogate pair, not an escape sequence (the caller names it).
+// a character that does not print or bytes that are not UTF-8 in strconv.Quote form, and anything else in backquotes. Text longer than
+// six bytes is a surrogate pair, not an escape sequence (the caller names it).
 fn invalidText(label str, what str, where str) str {
 	mut q = "`" + what + "`"
 	if glyph.RuneCount(what) == 1 {
-		q = quoteChar(what[0])
+		q = quoteAt(what, 0)
 	} else {
-		for i in 0..len(what) {
-			let c = what[i]
-			if c == '`' || c == ' ' || c < 0x20 || c == 0x7f || c >= 0x80 {
+		mut i = 0
+		for i < len(what) {
+			let (r, size) = glyph.DecodeRune(what, i)
+			if r == '`' || r == 0xfffd || glyph.IsSpace(r) || !glyph.IsPrint(r) {
 				q = mint.Quote(what)
 				break
 			}
+			i += size
 		}
 	}
 	return twine.TrimSuffix("invalid " + label + " " + q + " " + where, " ")
+}
+
+// quoteAt is the form Go's error texts give the character at byte i of s (its QuoteRune): an ASCII byte as quoteChar writes it, a
+// byte that does not start UTF-8 as '\xff', and any other character as strconv.QuoteRune does.
+fn quoteAt(s str, i i64) str {
+	if s[i] < 0x80 {
+		return quoteChar(s[i])
+	}
+	let (r, size) = glyph.DecodeRune(s, i)
+	if r == 0xfffd && size == 1 {
+		return "'\\x" + hex2(s[i]) + "'"
+	}
+	return mint.QuoteRune(r)
+}
+
+// escapedLowPrefix reports whether s could be the start of an escaped low surrogate, \uDC00 to \uDFFF, cut by the end of the
+// input (Go's hasEscapedUTF16Prefix).
+fn escapedLowPrefix(s str) bool {
+	for i in 0..len(s) {
+		let c = s[i]
+		if i == 0 && c != '\\' {
+			return false
+		}
+		if i == 1 && c != 'u' {
+			return false
+		}
+		if i == 2 && c != 'd' && c != 'D' {
+			return false
+		}
+		if i == 3 && !(c >= 'c' && c <= 'f') && !(c >= 'C' && c <= 'F') {
+			return false
+		}
+		if i >= 2 && i < 6 && hexVal(c) < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // hexVal is the value of the hex digit c, or -1.
@@ -309,8 +357,9 @@ fn (d Decoder) pointer(eof bool, inner bool) str {
 			if !last || f.state == ':' || f.state == 'v' {
 				out += "/" + pointerToken(f.name)
 			}
-		} else if !eof {
+		} else if !eof || !last {
 			// The innermost array names its element once a value is due, and always in value mode or while a scalar is read.
+			// At an EOF only the arrays around it do.
 			if !last || d.inScalar || ((f.state == 'a' || f.state == 'v') && (f.count > 0 || d.inValue)) {
 				out += "/" + mint.Itoa(f.count)
 			}
@@ -323,6 +372,32 @@ fn (d Decoder) pointer(eof bool, inner bool) str {
 fn (d Decoder) syntaxError(what str, at i64, eof bool) str {
 	mut msg = "jsontext: " + what
 	let p = d.pointer(eof, true)
+	if p != "" {
+		msg += " within " + mint.Quote(p)
+	}
+	if at > 0 {
+		msg += " after offset " + mint.Itoa(at)
+	}
+	return msg
+}
+
+// closeFollows reports whether the first byte from at that is not white space closes an object or array.
+fn (d Decoder) closeFollows(at i64) bool {
+	mut i = at
+	for i < len(d.src) && isSpace(d.src[i]) {
+		i += 1
+	}
+	return i < len(d.src) && (d.src[i] == '}' || d.src[i] == ']')
+}
+
+// closeError is a syntax error at a close that does not match its container: Go's pointer names the container's parent.
+fn (d Decoder) closeError(what str, at i64) str {
+	mut msg = "jsontext: " + what
+	mut p = d.pointer(false, false)
+	let cut = twine.LastIndexByte(p, '/')
+	if cut >= 0 {
+		p = p[:cut]
+	}
 	if p != "" {
 		msg += " within " + mint.Quote(p)
 	}
@@ -373,7 +448,8 @@ fn (d mut Decoder) hex4(esc i64) !i64 {
 	for k in 0..4 {
 		let at = esc + 2 + k
 		if at >= n {
-			fail d.syntaxError("unexpected EOF", n, false)
+			// Go reports a cut escape at its backslash.
+			fail d.syntaxError("unexpected EOF", esc, false)
 		}
 		let h = hexVal(d.src[at])
 		if h < 0 {
@@ -400,32 +476,43 @@ fn (d mut Decoder) readString() !str {
 			return str(out)
 		}
 		if c < 0x20 {
-			fail d.syntaxError("invalid character " + quoteChar(c) + " in string (expecting non-control character)", d.pos, false)
+			fail d.syntaxError("invalid character " + quoteAt(d.src, d.pos) + " in string (expecting non-control character)", d.pos, false)
 		}
 		if c == '\\' {
 			let esc = d.pos
 			if d.pos+1 >= n {
-				fail d.syntaxError("unexpected EOF", n, false)
+				fail d.syntaxError("unexpected EOF", esc, false)
 			}
 			let e = d.src[d.pos+1]
 			if e == 'u' {
 				let r = try d.hex4(esc)
 				mut cp = r
-				if r >= 0xd800 && r < 0xdc00 {
-					// A high surrogate must be followed by an escaped low surrogate.
-					if esc+12 > n || d.src[esc+6] != '\\' || d.src[esc+7] != 'u' {
-						fail d.syntaxError(invalidText("surrogate pair", d.src[esc:min(esc+7, n)], "in string"), esc, false)
+				if r >= 0xd800 && r < 0xe000 {
+					// As Go's jsonwire: a surrogate half must be a high one followed by an escaped low one. The error quotes the
+					// two escapes' twelve bytes, or the rest of the input when it is shorter, where a cut low escape is an EOF.
+					if esc+12 > n {
+						if escapedLowPrefix(d.src[esc+6:]) {
+							fail d.syntaxError("unexpected EOF", esc, false)
+						}
+						fail d.syntaxError(invalidText("surrogate pair", d.src[esc:], "in string"), esc, false)
 					}
-					d.pos = esc + 6
-					let lo = d.hex4(esc+6) catch _ {
-						fail d.syntaxError(invalidText("surrogate pair", d.src[esc:min(esc+12, n)], "in string"), esc, false)
+					mut lo = i64(-1)
+					if d.src[esc+6] == '\\' && d.src[esc+7] == 'u' {
+						lo = 0
+						for k in 0..4 {
+							let h = hexVal(d.src[esc+8+k])
+							if h < 0 || lo < 0 {
+								lo = -1
+							} else {
+								lo = lo*16 + h
+							}
+						}
 					}
-					if lo < 0xdc00 || lo >= 0xe000 {
+					if r >= 0xdc00 || lo < 0xdc00 || lo >= 0xe000 {
 						fail d.syntaxError(invalidText("surrogate pair", d.src[esc:esc+12], "in string"), esc, false)
 					}
+					d.pos = esc + 12
 					cp = 0x10000 + ((r - 0xd800) << 10) + (lo - 0xdc00)
-				} else if r >= 0xdc00 && r < 0xe000 {
-					fail d.syntaxError("invalid surrogate pair `" + d.src[esc:min(esc+7, n)] + "` in string", esc, false)
 				}
 				mut buf = []u8{}
 				glyph.EncodeRune(mut buf, i32(cp))
@@ -487,7 +574,7 @@ fn (d mut Decoder) readNumber() !str {
 			d.pos += 1
 		}
 	} else {
-		fail d.syntaxError("invalid character " + quoteChar(d.src[d.pos]) + " in number (expecting digit)", d.pos, false)
+		fail d.syntaxError("invalid character " + quoteAt(d.src, d.pos) + " in number (expecting digit)", d.pos, false)
 	}
 	if d.pos < n && d.src[d.pos] == '.' {
 		d.pos += 1
@@ -510,7 +597,7 @@ fn (d mut Decoder) digits(start i64) ! {
 		fail d.syntaxError("unexpected EOF", start, false)
 	}
 	if !isDigit(d.src[d.pos]) {
-		fail d.syntaxError("invalid character " + quoteChar(d.src[d.pos]) + " in number (expecting digit)", d.pos, false)
+		fail d.syntaxError("invalid character " + quoteAt(d.src, d.pos) + " in number (expecting digit)", d.pos, false)
 	}
 	for d.pos < n && isDigit(d.src[d.pos]) {
 		d.pos += 1
@@ -526,7 +613,7 @@ fn (d mut Decoder) readLiteral(word str) !str {
 			fail d.syntaxError("unexpected EOF", n, false)
 		}
 		if d.src[d.pos] != word[k] {
-			fail d.syntaxError("invalid character " + quoteChar(d.src[d.pos]) + " in literal " + word + " (expecting " + quoteChar(word[k]) + ")", d.pos, false)
+			fail d.syntaxError("invalid character " + quoteAt(d.src, d.pos) + " in literal " + word + " (expecting " + quoteChar(word[k]) + ")", d.pos, false)
 		}
 		d.pos += 1
 	}
@@ -578,8 +665,12 @@ fn (d mut Decoder) value(c u8) !Token {
 		d.valueStarted()
 		return Token{kind: 'n', text: s}
 	}
+	// Go points at the value that was due, so the innermost array names its element (but a stray delimiter is
+	// reported before the element starts).
+	d.inScalar = c != ',' && c != ':'
+	let msg = d.syntaxError("invalid character " + quoteAt(d.src, d.pos) + " at start of value", d.pos, false)
 	d.inScalar = false
-	fail d.syntaxError("invalid character " + quoteChar(c) + " at start of value", d.pos, false)
+	fail msg
 }
 
 // pop closes the innermost frame, consuming its delimiter c.
@@ -622,7 +713,15 @@ fn (d mut Decoder) ReadToken() !Token {
 				if c == '}' {
 					return d.pop(c)
 				}
-				fail d.syntaxError("invalid character " + quoteChar(c) + " after object value (expecting ',' or '}}')", d.pos, false)
+				if c == ':' && !d.inValue && d.closeFollows(d.pos+1) {
+					// Go takes a colon before a close for a misplaced delimiter.
+					fail d.parentError("invalid character ':' at start of value", d.pos)
+				}
+				if c == ']' && !d.inValue {
+					// Go names the object's parent for a mismatched close.
+					fail d.closeError("invalid character ']' after object value (expecting ',' or '}}')", d.pos)
+				}
+				fail d.syntaxError("invalid character " + quoteAt(d.src, d.pos) + " after object value (expecting ',' or '}}')", d.pos, false)
 			}
 			if f.state == 'k' || f.state == 'K' {
 				if c == '}' && f.state == 'k' {
@@ -636,12 +735,33 @@ fn (d mut Decoder) ReadToken() !Token {
 				}
 				if c != '"' {
 					if d.inValue {
-						fail d.syntaxError("invalid character " + quoteChar(c) + " at start of string (expecting '\"')", d.pos, false)
+						fail d.syntaxError("invalid character " + quoteAt(d.src, d.pos) + " at start of string (expecting '\"')", d.pos, false)
+					}
+					if c == ']' && f.state == 'K' {
+						// Go reads a close after a comma as a misplaced comma, whichever close it is.
+						fail d.trailingComma(f.comma)
 					}
 					if startsValue(c) {
+						// Go reads a number or a literal before it finds that it is not a name, so a malformed one is reported
+						// as such.
+						if c == '-' || isDigit(c) {
+							let at = d.pos
+							try d.readNumber()
+							d.pos = at
+						} else if c == 't' || c == 'f' || c == 'n' {
+							let at = d.pos
+							mut word = "null"
+							if c == 't' {
+								word = "true"
+							} else if c == 'f' {
+								word = "false"
+							}
+							try d.readLiteral(word)
+							d.pos = at
+						}
 						fail d.syntaxError("object member name must be a string", d.pos, false)
 					}
-					fail d.syntaxError("invalid character " + quoteChar(c) + " at start of value", d.pos, false)
+					fail d.syntaxError("invalid character " + quoteAt(d.src, d.pos) + " at start of value", d.pos, false)
 				}
 				let name = try d.readString()
 				if !d.dups {
@@ -658,7 +778,7 @@ fn (d mut Decoder) ReadToken() !Token {
 			}
 			if f.state == ':' {
 				if c != ':' {
-					fail d.syntaxError("invalid character " + quoteChar(c) + " after object name (expecting ':')", d.pos, false)
+					fail d.syntaxError("invalid character " + quoteAt(d.src, d.pos) + " after object name (expecting ':')", d.pos, false)
 				}
 				d.frames[i].state = 'v'
 				d.pos += 1
@@ -691,10 +811,18 @@ fn (d mut Decoder) ReadToken() !Token {
 			if c == ']' {
 				return d.pop(c)
 			}
-			fail d.syntaxError("invalid character " + quoteChar(c) + " after array element (expecting ',' or ']')", d.pos, false)
+			if c == ':' && !d.inValue && d.closeFollows(d.pos+1) {
+				// Go takes a colon before a close for a misplaced delimiter.
+				fail d.parentError("invalid character ':' at start of value", d.pos)
+			}
+			fail d.syntaxError("invalid character " + quoteAt(d.src, d.pos) + " after array element (expecting ',' or ']')", d.pos, false)
 		}
 		if c == ']' && f.state == 'a' {
 			return d.pop(c)
+		}
+		if c == '}' && f.state == 'v' && !d.inValue {
+			// Go reads a close after a comma as a misplaced comma, whichever close it is.
+			fail d.trailingComma(f.comma)
 		}
 		if c == ']' {
 			if d.inValue {

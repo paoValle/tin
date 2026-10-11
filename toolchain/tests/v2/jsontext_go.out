@@ -1,0 +1,50 @@
+"[.5": ["[" jsontext: invalid character '.' at start of value within "/0" after offset 1
+"[}": ["[" jsontext: invalid character '}' at start of value within "/0" after offset 1
+"[x": ["[" jsontext: invalid character 'x' at start of value within "/0" after offset 1
+"[[.": ["[" ["[" jsontext: invalid character '.' at start of value within "/0/0" after offset 2
+"{\"a\":[.": {"{" ""a" ["[" jsontext: invalid character '.' at start of value within "/a/0" after offset 6
+"[[": ["[" ["[" jsontext: unexpected EOF within "/0" after offset 2
+"[{": ["[" {"{" jsontext: unexpected EOF within "/0" after offset 2
+"[[1": ["[" ["[" 0"1" jsontext: unexpected EOF within "/0" after offset 3
+"[1,[": ["[" 0"1" ["[" jsontext: unexpected EOF within "/1" after offset 4
+"[{\"a\":[": ["[" {"{" ""a" ["[" jsontext: unexpected EOF within "/0/a" after offset 7
+"[{\"a\":1,": ["[" {"{" ""a" 0"1" jsontext: unexpected EOF within "/0" after offset 8
+"[1,}": ["[" 0"1" jsontext: invalid character ',' at start of value after offset 2
+"[1, }": ["[" 0"1" jsontext: invalid character ',' at start of value after offset 2
+"{\"a\":1,]": {"{" ""a" 0"1" jsontext: invalid character ',' at start of value after offset 6
+"[[1,}]": ["[" ["[" 0"1" jsontext: invalid character ',' at start of value within "/0" after offset 3
+"{\"b\":[1,}}": {"{" ""b" ["[" 0"1" jsontext: invalid character ',' at start of value within "/b" after offset 7
+"[{\"a\":1]": ["[" {"{" ""a" 0"1" jsontext: invalid character ']' after object value (expecting ',' or '}') after offset 7
+"{\"x\":{\"a\":1]": {"{" ""x" {"{" ""a" 0"1" jsontext: invalid character ']' after object value (expecting ',' or '}') after offset 11
+"[\"é\":]": ["[" ""é" jsontext: invalid character ':' at start of value after offset 5
+"{\"a\":1 : }": {"{" ""a" 0"1" jsontext: invalid character ':' at start of value after offset 7
+"[1:2]": ["[" 0"1" jsontext: invalid character ':' after array element (expecting ',' or ']') after offset 2
+"{1.:2}": {"{" jsontext: invalid character ':' in number (expecting digit) after offset 3
+"{tru}": {"{" jsontext: invalid character '}' in literal true (expecting 'e') after offset 4
+"{nul]": {"{" jsontext: invalid character ']' in literal null (expecting 'l') after offset 4
+"{-": {"{" jsontext: unexpected EOF after offset 1
+"{1}": {"{" jsontext: object member name must be a string after offset 1
+"\"\\udc00x\\\"1123\"": jsontext: invalid surrogate pair `\udc00x\"112` in string after offset 1
+"\"\\ud800\"   ": jsontext: invalid surrogate pair "\\ud800\"   " in string after offset 1
+"[\"\\ud800\"]": ["[" jsontext: invalid surrogate pair `\ud800"]` in string within "/0" after offset 2
+"\"\\ud800\\u12": jsontext: invalid surrogate pair `\ud800\u12` in string after offset 1
+"\"\\ud800\\u": jsontext: unexpected EOF after offset 1
+"\"\\ud800\\": jsontext: unexpected EOF after offset 1
+"\"\\udc00\\u": jsontext: unexpected EOF after offset 1
+"\"\\ud800\\udc0": jsontext: unexpected EOF after offset 1
+"\"\\ud800\\ue0": jsontext: invalid surrogate pair `\ud800\ue0` in string after offset 1
+"\"\\udc00\\udc00\"": jsontext: invalid surrogate pair `\udc00\udc00` in string after offset 1
+"\"\\ud800\\ud800\"": jsontext: invalid surrogate pair `\ud800\ud800` in string after offset 1
+"\"\\ud800A\"": jsontext: invalid surrogate pair `\ud800A"` in string after offset 1
+"\"\\ud800\"\"é\"": jsontext: invalid surrogate pair `\ud800""é"` in string after offset 1
+"\"\\u12": jsontext: unexpected EOF after offset 1
+"\"ab\\": jsontext: unexpected EOF after offset 3
+"é": jsontext: invalid character 'é' at start of value
+" x": jsontext: invalid character 'x' at start of value after offset 1
+"[ÿ]": ["[" jsontext: invalid character 'ÿ' at start of value within "/0" after offset 1
+"\u2028": jsontext: invalid character '\u2028' at start of value
+"[\xff]": ["[" jsontext: invalid character '\xff' at start of value within "/0" after offset 1
+" "\"NaN\"\n"
+" "\"Infinity\"\n"
+" "\"-Infinity\"\n"
+0 "1.5\n"

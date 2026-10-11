@@ -1,0 +1,85 @@
+package main
+
+// jsontext's decoder errors, and Float of NaN and the infinities, as Go 1.27's encoding/json/jsontext gives them. Every line is Go's
+// output: the tokens of each text, then the decoder's error or EOF, then the token and the text Float gives NaN, +Inf, -Inf and 1.5.
+
+import "fault"
+import "jsontext"
+import "say"
+import "twine"
+
+fn main() {
+	let docs = []str{
+		"[.5",
+		"[}}",
+		"[x",
+		"[[.",
+		"{{\"a\":[.",
+		"[[",
+		"[{{",
+		"[[1",
+		"[1,[",
+		"[{{\"a\":[",
+		"[{{\"a\":1,",
+		"[1,}}",
+		"[1, }}",
+		"{{\"a\":1,]",
+		"[[1,}}]",
+		"{{\"b\":[1,}}}}",
+		"[{{\"a\":1]",
+		"{{\"x\":{{\"a\":1]",
+		"[\"é\":]",
+		"{{\"a\":1 : }}",
+		"[1:2]",
+		"{{1.:2}}",
+		"{{tru}}",
+		"{{nul]",
+		"{{-",
+		"{{1}}",
+		"\"\\udc00x\\\"1123\"",
+		"\"\\ud800\"   ",
+		"[\"\\ud800\"]",
+		"\"\\ud800\\u12",
+		"\"\\ud800\\u",
+		"\"\\ud800\\",
+		"\"\\udc00\\u",
+		"\"\\ud800\\udc0",
+		"\"\\ud800\\ue0",
+		"\"\\udc00\\udc00\"",
+		"\"\\ud800\\ud800\"",
+		"\"\\ud800A\"",
+		"\"\\ud800\"\"é\"",
+		"\"\\u12",
+		"\"ab\\",
+		"é",
+		" x",
+		"[ÿ]",
+		"\u2028",
+		"[\xff]",
+	}
+	for doc in docs {
+		mut d = jsontext.NewDecoder(doc, jsontext.Options{})
+		mut items = []str{}
+		for {
+			let t = d.ReadToken() catch err {
+				if fault.Is(err, jsontext.EOF) {
+					items = append(items, "EOF")
+				} else {
+					items = append(items, say.Str(err))
+				}
+				break
+			}
+			items = append(items, say.Fmt("%c%q", t.Kind(), t.String()))
+		}
+		say.Line(say.Fmt("%q: %s", doc, twine.Join(items, " ")))
+	}
+	let nan = 0.0 / 0.0
+	let inf = 1.0 / 0.0
+	for f in []f64{nan, inf, -inf, 1.5} {
+		mut e = jsontext.NewEncoder(jsontext.Options{})
+		e.WriteToken(jsontext.Float(f)) catch err {
+			say.Line(err)
+		}
+		say.Line(say.Fmt("%c %q", jsontext.Float(f).Kind(), e.Bytes()))
+	}
+}

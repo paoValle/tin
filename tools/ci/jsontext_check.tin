@@ -101,6 +101,9 @@ fn documents() []str {
 		`18446744073709551615`, `0.1`, `123456789012345678901234567890`, `[]`, `{}`, `[{},[],{"":""}]`, `[{"a":{}},{"a":[]}]`, "\"é\\u2028\\u2029<>&\"",
 		"\"\xe2\x82\"", "\"\xed\xa0\x80\"", "\"\xf0\x9f\x98\"", twine.Repeat("[", 150) + twine.Repeat("]", 150), twine.Repeat(`{"a":`, 100) + "1" + twine.Repeat("}}", 100),
 		`{"b":1,"a":[{"c":true}],"d":{"e":null,"f":"g"}}`, `[1e0, 1E0, -0e-0, 0.0e+0]`, `"` + twine.Repeat("x", 300) + `"`,
+		`[.5`, `[}`, `[[.`, `{"a":[.`, `[[`, `[{"a":[`, `[{"a":1,`, `[1,}`, `{"a":1,]`, `[{"a":1]`, `{"x":{"a":1]`, `["a":]`, `{"a":1 : }`,
+		`{1.:2}`, `{tru}`, `{-`, "\"\\udc00x\\\"1123\"", "\"\\ud800\"   ", "\"\\ud800\\u12", "\"\\ud800\\u", "\"\\udc00\\udc00\"",
+		"\"\\ud800\\ue0", "\"\\u12", "\"ab\\", "é", "[\xff]", "[\u2028]",
 	}
 }
 
@@ -124,8 +127,9 @@ fn corpus() []str {
 			lines = append(lines, "W" + mint.Itoa(n) + " " + h)
 		}
 	}
-	// Float bit patterns: the boundaries of the exponent and the mantissa, and random patterns; NaN and infinities are not numbers.
-	for bits in []str{"0", "8000000000000000", "3ff0000000000000", "bff0000000000000", "3fb999999999999a", "7fefffffffffffff",
+	// Float bit patterns: the boundaries of the exponent and the mantissa, NaN and the infinities (which Go writes as strings), and
+	// random patterns.
+	for bits in []str{"7ff8000000000001", "7ff0000000000000", "fff0000000000000", "0", "8000000000000000", "3ff0000000000000", "bff0000000000000", "3fb999999999999a", "7fefffffffffffff",
 		"0000000000000001", "4415af1d78b58c40", "3eb0c6f7a0b5ed8d", "4341c37937e08000", "4024000000000000", "3fe0000000000000", "3cb0000000000000"} {
 		lines = append(lines, "F " + bits)
 	}

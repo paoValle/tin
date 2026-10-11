@@ -1233,7 +1233,7 @@ Package jsontext reads and writes JSON token by token, as Go's encoding/json/jso
 - `String(s str) Token`: String returns the string token for s (unescaped text; it is escaped when written).
 - `Int(n i64) Token`: Int returns the number token for n.
 - `Uint(n u64) Token`: Uint returns the number token for n.
-- `Float(n f64) Token`: Float returns the number token for n, in the shortest form that reads back (NaN and infinities are not numbers: their token is the text "NaN" or "Inf", which Encoder refuses).
+- `Float(n f64) Token`: Float returns the number token for n, in the shortest form that reads back. NaN and the infinities are not JSON numbers: as in Go, their tokens are the strings "NaN", "Infinity" and "-Infinity".
 - `(t Token) Kind() u8`: Kind returns the token's kind byte: '"', '0', 't', 'f', 'n', '{', '}', '[' or ']'.
 - `(t Token) String() str`: String returns the unescaped text of a string token and the literal of any other token.
 - `(t Token) Bool() bool`: Bool reports whether the token is true.
