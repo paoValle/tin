@@ -1542,6 +1542,17 @@
     }
   },
   {
+    "source": "tail-recursive-counter.tin",
+    "issue": 1180,
+    "platform": "linux",
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "10000000\n",
+      "stderr": ""
+    }
+  },
+  {
     "source": "argo-inline-array-short.tin",
     "issue": 1208,
     "expected": {

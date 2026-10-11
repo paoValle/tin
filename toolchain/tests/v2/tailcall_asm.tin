@@ -1,0 +1,14 @@
+package main
+
+import "say"
+
+fn count(n i64, acc i64) i64 {
+	if n == 0 {
+		return acc
+	}
+	return count(n - 1, acc + 1)
+}
+
+fn main() {
+	say.Line(count(4, 0))
+}

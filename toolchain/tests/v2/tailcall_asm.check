@@ -1,0 +1,15 @@
+# The self call updates the current frame's parameter homes and branches back to the body.
+# Both listings must contain no recursive call; amd64's symbolic label table is emitted first.
+
+[arm64]
+CHECK: _count:
+CHECK: b L[0-9]+
+CHECK-NOT: bl _count
+CHECK: _main.main:
+
+[amd64]
+CHECK: # L[0-9]+: count
+CHECK: \nL[0-9]+:\npush rbp
+CHECK: jmp L[0-9]+
+CHECK-NOT: call S[0-9]+ +# count
+CHECK: \n\.align 16, 0xcc\nL[0-9]+:\npush rbp

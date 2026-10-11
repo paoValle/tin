@@ -34,6 +34,7 @@ shared mut f_count i64
 shared mut used_regs i64 // bitmask of integer registers the current function writes
 shared mut used_fregs i64 // bitmask of float registers
 shared mut cur_gen_fn i64
+shared mut g_tail_entry i64 // body entry for safe self-tail calls (after the frame prologue)
 shared mut pl i64 // gen_pair results
 shared mut pr i64
 shared mut cmp_cc i64 // gen_compare result
@@ -4213,6 +4214,140 @@ fn result_reg(f Fn, i i64) i64 {
 	return i
 }
 
+// tail_call is deliberately narrow: the current frame may be reused only when returning
+// cannot run cleanup, wait, retain memory, reset the pool, or allocate into it.
+fn tail_call(e i64) Call {
+	let f = cast(Fn, cur_gen_fn)
+	if f.regsum == 0 || f.regsum[12] != 0 || f.regsum[13] != 0 || f.regsum[14] != 0 || fn_polls(f) != 0 || len(f.rtypes) != 1 || f.rtypes[0] != ty_int || len(f.params) > 6 || cast(Node, e).kind != EX_CALL {
+		return cast(Call, 0)
+	}
+	let c = cast(Call, e)
+	if cast(i64, c.fn_) != cur_gen_fn || len(c.args) != len(f.params) {
+		return cast(Call, 0)
+	}
+	mut i = 0
+	for i < len(c.args) {
+		if cast(Node, c.args[i]).type_ != f.ptypes[i] || f.ptypes[i] != ty_int {
+			return cast(Call, 0)
+		}
+		i = i + 1
+	}
+	return c
+}
+
+fn tail_stmts(v []i64) i64 {
+	if tail_stmts_safe(v) == 0 {
+		return 0
+	}
+	mut i = 0
+	for i < len(v) {
+		let s = v[i]
+		let k = cast(Node, s).kind
+		if k == ST_RETURN && cast(i64, tail_call(cast(ReturnStmt, s).value)) != 0 {
+			return 1
+		}
+		if k == ST_BLOCK && tail_stmts(cast(Block, s).stmts) != 0 {
+			return 1
+		}
+		if k == ST_IF {
+			let x = cast(IfStmt, s)
+			if tail_stmts(cast(Block, x.then).stmts) != 0 || (x.else_ != 0 && tail_stmt(x.else_) != 0) {
+				return 1
+			}
+		}
+		i = i + 1
+	}
+	return 0
+}
+
+// Only pure condition/value paths are eligible. This excludes waits, defers, holds,
+// calls with cleanup, and pool operations anywhere in the reused function body.
+fn tail_stmts_safe(v []i64) i64 {
+	mut i = 0
+	for i < len(v) {
+		if tail_stmt_safe(v[i]) == 0 {
+			return 0
+		}
+		i = i + 1
+	}
+	return 1
+}
+
+fn tail_stmt_safe(s i64) i64 {
+	let k = cast(Node, s).kind
+	if k == ST_BLOCK {
+		return tail_stmts_safe(cast(Block, s).stmts)
+	}
+	if k == ST_IF {
+		let x = cast(IfStmt, s)
+		return i64(read_only_expr(x.cond) != 0 && tail_stmts_safe(cast(Block, x.then).stmts) != 0 && (x.else_ == 0 || tail_stmt_safe(x.else_) != 0))
+	}
+	if k == ST_RETURN {
+		let e = cast(ReturnStmt, s).value
+		let c = tail_call(e)
+		if cast(i64, c) != 0 {
+			mut i = 0
+			for i < len(c.args) {
+				if read_only_expr(c.args[i]) == 0 {
+					return 0
+				}
+				i = i + 1
+			}
+			return 1
+		}
+		return read_only_expr(e)
+	}
+	return 0
+}
+
+fn tail_stmt(s i64) i64 {
+	if cast(Node, s).kind == ST_BLOCK {
+		return tail_stmts(cast(Block, s).stmts)
+	}
+	if cast(Node, s).kind == ST_IF {
+		let x = cast(IfStmt, s)
+		return i64(tail_stmts(cast(Block, x.then).stmts) != 0 || (x.else_ != 0 && tail_stmt(x.else_) != 0))
+	}
+	if cast(Node, s).kind == ST_RETURN {
+		return i64(cast(i64, tail_call(cast(ReturnStmt, s).value)) != 0)
+	}
+	return 0
+}
+
+fn gen_tail_return(s ReturnStmt) i64 {
+	if s.value == 0 || g_tail_entry == 0 {
+		return 0
+	}
+	let c = tail_call(s.value)
+	if cast(i64, c) == 0 {
+		return 0
+	}
+	let n = len(c.args)
+	let area = align_up(8 * n, 16)
+	emit3(I_SUBI, SP, SP, area)
+	mut i = 0
+	for i < n {
+		let r = gen_val(c.args[i], 0)
+		emit3(I_STR, r, SP, 8 * i)
+		i = i + 1
+	}
+	i = 0
+	let locals = cast([]i64, cast(Fn, cur_gen_fn).locals)
+	for i < n {
+		let sym = cast(Sym, locals[i])
+		emit3(I_LDR, X16, SP, 8 * i)
+		if sym.reg >= 0 {
+			mov(sym.reg, X16)
+		} else {
+			slot_mem(I_STR, X16, sym.off)
+		}
+		i = i + 1
+	}
+	emit3(I_ADDI, SP, SP, area)
+	emit1(I_B, g_tail_entry)
+	return 1
+}
+
 fn gen_stmt(s i64) {
 	let k = cast(Node, s).kind
 	if debug_lines != 0 && k != ST_BLOCK && cast(Node, s).pos != NO_POS {
@@ -4247,6 +4382,8 @@ fn gen_stmt(s i64) {
 		}
 	} else if k == ST_WHILE {
 		gen_while(cast(WhileStmt, s))
+	} else if k == ST_RETURN && gen_tail_return(cast(ReturnStmt, s)) != 0 {
+		// The frame and pool are reused at the body's entry.
 	} else if k == ST_RETURN {
 		gen_return(cast(ReturnStmt, s))
 	} else if k == ST_BREAK && len(cast(BreakStmt, s).label) != 0 {
@@ -5334,9 +5471,12 @@ fn gen_fn(f Fn) {
 	value_dests(f)
 	let nslots = assign_homes(f)
 	cg = []i64{}
+	g_tail_entry = 0
 	param_loads = 0
+	let stmts = cast(Block, f.body).stmts
+	let has_tail = tail_stmts(stmts)
 	mut early = 0
-	if fn_polls(f) == 0 && dest_fn(f) == 0 {
+	if has_tail == 0 && fn_polls(f) == 0 && dest_fn(f) == 0 {
 		early = early_exit(cast(i64, f))
 	}
 	let pre = cast([]i64, cg)
@@ -5421,7 +5561,6 @@ fn gen_fn(f Fn) {
 		}
 		i = i + 1
 	}
-	let stmts = cast(Block, f.body).stmts
 	if cast(i64, cast(Fn, f)) == cast(i64, entry_fn()) {
 		mut di = 0
 		for di < len(prog_fns) {
@@ -5440,6 +5579,10 @@ fn gen_fn(f Fn) {
 		gen_dyn_table_init()
 	}
 	gen_poll()
+	if has_tail != 0 {
+		g_tail_entry = new_label()
+		label(g_tail_entry)
+	}
 	i = early
 	for i < len(stmts) {
 		if i+1 < len(stmts) && gen_word_pair(stmts[i], stmts[i+1]) != 0 {

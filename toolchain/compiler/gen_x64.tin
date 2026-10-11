@@ -29,6 +29,7 @@ shared mut x_fn_labels []i64 // function index -> entry label
 shared mut x_nstack i64 // stack parameters of the current function
 shared mut x_div_label i64 // the current function's divide-by-zero stub, once used
 shared mut x_ovf_labels []i64 // the current function's overflow stub per OVK_* kind, 0 until used (#362)
+shared mut x_tail_entry i64 // body entry for safe self-tail calls
 
 fn x_label(l i64) {
 	emit1(X_LABEL, l)
@@ -2893,6 +2894,8 @@ fn x_gen_stmt(s i64) {
 		}
 	} else if k == ST_WHILE {
 		x_gen_while(cast(WhileStmt, s))
+	} else if k == ST_RETURN && x_gen_tail_return(cast(ReturnStmt, s)) != 0 {
+		// The frame and pool are reused at the body's entry.
 	} else if k == ST_RETURN {
 		x_gen_return(cast(ReturnStmt, s))
 	} else if k == ST_BREAK && len(cast(BreakStmt, s).label) != 0 {
@@ -3010,6 +3013,39 @@ fn x_gen_return(s ReturnStmt) {
 		x_load_imm(RAX, 0)
 	}
 	emit1(XP_RET, 0)
+}
+
+fn x_gen_tail_return(s ReturnStmt) i64 {
+	if s.value == 0 || x_tail_entry == 0 {
+		return 0
+	}
+	let c = tail_call(s.value)
+	if cast(i64, c) == 0 {
+		return 0
+	}
+	let n = len(c.args)
+	let area = align_up(8 * n, 16)
+	emit2(X_SUBI, RSP, area)
+	mut i = 0
+	for i < n {
+		x_st(x_gen_val(c.args[i], 0), x_mem1(RSP, 8 * i), 3)
+		i = i + 1
+	}
+	i = 0
+	let locals = cast([]i64, cast(Fn, cur_gen_fn).locals)
+	for i < n {
+		let sym = cast(Sym, locals[i])
+		x_ld(XSCR, x_mem1(RSP, 8 * i), 3)
+		if sym.reg >= 0 {
+			x_mov(sym.reg, XSCR)
+		} else {
+			x_slot_store(XSCR, sym.off)
+		}
+		i = i + 1
+	}
+	emit2(X_ADDI, RSP, area)
+	emit1(X_JMP, x_tail_entry)
+	return 1
 }
 
 // ---- if-conversion ----
@@ -3679,6 +3715,7 @@ fn x_gen_fn(f Fn) {
 	value_dests(f)
 	let nslots = x_assign_homes(f)
 	cg = []i64{}
+	x_tail_entry = 0
 	x_entry_moves(f)
 	if cast(i64, cast(Fn, f)) == cast(i64, entry_fn()) {
 		mut di = 0
@@ -3695,6 +3732,10 @@ fn x_gen_fn(f Fn) {
 	}
 	x_gen_poll()
 	let stmts = cast(Block, f.body).stmts
+	if tail_stmts(stmts) != 0 {
+		x_tail_entry = new_label()
+		x_label(x_tail_entry)
+	}
 	mut i = 0
 	for i < len(stmts) {
 		if i+1 < len(stmts) && x_gen_word_pair(stmts[i], stmts[i+1]) != 0 {
