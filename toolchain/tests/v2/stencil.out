@@ -1,5 +1,5 @@
 out dot Hello, world!
-out field 1 <no value> <no value>
+exec field stencil: can't evaluate field c in a string
 out nested deep
 out if yes
 out if empty no
@@ -17,7 +17,7 @@ out with var v
 out pipe 5
 out len 3
 out index b
-exec index map stencil: index needs a collection and a key
+out index map v
 out eq same
 out ne true
 out lt true
@@ -30,7 +30,7 @@ out printf q "hi"
 out print x7
 out comment ab
 out trim ax  b
-out trim right a x  b
+out trim right a xb
 out defs [1][2]
 out block [x]
 out funcs hey! 6

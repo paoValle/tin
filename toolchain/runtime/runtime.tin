@@ -4045,10 +4045,17 @@ fn rt_fmt_next(f i64) i64 {
 			}
 			f[fPrec] = pr
 		}
-		mut verb = 'v'
-		if i < n {
-			verb = i64(load8(p + i))
-			i += 1
+		if i >= n {
+			// As Go: a % with no verb at the end of the format.
+			fb_str(f, "%!(NOVERB)")
+			break
+		}
+		let verb = i64(load8(p + i))
+		i += 1
+		if verb == '%' {
+			// Go's %% after flags, a width or a precision: a percent sign that takes no value.
+			fb_byte(f, '%')
+			continue
 		}
 		f[fVerb] = verb
 		f[fPos] = i
@@ -4613,12 +4620,15 @@ fn fmt_nonfinite(f i64, x f64, verb i64) bool {
 }
 
 fn fmt_float_number(f i64, x f64, verb i64, prec i64) {
-	let buf = fmt_frame_scratch(f, prec + 400)
+	let buf = fmt_frame_scratch(f, prec*2 + 400)
 	mut n = rt_number_format(buf, x, verb, prec)
 	if f[fPlus] != 0 && load8(buf) != '-' {
 		memmove(buf+1, buf, n)
 		store8(buf, '+')
 		n += 1
+	}
+	if f[fSharp] != 0 {
+		n = fmt_float_sharp(buf, n, verb, prec)
 	}
 	fmt_float_pad(f, buf, n)
 }
@@ -4828,6 +4838,32 @@ fn fmt_float(f i64, x f64, verb i64) {
 	if fmt_nonfinite(f, x, verb) {
 		return
 	}
+	if verb == 'b' {
+		fmt_binfloat(f, x)
+		return
+	}
+	if verb == 'v' && f[fSharp] != 0 {
+		// Go's %#v is its Go-syntax form, which for a float is %v's: the # flag adds nothing.
+		f[fSharp] = 0
+		fmt_float(f, x, verb)
+		f[fSharp] = 1
+		return
+	}
+	if (verb == 'g' || verb == 'G') && f[fPrec] < 0 && f[fSharp] != 0 {
+		// Go's %#g: the shortest digits, then trailing zeros to six significant digits.
+		let start = f[fLen]
+		let out = fmt_frame_scratch(f, 400)
+		let n = shortest_into(out, x, -4, 6, false, f[fPlus] != 0)
+		fmt_float_pad(f, out, fmt_float_sharp(out, n, verb, -1))
+		if verb == 'G' {
+			for i in start..f[fLen] {
+				if load8(f[fData]+i) == 'e' {
+					store8(f[fData]+i, 'E')
+				}
+			}
+		}
+		return
+	}
 	if (verb == 'v' && f[fPrec] < 0) || ((verb == 'g' || verb == 'G') && f[fPrec] < 0) {
 		let start = f[fLen]
 		fmt_shortest(f, x, -4, 6)
@@ -4841,6 +4877,10 @@ fn fmt_float(f i64, x f64, verb i64) {
 		}
 		return
 	}
+	if verb == 'x' || verb == 'X' {
+		fmt_hexfloat(f, x, verb)
+		return
+	}
 	mut prec = f[fPrec]
 	if prec < 0 {
 		prec = 6
@@ -4849,6 +4889,227 @@ fn fmt_float(f i64, x f64, verb i64) {
 		verb = 'g'
 	}
 	fmt_float_number(f, x, verb, prec)
+}
+
+// fmt_hexfloat writes x as Go's %x and %X do: -0x1.8p+00, every hex digit of the fraction (or the
+// precision's, rounded half to even) and a binary exponent of at least two digits.
+fn fmt_hexfloat(f i64, x f64, verb i64) {
+	let bits = u64(cast(i64, x))
+	let neg = bits>>63 != 0
+	mut exp = i64((bits>>52) & 0x7ff)
+	mut mant = bits & 0xfffffffffffff
+	if exp == 0 {
+		exp += 1
+	} else {
+		mant |= u64(1)<<52
+	}
+	exp -= 1023
+	if mant == 0 {
+		exp = 0
+	}
+	// The leading 1, if any, at bit 60.
+	mant <<= 8
+	for mant != 0 && mant&(u64(1)<<60) == 0 {
+		mant <<= 1
+		exp -= 1
+	}
+	let prec = f[fPrec]
+	if prec >= 0 && prec < 15 {
+		let shift = u64(prec * 4)
+		let extra = (mant << shift) & ((u64(1)<<60) - 1)
+		mant >>= 60 - shift
+		if extra|(mant&1) > u64(1)<<59 {
+			mant += 1
+		}
+		mant <<= 60 - shift
+		if mant&(u64(1)<<61) != 0 {
+			mant >>= 1
+			exp += 1
+		}
+	}
+	mut hex = "0123456789abcdef"
+	if verb == 'X' {
+		hex = "0123456789ABCDEF"
+	}
+	let out = fmt_frame_scratch(f, 64+prec)
+	mut n = 0
+	if neg {
+		store8(out, '-')
+		n = 1
+	} else if f[fPlus] != 0 {
+		store8(out, '+')
+		n = 1
+	}
+	store8(out+n, '0')
+	store8(out+n+1, verb)
+	store8(out+n+2, '0' + i64((mant>>60)&1))
+	n += 3
+	mant <<= 4
+	if prec < 0 && mant != 0 {
+		store8(out+n, '.')
+		n += 1
+		for mant != 0 {
+			store8(out+n, i64(hex[i64((mant>>60)&15)]))
+			n += 1
+			mant <<= 4
+		}
+	} else if prec > 0 {
+		store8(out+n, '.')
+		n += 1
+		mut d = 0
+		for d < prec {
+			store8(out+n, i64(hex[i64((mant>>60)&15)]))
+			n += 1
+			mant <<= 4
+			d += 1
+		}
+	}
+	if verb == 'X' {
+		store8(out+n, 'P')
+	} else {
+		store8(out+n, 'p')
+	}
+	n += 1
+	if exp < 0 {
+		store8(out+n, '-')
+		exp = -exp
+	} else {
+		store8(out+n, '+')
+	}
+	n += 1
+	if exp >= 1000 {
+		store8(out+n, '0' + exp/1000)
+		n += 1
+	}
+	if exp >= 100 {
+		store8(out+n, '0' + (exp/100)%10)
+		n += 1
+	}
+	store8(out+n, '0' + (exp/10)%10)
+	store8(out+n+1, '0' + exp%10)
+	n += 2
+	if f[fSharp] != 0 {
+		n = fmt_float_sharp(out, n, verb, prec)
+	}
+	fmt_float_pad(f, out, n)
+}
+
+// fmt_float_sharp applies Go's # flag to the formatted float at p (n bytes, after any sign): it
+// keeps a decimal point, and %g, %G and %x keep trailing zeros up to the precision (6 when none is
+// given), counting digits as Go's fmtFloat does. It returns the new length.
+fn fmt_float_sharp(p i64, n i64, verb i64, prec i64) i64 {
+	mut digits = 0
+	if verb == 'g' || verb == 'G' || verb == 'x' {
+		digits = prec
+		if digits < 0 {
+			digits = 6
+		}
+	}
+	mut start = 0
+	if n > 0 && (load8(p) == '-' || load8(p) == '+') {
+		start = 1
+	}
+	mut end = n
+	mut point = false
+	mut nonzero = false
+	mut i = start
+	for i < end {
+		let c = i64(load8(p + i))
+		if c == '.' {
+			point = true
+		} else if c == 'p' || c == 'P' || ((c == 'e' || c == 'E') && verb != 'x' && verb != 'X') {
+			end = i
+			break
+		} else {
+			if c != '0' {
+				nonzero = true
+			}
+			if nonzero {
+				digits -= 1
+			}
+		}
+		i += 1
+	}
+	let tail = n - end
+	mut add = 0
+	if !point {
+		if end-start == 1 && load8(p+start) == '0' {
+			digits -= 1
+		}
+		add = 1
+	}
+	if digits > 0 {
+		add += digits
+	}
+	if add == 0 {
+		return n
+	}
+	memmove(p+end+add, p+end, tail)
+	mut k = end
+	if !point {
+		store8(p+k, '.')
+		k += 1
+	}
+	for k < end+add {
+		store8(p+k, '0')
+		k += 1
+	}
+	return n + add
+}
+
+// fmt_binfloat writes x as Go's %b of a float does: the integer mantissa, p, and the binary
+// exponent (4503599627370496p-52 for 1), with float32's for an f32.
+fn fmt_binfloat(f i64, x f64) {
+	let bits = u64(cast(i64, x))
+	let neg = bits>>63 != 0
+	mut exp = i64((bits>>52) & 0x7ff)
+	mut mant = bits & 0xfffffffffffff
+	if exp == 0 {
+		exp += 1
+	} else {
+		mant |= u64(1)<<52
+	}
+	exp -= 1023 + 52
+	if shortF32 {
+		// x is exact in float32: shift the mantissa to its 24 bits, or fewer for a subnormal.
+		mut shift = 29
+		if exp+52 < -126 {
+			shift += -126 - (exp + 52)
+		}
+		if mant == 0 {
+			exp = -149
+		} else {
+			mant >>= u64(shift)
+			exp += shift
+		}
+	}
+	let out = fmt_frame_scratch(f, 128)
+	mut n = 0
+	if neg {
+		store8(out, '-')
+		n = 1
+	} else if f[fPlus] != 0 {
+		store8(out, '+')
+		n = 1
+	}
+	let at = out + 64
+	let i = fmt_uint_buf(at, i64(mant), 10, false)
+	memmove(out+n, at+i, 64-i)
+	n += 64 - i
+	store8(out+n, 'p')
+	n += 1
+	if exp >= 0 {
+		store8(out+n, '+')
+		n += 1
+	} else {
+		store8(out+n, '-')
+		n += 1
+		exp = -exp
+	}
+	let j = fmt_uint_buf(at, exp, 10, false)
+	memmove(out+n, at+j, 64-j)
+	n += 64 - j
+	fmt_float_pad(f, out, n)
 }
 
 fn rt_fmt_f(x f64) {

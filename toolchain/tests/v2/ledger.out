@@ -54,14 +54,14 @@ case BareDoubleQuotes
 read 0 ok pos=1:1 nf=2 61222262 63
 read 1 eof
 case BadDoubleQuotes
-read 0 err ledger: line 1, column 2: bare " in non-quoted field
+read 0 err ledger: line 1, column 2: bare " in non-quoted-field
 case TrimQuote
 read 0 ok pos=1:2 nf=3 61 2062 63
 read 1 eof
 case BadBareQuote
-read 0 err ledger: line 1, column 3: bare " in non-quoted field
+read 0 err ledger: line 1, column 3: bare " in non-quoted-field
 case BadTrailingQuote
-read 0 err ledger: line 1, column 11: bare " in non-quoted field
+read 0 err ledger: line 1, column 11: bare " in non-quoted-field
 case ExtraneousQuote
 read 0 err ledger: line 1, column 4: extraneous or missing " in quoted-field
 case BadFieldCount
@@ -238,7 +238,7 @@ write 26 out=617c617c0a err=-
 write 27 out=2c7c2c7c0a err=-
 write 28 out= err=delim
 fault quote ledger: record on line 1; line 2, column 2: extraneous or missing " in quoted-field true
-fault bare ledger: line 1, column 3: bare " in non-quoted field true false
+fault bare ledger: line 1, column 3: bare " in non-quoted-field true false
 fault count true 61 ledger: record on line 2: wrong number of fields true false
 fault delim ledger: invalid field or comment delimiter true
 done true ledger: end of input true

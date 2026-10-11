@@ -1,6 +1,6 @@
 // Package stencil renders templates loaded at run time, like Go's text/template over a dynamic
 // value tree: {{.user.name}}, {{if}}, {{range}}, {{with}}, pipelines with the builtins (len,
-// index, eq, ne, lt, le, gt, ge, and, or, not, printf, print, println, html, urlquery, js),
+// index, slice, eq, ne, lt, le, gt, ge, and, or, not, printf, print, println, html, urlquery, js),
 // {{define}}, {{template}} and {{block}}, and user functions registered with Func. Parse errors
 // carry line and column; execution is bounded by a template recursion limit and a maximum output
 // size. ParseHTML renders in HTML mode instead: an action's escaping follows its context in the
@@ -206,10 +206,10 @@ fn truthy(v Value) bool {
 	return false
 }
 
-// printValue is Go's %v of a template value.
+// printValue is Go's %v of a template value; None is nil.
 fn printValue(v Value) str {
 	if v.kind == KindNone {
-		return "<no value>"
+		return "<nil>"
 	}
 	if v.kind == KindStr {
 		return v.s
@@ -248,24 +248,74 @@ fn printValue(v Value) str {
 		}
 		return out + "]"
 	}
-	return "<no value>"
+	return "<nil>"
 }
 
-// compare returns -1, 0 or 1 for the ordered values; ok is false for values Go does not order.
+// kindName names a value's kind in error messages.
+fn kindName(v Value) str {
+	if v.kind == KindStr {
+		return "string"
+	}
+	if v.kind == KindInt {
+		return "integer"
+	}
+	if v.kind == KindFloat {
+		return "float"
+	}
+	if v.kind == KindBool {
+		return "bool"
+	}
+	if v.kind == KindList {
+		return "list"
+	}
+	if v.kind == KindMap {
+		return "map"
+	}
+	return "nil"
+}
+
+// printArgs is Go's fmt.Sprint over values: a space between two operands when neither is a string.
+fn printArgs(args []Value) str {
+	mut out = ""
+	mut prevStr = false
+	for i, a in args {
+		let curStr = a.kind == KindStr
+		if i > 0 && !prevStr && !curStr {
+			out += " "
+		}
+		out += printValue(a)
+		prevStr = curStr
+	}
+	return out
+}
+
+// escaperText is the text the html, js and urlquery builtins escape, Go's evalArgs: a single string
+// as it is, else the operands printed as print does, a missing value printed "<no value>".
+fn escaperText(args []Value) str {
+	if len(args) == 1 && args[0].kind == KindStr {
+		return args[0].s
+	}
+	mut vals = []Value{}
+	for _, a in args {
+		if a.kind == KindNone {
+			vals = append(vals, Str("<no value>"))
+		} else {
+			vals = append(vals, a)
+		}
+	}
+	return printArgs(vals)
+}
+
+// compare returns -1, 0 or 1 for the ordered values; ok is false for values Go does not order. As in
+// Go, an integer and a float are different types and do not compare.
 fn compare(a Value, b Value) (i64, bool) {
 	if a.kind == KindInt {
 		if b.kind == KindInt {
 			return order(a.n, b.n), true
 		}
-		if b.kind == KindFloat {
-			return orderF(f64(a.n), b.f), true
-		}
 		return 0, false
 	}
 	if a.kind == KindFloat {
-		if b.kind == KindInt {
-			return orderF(a.f, f64(b.n)), true
-		}
 		if b.kind == KindFloat {
 			return orderF(a.f, b.f), true
 		}
@@ -323,24 +373,38 @@ fn orderF(x f64, y f64) i64 {
 	return 0
 }
 
-// equal is Go's eq: numbers compare across Int and Float, and everything else by its own kind.
-fn equal(a Value, b Value) bool {
-	let (c, ok) = compare(a, b)
-	if ok {
-		return c == 0
-	}
-	if a.kind == KindList && b.kind == KindList {
-		if len(a.xs) != len(b.xs) {
+// equal is Go's eq of two values: values of different kinds are an error unless one is missing
+// (then they differ), lists and maps are not comparable, and two missing values are equal.
+fn equal(a Value, b Value) !bool {
+	if a.kind != b.kind {
+		if a.kind == KindNone || b.kind == KindNone {
 			return false
 		}
-		for i in 0..len(a.xs) {
-			if !equal(a.xs[i], b.xs[i]) {
-				return false
-			}
-		}
+		fail say.Fault("stencil: incompatible types for comparison: %s and %s", kindName(a), kindName(b))
+	}
+	if a.kind == KindList || a.kind == KindMap {
+		fail say.Fault("stencil: non-comparable type %s", kindName(a))
+	}
+	if a.kind == KindNone {
 		return true
 	}
-	return false
+	if a.kind == KindBool {
+		return a.b == b.b
+	}
+	let (c, _) = compare(a, b)
+	return c == 0
+}
+
+// less is Go's lt: integers, floats and strings of one kind; anything else is an error.
+fn less(a Value, b Value) !bool {
+	if a.kind != KindInt && a.kind != KindFloat && a.kind != KindStr || b.kind != KindInt && b.kind != KindFloat && b.kind != KindStr {
+		fail say.Fault("stencil: invalid type for comparison")
+	}
+	if a.kind != b.kind {
+		fail say.Fault("stencil: incompatible types for comparison: %s and %s", kindName(a), kindName(b))
+	}
+	let (c, _) = compare(a, b)
+	return c < 0
 }
 
 // isBuiltin reports whether name is one of the builtins.
@@ -348,7 +412,7 @@ fn isBuiltin(name str) bool {
 	return name == "len" || name == "index" || name == "eq" || name == "ne" || name == "lt" ||
 		name == "le" || name == "gt" || name == "ge" || name == "and" || name == "or" ||
 		name == "not" || name == "printf" || name == "print" || name == "println" ||
-		name == "html" || name == "urlquery" || name == "js"
+		name == "html" || name == "urlquery" || name == "js" || name == "slice"
 }
 
 // builtin calls one of the builtins.
@@ -380,26 +444,32 @@ fn builtin(name str, args []Value) !Value {
 		if len(args) != 2 {
 			fail say.Fault("stencil: ne needs two arguments")
 		}
-		return Bool(!equal(args[0], args[1]))
+		let same = try equal(args[0], args[1])
+		return Bool(!same)
 	}
 	if name == "lt" || name == "le" || name == "gt" || name == "ge" {
 		if len(args) != 2 {
 			fail say.Fault("stencil: %s needs two arguments", name)
 		}
-		let (c, ok) = compare(args[0], args[1])
-		if !ok {
-			fail say.Fault("stencil: %s of incomparable values", name)
-		}
+		// Go's le is lt or eq, gt is not le, and ge is not lt.
+		let lt = try less(args[0], args[1])
 		if name == "lt" {
-			return Bool(c < 0)
+			return Bool(lt)
+		}
+		if name == "ge" {
+			return Bool(!lt)
+		}
+		mut le = lt
+		if !lt {
+			le = try equal(args[0], args[1])
 		}
 		if name == "le" {
-			return Bool(c <= 0)
+			return Bool(le)
 		}
-		if name == "gt" {
-			return Bool(c > 0)
-		}
-		return Bool(c >= 0)
+		return Bool(!le)
+	}
+	if (name == "and" || name == "or") && len(args) == 0 {
+		fail say.Fault("stencil: wrong number of args for %s: want at least 1 got 0", name)
 	}
 	if name == "and" {
 		mut last = None()
@@ -438,67 +508,74 @@ fn builtin(name str, args []Value) !Value {
 		let text = try format(f.s, args[1:len(args)])
 		return Str(text)
 	}
-	if name == "print" || name == "println" {
-		// Go's fmt.Sprint adds a space between operands when neither is a string; Sprintln always
-		// does and appends a newline.
+	if name == "print" {
+		// Go's fmt.Sprint adds a space between operands when neither is a string.
+		return Str(printArgs(args))
+	}
+	if name == "println" {
+		// Sprintln always adds the space and appends a newline.
 		mut out = ""
-		mut prevStr = false
 		for i, a in args {
-			let curStr = a.kind == KindStr
-			if i > 0 && (name == "println" || (!prevStr && !curStr)) {
+			if i > 0 {
 				out += " "
 			}
 			out += printValue(a)
-			prevStr = curStr
 		}
-		if name == "println" {
-			out += "\n"
-		}
-		return Str(out)
+		return Str(out + "\n")
 	}
 	if name == "html" {
-		if len(args) != 1 {
-			fail say.Fault("stencil: html needs one argument")
-		}
-		return Str(escapeHTML(printValue(args[0])))
+		return Str(escapeHTML(escaperText(args)))
 	}
 	if name == "urlquery" {
-		if len(args) != 1 {
-			fail say.Fault("stencil: urlquery needs one argument")
-		}
-		return Str(escapeURL(printValue(args[0])))
+		return Str(escapeURL(escaperText(args)))
 	}
 	if name == "js" {
-		if len(args) != 1 {
-			fail say.Fault("stencil: js needs one argument")
-		}
-		return Str(escapeJS(printValue(args[0])))
+		return Str(escapeJS(escaperText(args)))
+	}
+	if name == "slice" {
+		return try builtinSlice(args)
 	}
 	fail say.Fault("stencil: no function %q", name)
 }
 
-// allEqual is Go's eq: two or more arguments, the first equal to every other.
+// allEqual is Go's eq: two or more arguments, true when the first equals any of the others.
 fn allEqual(args []Value) !bool {
 	if len(args) < 2 {
 		fail say.Fault("stencil: eq needs two or more arguments")
 	}
 	for i in 1..len(args) {
-		if !equal(args[0], args[i]) {
-			return false
+		let same = try equal(args[0], args[i])
+		if same {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
-// builtinIndex is Go's index: index x k1 k2... walks lists and maps.
+// builtinIndex is Go's index: index x k1 k2... walks lists, maps and strings (a string's byte is an
+// integer); with no keys it is x itself.
 fn builtinIndex(args []Value) !Value {
-	if len(args) < 2 {
-		fail say.Fault("stencil: index needs a collection and a key")
+	if len(args) == 0 {
+		fail say.Fault("stencil: wrong number of args for index: want at least 1 got 0")
 	}
 	mut cur = args[0]
+	if cur.kind == KindNone {
+		fail say.Fault("stencil: index of untyped nil")
+	}
 	for i in 1..len(args) {
 		let key = args[i]
-		if cur.kind == KindList {
+		if cur.kind == KindNone {
+			fail say.Fault("stencil: index of untyped nil")
+		}
+		if cur.kind == KindStr {
+			if key.kind != KindInt {
+				fail say.Fault("stencil: cannot index a string with a %s", kindName(key))
+			}
+			if key.n < 0 || key.n >= i64(len(cur.s)) {
+				fail say.Fault("stencil: index out of range: %d", key.n)
+			}
+			cur = Int(i64(cur.s[key.n]))
+		} else if cur.kind == KindList {
 			if key.kind != KindInt {
 				fail say.Fault("stencil: a list index must be an integer")
 			}
@@ -521,4 +598,52 @@ fn builtinIndex(args []Value) !Value {
 		}
 	}
 	return cur
+}
+
+// builtinSlice is Go's slice: slice x i j k on a list (up to three indices) or a string (up to two),
+// with 0 <= i <= j <= k <= len; with no indices it is x itself.
+fn builtinSlice(args []Value) !Value {
+	if len(args) == 0 {
+		fail say.Fault("stencil: wrong number of args for slice: want at least 1 got 0")
+	}
+	let item = args[0]
+	if item.kind == KindNone {
+		fail say.Fault("stencil: slice of untyped nil")
+	}
+	if item.kind != KindList && item.kind != KindStr {
+		fail say.Fault("stencil: can't slice item of type %s", kindName(item))
+	}
+	let idx = args[1:len(args)]
+	if len(idx) > 3 {
+		fail say.Fault("stencil: too many slice indexes: %d", len(idx))
+	}
+	if item.kind == KindStr && len(idx) == 3 {
+		fail say.Fault("stencil: cannot 3-index slice a string")
+	}
+	mut n = i64(len(item.xs))
+	if item.kind == KindStr {
+		n = i64(len(item.s))
+	}
+	mut at = []i64{0, n}
+	for i, x in idx {
+		if x.kind != KindInt {
+			fail say.Fault("stencil: cannot index slice/array with type %s", kindName(x))
+		}
+		if x.n < 0 || x.n > n {
+			fail say.Fault("stencil: index out of range: %d", x.n)
+		}
+		if i < 2 {
+			at[i] = x.n
+		}
+	}
+	if at[0] > at[1] {
+		fail say.Fault("stencil: invalid slice index: %d > %d", at[0], at[1])
+	}
+	if len(idx) == 3 && at[1] > idx[2].n {
+		fail say.Fault("stencil: invalid slice index: %d > %d", at[1], idx[2].n)
+	}
+	if item.kind == KindStr {
+		return Str(item.s[at[0]:at[1]])
+	}
+	return List(item.xs[at[0]:at[1]])
 }

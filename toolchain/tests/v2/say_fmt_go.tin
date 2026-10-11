@@ -1,0 +1,23 @@
+package main
+
+// say.Fmt's # flag on floats, %b of a float, and a % verb after flags, as Go's fmt prints them.
+// Every line is Go 1.27's output.
+
+import "gauge"
+import "say"
+
+fn main() {
+	let fl = []f64{1.0, -1.0, 0.0, gauge.Copysign(0.0, -1.0), 100.0, 1e21, 1e-5, 0.000123, 123456789.125, 2.5, 5e-324, 1.7976931348623157e308, gauge.Inf(1), gauge.NaN()}
+	for x in fl {
+		say.Line(say.Fmt("%#g|%#G|%#.0e|%#.3g|%#.0f|%#x|%#X|%#.2x|%#10.0E|%#v|%#.3v|%+#g|% #g|%#08.0f", x, x, x, x, x, x, x, x, x, x, x, x, x, x))
+		say.Line(say.Fmt("%b|%+b|%25b|%-25b|", x, x, x, x))
+		let y = f32(x)
+		say.Line(say.Fmt("%b|%#g", y, y))
+	}
+	say.Line(say.Fmt("%b %b %b", f32(1e-40), f32(1.5e-45), f32(3.4e38)))
+	// A format that is not a literal is checked when it runs.
+	let pct = "%5%|%-3%|%.2%|%d|%"
+	say.Line(say.Fmt(pct, 7))
+	let s = say.Fmt("%.600x", 1.5)
+	say.Line(s[590:len(s)])
+}

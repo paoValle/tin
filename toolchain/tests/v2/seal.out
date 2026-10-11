@@ -20,5 +20,10 @@ bad64 "Zh==" true
 bad64 "====" true
 bad64 "Zg==Zg==" true
 badhex true true
+wrapped64 "Zm9v\r\nYmFy" "foobar" false
+wrapped64 "Zm9v\nYg=\n=" "foob" false
+wrapped64 "\r\n" "" false
+wrapped64 "Zg=\r" "" true
+wrappedurl "fooba" false
 cteq true false false
 random 32 false

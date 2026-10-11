@@ -1,0 +1,42 @@
+"a {{- 1 -}} b" out "a1b"
+"a {{-1 -}} b" out "a -1b"
+"a {{1}}  {{- /* c */ -}} \t b" out "a 1b"
+"{{/* c */ }}" parse error
+"{{ /* c */ }}" parse error
+"x {{ 1 -}}\t  y" out "x 1y"
+"{{'a'}} {{'\\n'}} {{'\\x41'}} {{'é'}} {{'\\''}} {{'\\101'}}" out "97 10 65 233 39 65"
+"{{'ab'}}" parse error
+"{{''}}" parse error
+"{{\"é\\t\"}}" out "é\t"
+"{{`a\\n`}}" out "a\\n"
+"{{\"\\q\"}}" parse error
+"{{$x}}" parse error
+"{{with $x := 1}}{{$x}}{{end}}{{$x}}" parse error
+"{{if 1}}{{$y := 2}}{{end}}{{$y}}" parse error
+"{{range $}}{{.}};{{end}}" out "true;;1.5;[x y 2];map[a:b k:v];3;[];a<b&'\";0;"
+"{{range $ | len}}{{.}}{{end}}" out "012345678"
+"{{$x = 1}}" exec error
+"{{$x := 1}}{{$x = 2}}{{$x}}" out "2"
+"{{print $ .n}}" out "map[b:true e: f:1.5 l:[x y 2] m:map[a:b k:v] n:3 nl:[] s:a<b&'\" z:0] 3"
+"{{nil}}" exec error
+"{{print nil}} {{print .missing}} {{.missing}} {{html .missing}} {{printf \"%v|%d\" nil nil}}" out "<nil> <nil> <no value> &lt;no value&gt; <nil>|%!d(<nil>)"
+"{{eq 1 2 1}} {{eq .missing .missing}} {{eq .missing 1}} {{le 2 2}} {{gt \"b\" \"a\"}} {{ne 1 2}}" out "true true false true true true"
+"{{eq 1 1.0}}" exec error
+"{{eq .l .l}}" exec error
+"{{lt 1 1.5}}" exec error
+"{{lt true false}}" exec error
+"{{or 1 (index nil 1)}} {{and 0 (index nil 1)}} {{1 | and 2}} {{0 | or \"\"}}" out "1 0 1 0"
+"{{and}}" exec error
+"{{index .l}} {{index .s 0}} {{slice .s 1 3}} {{slice .l 1}} {{slice .l 1 2 3}}" out "[x y 2] 97 <b [y 2] [y]"
+"{{index nil}}" exec error
+"{{slice .s 1 2 3}}" exec error
+"{{slice .l 2 1}}" exec error
+"{{html 1 \"a\"}} {{js \"<\" 1}} {{urlquery \"a b\" 1}} [{{html}}]" out "1a \\u003C1 a+b1 []"
+"{{.s.x}}" exec error
+"{{.missing.x}}" out "<no value>"
+"{{range .s}}x{{end}}" exec error
+"{{range .missing}}x{{else}}E{{end}} {{range -2}}x{{else}}E{{end}} {{range $v := 3}}{{$v}}{{end}}" out "E E 012"
+"{{range $i, $v := 3}}{{end}}" exec error
+"{{define \"d\"}}A{{end}}{{define \"d\"}} {{end}}{{template \"d\"}}" out "A"
+"{{define \"d\"}}A{{end}}{{define \"d\"}}B{{end}}" parse error
+"{{printf \"%s|%x|%5.2f|%q\" 1 \"hi\" \"ab\" 3}} {{printf \"%d\" .l}} {{printf \"%x %X\" 1.5 -0.1}} {{printf \"%v\" 1 2}} {{printf \"%3%d\" 1}}" out "%!s(int=1)|6869|%!f(string=   ab)|'\\x03' [%!d(string=x) %!d(string=y) 2] 0x1.8p+00 -0X1.999999999999AP-04 1%!(EXTRA int=2) %d%!(EXTRA int=1)"

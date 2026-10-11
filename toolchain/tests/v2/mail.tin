@@ -9,7 +9,7 @@ import "textproto"
 fn main() {
 	let (addr, ae) = mail.ParseAddress(`Jane Doe <jane@example.com>`)
 	say.Line("address", ae, addr.Name, addr.Address)
-	let (list, le) = mail.ParseAddressList(`Team: a@example.com, "B, C" <b@example.com>; d@example.net`)
+	let (list, le) = mail.ParseAddressList(`Team: a@example.com, "B, C" <b@example.com>;, d@example.net`)
 	say.Line("list", le, len(list), list[0].Address, list[1].Name, list[2].Address)
 	let (date, de) = mail.ParseDate("Fri, 21 Nov 1997 09:55:06 -0600")
 	say.Line("date", de, date)

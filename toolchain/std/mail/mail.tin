@@ -1,8 +1,10 @@
 // Package mail reads RFC 5322 messages, addresses and dates.
 package mail
 
-import "mime"
+import "glyph"
 import "io"
+import "mime"
+import "netip"
 import "say"
 import "textproto"
 import "tide"
@@ -23,7 +25,9 @@ type Message struct {
 	Body   str
 }
 
-// ReadMessage reads a message and separates its headers from its body.
+// ReadMessage reads a message and separates its headers from its body, as Go's ReadMessage does:
+// a header ends at the first empty line, a line that starts with a space or a tab continues the one
+// before it, and a message that ends inside its header keeps the fields read so far.
 fn ReadMessage(src mut dyn io.Reader) !Message {
 	mut rawBytes = []u8{}
 	mut buf = make([]u8, 4096)
@@ -34,50 +38,101 @@ fn ReadMessage(src mut dyn io.Reader) !Message {
 		rawBytes = append(rawBytes, buf[0:n]...)
 	}
 	let raw = str(rawBytes)
-	let split = twine.Index(raw, "\r\n\r\n")
-	mut width = 2
-	mut at = twine.Index(raw, "\n\n")
-	if split >= 0 {
-		width = 4
-		at = split
-	}
-	if at < 0 {
-		at = len(raw)
-		width = 0
-	}
-	let headerText = raw[0:at]
-	let body = raw[at+width:len(raw)]
 	mut h = make(Header)
-	let lines = twine.Split(twine.ReplaceAll(headerText, "\r\n", "\n"), "\n")
-	mut current = ""
-	for line in lines {
-		if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
-			if current == "" { fail say.Fault("mail: malformed header line") }
-			current += " " + twine.TrimSpace(line)
+	mut r = lineReader{data: raw, pos: 0}
+	if len(raw) > 0 && (raw[0] == ' ' || raw[0] == '\t') {
+		fail say.Fault("mail: malformed initial line")
+	}
+	for {
+		let (kv, more) = r.continuedLine()
+		if kv == "" {
+			if !more && len(h) == 0 {
+				fail say.Fault("mail: no header before the end of the message")
+			}
+			break
+		}
+		let (k, v, ok) = twine.Cut(kv, ":")
+		if !ok {
+			fail say.Fault("mail: malformed header line: %q", kv)
+		}
+		let key = textproto.CanonicalMIMEHeaderKey(k)
+		// An empty key is skipped, as Go does.
+		if key == "" {
 			continue
 		}
-		if current != "" { try addHeader(mut h, current) }
-		current = line
+		let value = twine.TrimLeft(v, " \t")
+		let (values, found) = h[key]
+		if found {
+			h[key] = append(values, value)
+		} else {
+			h[key] = []str{value}
+		}
 	}
-	if current != "" { try addHeader(mut h, current) }
-	return Message{Header: h, Body: body}
+	return Message{Header: h, Body: raw[r.pos:len(raw)]}
 }
 
-// addHeader validates and stores a complete unfolded header field.
-fn addHeader(h mut Header, line str) ! {
-	let colon = twine.IndexByte(line, ':')
-	if colon <= 0 { fail say.Fault("mail: malformed header line") }
-	let name = line[0:colon]
-	for c in name {
-		if c <= ' ' || c >= 0x7f || c == ':' { fail say.Fault("mail: malformed header line") }
+// lineReader reads the lines of a header the way Go's textproto.Reader does.
+type lineReader struct {
+	data str
+	pos  i64
+}
+
+// line returns the next line without its "\n" (and the "\r" before it), and false at the end.
+fn (r mut lineReader) line() (str, bool) {
+	if r.pos >= len(r.data) {
+		return "", false
 	}
-	let key = textproto.CanonicalMIMEHeaderKey(name)
-	let (values, found) = h[key]
-	if found {
-		h[key] = append(values, twine.TrimSpace(line[colon+1:len(line)]))
-	} else {
-		h[key] = []str{twine.TrimSpace(line[colon+1:len(line)])}
+	let start = r.pos
+	for r.pos < len(r.data) && r.data[r.pos] != '\n' {
+		r.pos += 1
 	}
+	mut end = r.pos
+	if r.pos < len(r.data) {
+		r.pos += 1
+		if end > start && r.data[end-1] == '\r' {
+			end -= 1
+		}
+	}
+	return r.data[start:end], true
+}
+
+// continuedLine is Go's ReadContinuedLine: the next line joined with the lines after it that start
+// with a space or a tab, each part trimmed of the spaces and tabs around it. An empty first line is
+// returned at once. more is false when there was no line left to read.
+fn (r mut lineReader) continuedLine() (str, bool) {
+	let (first, ok) = r.line()
+	if !ok {
+		return "", false
+	}
+	if first == "" {
+		return "", true
+	}
+	mut out = trimWSP(first)
+	for r.pos < len(r.data) && (r.data[r.pos] == ' ' || r.data[r.pos] == '\t') {
+		for r.pos < len(r.data) && (r.data[r.pos] == ' ' || r.data[r.pos] == '\t') {
+			r.pos += 1
+		}
+		out += " "
+		let (next, more) = r.line()
+		if !more {
+			break
+		}
+		out += trimWSP(next)
+	}
+	return out, true
+}
+
+// trimWSP is s without the spaces and tabs at either end.
+fn trimWSP(s str) str {
+	mut i = 0
+	mut n = len(s)
+	for i < n && (s[i] == ' ' || s[i] == '\t') {
+		i += 1
+	}
+	for n > i && (s[n-1] == ' ' || s[n-1] == '\t') {
+		n -= 1
+	}
+	return s[i:n]
 }
 
 // Get returns the first value associated with key, or an empty string.
@@ -99,138 +154,563 @@ fn (h Header) Date() !i64 {
 	return date
 }
 
-// ParseDate parses a date in one of the standard RFC 5322 and obsolete formats.
+// ParseDate parses an RFC 5322 date as Go's ParseDate does: the day of the week and the seconds are
+// optional, the year has four or two digits, the zone is a numeric offset or an abbreviation such
+// as UT or EST (read as offset 0), and a comment may follow the zone.
 fn ParseDate(value str) !i64 {
-	let s = twine.TrimSpace(stripComments(value))
-	for layout in []str{tide.RFC1123Z, "Mon, 2 Jan 2006 15:04:05 -0700", tide.RFC1123, tide.RFC822Z, tide.RFC822, tide.RFC850} {
-		let (ns, err) = tide.Parse(layout, s, tide.UTCZone())
-		if err == nil { return ns }
+	// CR and LF must match and are tolerated anywhere in the date.
+	mut date = twine.ReplaceAll(value, "\r\n", "")
+	if twine.IndexByte(date, '\r') >= 0 {
+		fail say.Fault("mail: header has a CR without LF")
 	}
-	fail say.Fault("mail: invalid date format")
+	mut p = addrParser{s: date}
+	p.skipSpace()
+	// zone = (FWS ("+" / "-") 4DIGIT) / obs-zone: a numeric zone is five bytes; an obsolete one
+	// ends at its last letter, T.
+	let ind = twine.IndexAny(p.s, "+-")
+	if ind != -1 && len(p.s) >= ind+5 {
+		date = p.s[0:ind+5]
+		p.s = p.s[ind+5:len(p.s)]
+	} else {
+		mut t = twine.Index(p.s, "T")
+		if t == 0 {
+			t = twine.Index(p.s[1:len(p.s)], "T")
+			if t != -1 {
+				t += 1
+			}
+		}
+		if t != -1 && len(p.s) >= t+5 {
+			date = p.s[0:t+1]
+			p.s = p.s[t+1:len(p.s)]
+		}
+	}
+	if !p.skipCFWS() {
+		fail say.Fault("mail: misformatted parenthetical comment")
+	}
+	for layout in dateLayouts() {
+		let (ns, err) = tide.Parse(layout, date, tide.UTCZone())
+		if err == nil {
+			return ns
+		}
+	}
+	fail say.Fault("mail: header could not be parsed")
 }
 
-// ParseAddress parses a single address, accepting display names and comments.
+// dateLayouts are Go's: every combination of an optional day of the week, a one- or two-digit
+// day, a four- or two-digit year, optional seconds and a numeric, abbreviated or UT zone.
+fn dateLayouts() []str {
+	mut out = []str{}
+	for dow in []str{"", "Mon, "} {
+		for day in []str{"2", "02"} {
+			for year in []str{"2006", "06"} {
+				for second in []str{":05", ""} {
+					for zone in []str{"-0700", "MST", "UT"} {
+						out = append(out, dow + day + " Jan " + year + " 15:04" + second + " " + zone)
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// ParseAddress parses a single RFC 5322 address, such as "Barry Gibbs <bg@example.com>", with Go's
+// net/mail parser.
 fn ParseAddress(value str) !Address {
-	let s = twine.TrimSpace(value)
-	let open = twine.IndexByte(s, '<')
-	if open >= 0 {
-		let close = twine.IndexByte(s, '>')
-		if close <= open || twine.TrimSpace(s[close+1:len(s)]) != "" { fail say.Fault("mail: invalid string") }
-		let rawName = twine.TrimSpace(stripComments(s[0:open]))
-		let name = try mime.WordDecoder{}.DecodeHeader(rawName)
-		let addr = twine.TrimSpace(s[open+1:close])
-		if !validAddrSpec(addr) { fail say.Fault("mail: invalid string") }
-		return Address{Name: unquote(name), Address: addr}
+	mut p = addrParser{s: value}
+	let addrs = try p.parseAddress(true)
+	if !p.skipCFWS() {
+		fail say.Fault("mail: misformatted parenthetical comment")
 	}
-	let commentStart = twine.LastIndexByte(s, '(')
-	let commentEnd = twine.LastIndexByte(s, ')')
-	let addr = twine.TrimSpace(stripComments(s))
-	if !validAddrSpec(addr) { fail say.Fault("mail: invalid string") }
-	mut name = ""
-	if commentStart >= 0 && commentEnd == len(s)-1 && commentEnd > commentStart {
-		name = twine.TrimSpace(s[commentStart+1:commentEnd])
+	if !p.empty() {
+		fail say.Fault("mail: expected single address, got %q", p.s)
 	}
-	return Address{Name: name, Address: addr}
+	if len(addrs) == 0 {
+		fail say.Fault("mail: empty group")
+	}
+	if len(addrs) > 1 {
+		fail say.Fault("mail: group with multiple addresses")
+	}
+	return addrs[0]
 }
 
-// ParseAddressList parses comma-separated addresses and RFC 5322 groups.
+// ParseAddressList parses comma-separated addresses and RFC 5322 groups with Go's net/mail parser;
+// empty entries between commas are skipped (obs-addr-list).
 fn ParseAddressList(value str) ![]Address {
-	mut out = []Address{}
-	let s = stripComments(value)
-	mut start = i64(0)
-	mut quote = false
-	mut angle = 0
-	mut group = false
-	for i in 0..len(s) {
-		if s[i] == '"' && (i == 0 || s[i-1] != '\\') { quote = !quote }
-		if quote { continue }
-		if s[i] == '<' { angle += 1 }
-		if s[i] == '>' { angle -= 1 }
-		if angle == 0 && s[i] == ':' && !group {
-			group = true
-			start = i+1
+	mut p = addrParser{s: value}
+	mut list = []Address{}
+	for {
+		p.skipSpace()
+		if p.consume(',') {
 			continue
 		}
-		if angle == 0 && s[i] == ',' {
-			let part = twine.TrimSpace(s[start:i])
-			if len(part) > 0 {
-				let address = try ParseAddress(part)
-				out = append(out, address)
+		let addrs = try p.parseAddress(true)
+		list = append(list, addrs...)
+		if !p.skipCFWS() {
+			fail say.Fault("mail: misformatted parenthetical comment")
+		}
+		if p.empty() {
+			break
+		}
+		if p.peek() != ',' {
+			fail say.Fault("mail: expected comma")
+		}
+		for p.consume(',') {
+			p.skipSpace()
+		}
+		if p.empty() {
+			break
+		}
+	}
+	return list
+}
+
+// addrParser is Go's net/mail address parser: s is the text not yet read.
+type addrParser struct {
+	s str
+}
+
+// parseAddress parses one address (a mailbox, or a group when handleGroup) at the start of p.
+fn (p mut addrParser) parseAddress(handleGroup bool) ![]Address {
+	p.skipSpace()
+	if p.empty() {
+		fail say.Fault("mail: no address")
+	}
+	// An addr-spec has the narrower grammar, so it is tried first.
+	mut specOk = true
+	let spec = p.consumeAddrSpec() catch _ {
+		specOk = false
+		""
+	}
+	if specOk {
+		mut displayName = ""
+		p.skipSpace()
+		if !p.empty() && p.peek() == '(' {
+			displayName = try p.consumeDisplayNameComment()
+		}
+		return []Address{Address{Name: displayName, Address: spec}}
+	}
+	mut displayName = ""
+	if p.peek() != '<' {
+		displayName = try p.consumePhrase()
+	}
+	p.skipSpace()
+	if handleGroup && p.consume(':') {
+		return try p.consumeGroupList()
+	}
+	if !p.consume('<') {
+		mut i = 0
+		for i < len(displayName) {
+			let (r, size) = glyph.DecodeRune(displayName, i)
+			if !isAtext(r, true) {
+				fail say.Fault("mail: no angle-addr")
 			}
-			start = i+1
+			i += size
 		}
-		if angle == 0 && s[i] == ';' && group {
-			let part = twine.TrimSpace(s[start:i])
-			if len(part) > 0 {
-				let address = try ParseAddress(part)
-				out = append(out, address)
+		fail say.Fault("mail: missing '@' or angle-addr")
+	}
+	let inner = try p.consumeAddrSpec()
+	if !p.consume('>') {
+		fail say.Fault("mail: unclosed angle-addr")
+	}
+	return []Address{Address{Name: displayName, Address: inner}}
+}
+
+// consumeGroupList reads the addresses of a group after its ':' through its ';'.
+fn (p mut addrParser) consumeGroupList() ![]Address {
+	mut group = []Address{}
+	p.skipSpace()
+	if p.consume(';') {
+		if !p.skipCFWS() {
+			fail say.Fault("mail: misformatted parenthetical comment")
+		}
+		return group
+	}
+	for {
+		p.skipSpace()
+		// Groups do not nest.
+		let addrs = try p.parseAddress(false)
+		group = append(group, addrs...)
+		if !p.skipCFWS() {
+			fail say.Fault("mail: misformatted parenthetical comment")
+		}
+		if p.consume(';') {
+			if !p.skipCFWS() {
+				fail say.Fault("mail: misformatted parenthetical comment")
 			}
-			start = i+1
-			group = false
+			break
+		}
+		if !p.consume(',') {
+			fail say.Fault("mail: expected comma")
 		}
 	}
-	if group { fail say.Fault("mail: invalid address") }
-	let tail = twine.TrimSpace(s[start:len(s)])
-	if len(tail) > 0 {
-		let address = try ParseAddress(tail)
-		out = append(out, address)
+	return group
+}
+
+// consumeAddrSpec reads an addr-spec (local@domain) at the start of p; on failure p is unchanged.
+fn (p mut addrParser) consumeAddrSpec() !str {
+	let orig = p.s
+	let spec = p.addrSpec() catch err {
+		p.s = orig
+		fail err
 	}
-	return out
+	return spec
 }
 
-// validAddrSpec checks the mailbox's required local@domain shape.
-fn validAddrSpec(s str) bool {
-	let at = twine.IndexByte(s, '@')
-	return at > 0 && at < len(s)-1 && twine.IndexByte(s, ' ') < 0 && twine.IndexByte(s, '\t') < 0
-}
-
-// stripComments removes nested RFC comments while preserving quoted text.
-fn stripComments(s str) str {
-	mut out = ""
-	mut depth = i64(0)
-	mut quote = false
-	mut escape = false
-	for c in s {
-		if escape {
-			if depth == 0 { out += str(c) }
-			escape = false
-			continue
-		}
-		if c == '\\' {
-			if depth == 0 { out += str(c) }
-			escape = true
-			continue
-		}
-		if c == '"' && depth == 0 { quote = !quote }
-		if !quote && c == '(' {
-			depth += 1
-			continue
-		}
-		if !quote && c == ')' && depth > 0 {
-			depth -= 1
-			continue
-		}
-		if depth == 0 { out += str(c) }
+// addrSpec is consumeAddrSpec without the restore.
+fn (p mut addrParser) addrSpec() !str {
+	p.skipSpace()
+	if p.empty() {
+		fail say.Fault("mail: no addr-spec")
 	}
-	return out
+	mut localPart = ""
+	if p.peek() == '"' {
+		localPart = try p.consumeQuotedString()
+		if localPart == "" {
+			fail say.Fault("mail: empty quoted string in addr-spec")
+		}
+	} else {
+		localPart = try p.consumeAtom(true, false)
+	}
+	if !p.consume('@') {
+		fail say.Fault("mail: missing @ in addr-spec")
+	}
+	p.skipSpace()
+	if p.empty() {
+		fail say.Fault("mail: no domain in addr-spec")
+	}
+	mut domain = ""
+	if p.peek() == '[' {
+		domain = try p.consumeDomainLiteral()
+	} else {
+		domain = try p.consumeAtom(true, false)
+	}
+	return localPart + "@" + domain
 }
 
-// unquote removes surrounding quotes and quoted-pair escapes from a display name.
-fn unquote(s str) str {
-	if len(s) < 2 || s[0] != '"' || s[len(s)-1] != '"' { return twine.TrimSpace(s) }
-	mut out = ""
-	mut esc = false
-	for i in 1..len(s)-1 {
-		if esc {
-			out += s[i:i+1]
-			esc = false
-		} else if s[i] == '\\' {
-			esc = true
+// consumePhrase reads a display name: words (atoms, dot-atoms or quoted strings) joined by single
+// spaces, with adjacent RFC 2047 encoded words decoded and joined without one.
+fn (p mut addrParser) consumePhrase() !str {
+	mut words = []str{}
+	mut encoded = ""
+	mut failure = ""
+	for {
+		// obs-phrase allows CFWS after one word.
+		if len(words) > 0 && !p.skipCFWS() {
+			fail say.Fault("mail: misformatted parenthetical comment")
+		}
+		p.skipSpace()
+		if p.empty() {
+			break
+		}
+		mut isEncoded = false
+		mut word = ""
+		if p.peek() == '"' {
+			let q = p.consumeQuotedString() catch err {
+				failure = say.Fmt("%v", err)
+				""
+			}
+			word = q
 		} else {
-			out += s[i:i+1]
+			let a = p.consumeAtom(true, true) catch err {
+				failure = say.Fmt("%v", err)
+				""
+			}
+			if failure == "" {
+				let (w, e, bad) = decodeRFC2047Word(a)
+				word = w
+				isEncoded = e
+				failure = bad
+			}
+		}
+		if failure != "" {
+			break
+		}
+		if isEncoded {
+			encoded += word
+		} else if len(encoded) > 0 {
+			words = append(words, encoded)
+			encoded = ""
+			words = append(words, word)
+		} else {
+			words = append(words, word)
 		}
 	}
+	if len(encoded) > 0 {
+		words = append(words, encoded)
+	}
+	// An error after at least one word ends the phrase.
+	if failure != "" && len(words) == 0 {
+		fail say.Fault("mail: missing word in phrase: %s", failure)
+	}
+	return twine.Join(words, " ")
+}
+
+// consumeQuotedString reads the quoted string at the start of p (its first byte is '"').
+fn (p mut addrParser) consumeQuotedString() !str {
+	mut i = 1
+	mut out = ""
+	mut escaped = false
+	for {
+		let (r, size) = glyph.DecodeRune(p.s, i)
+		if size == 0 {
+			fail say.Fault("mail: unclosed quoted-string")
+		}
+		if size == 1 && r == glyph.RuneError {
+			fail say.Fault("mail: invalid utf-8 in quoted-string: %q", p.s)
+		}
+		if escaped {
+			// quoted-pair = "\" (VCHAR / WSP)
+			if !isVchar(r) && !isWSP(r) {
+				fail say.Fault("mail: bad character in quoted-string: %q", r)
+			}
+			out += p.s[i:i+size]
+			escaped = false
+		} else if isQtext(r) || isWSP(r) {
+			out += p.s[i:i+size]
+		} else if r == '"' {
+			break
+		} else if r == '\\' {
+			escaped = true
+		} else {
+			fail say.Fault("mail: bad character in quoted-string: %q", r)
+		}
+		i += size
+	}
+	p.s = p.s[i+1:len(p.s)]
 	return out
+}
+
+// consumeAtom reads an atom (a dot-atom when dot) at the start of p. Unless permissive, a leading,
+// trailing or doubled dot fails.
+fn (p mut addrParser) consumeAtom(dot bool, permissive bool) !str {
+	mut i = 0
+	for {
+		let (r, size) = glyph.DecodeRune(p.s, i)
+		if size == 1 && r == glyph.RuneError {
+			fail say.Fault("mail: invalid utf-8 in address: %q", p.s)
+		}
+		if size == 0 || !isAtext(r, dot) {
+			break
+		}
+		i += size
+	}
+	if i == 0 {
+		fail say.Fault("mail: invalid string")
+	}
+	let atom = p.s[0:i]
+	p.s = p.s[i:len(p.s)]
+	if !permissive {
+		if twine.HasPrefix(atom, ".") {
+			fail say.Fault("mail: leading dot in atom")
+		}
+		if twine.Contains(atom, "..") {
+			fail say.Fault("mail: double dot in atom")
+		}
+		if twine.HasSuffix(atom, ".") {
+			fail say.Fault("mail: trailing dot in atom")
+		}
+	}
+	return atom
+}
+
+// consumeDomainLiteral reads a domain literal, which must hold an IPv4 address or "IPv6:" and an
+// IPv6 one (Go checks them with net.ParseIP).
+fn (p mut addrParser) consumeDomainLiteral() !str {
+	if !p.consume('[') {
+		fail say.Fault("mail: missing \"[\" in domain-literal")
+	}
+	let start = p.s
+	mut n = 0
+	for {
+		if p.empty() {
+			fail say.Fault("mail: unclosed domain-literal")
+		}
+		if p.peek() == ']' {
+			break
+		}
+		let (r, size) = glyph.DecodeRune(p.s, 0)
+		if size == 1 && r == glyph.RuneError {
+			fail say.Fault("mail: invalid utf-8 in domain-literal: %q", p.s)
+		}
+		if !isDtext(r) {
+			fail say.Fault("mail: bad character in domain-literal: %q", r)
+		}
+		n += size
+		p.s = p.s[size:len(p.s)]
+	}
+	let dtext = start[0:n]
+	if !p.consume(']') {
+		fail say.Fault("mail: unclosed domain-literal")
+	}
+	if twine.HasPrefix(dtext, "IPv6:") {
+		// net.ParseIP gives 16 bytes for any address, IPv4 ones included.
+		let ip = netip.ParseAddr(dtext[5:len(dtext)]) catch _ {
+			fail say.Fault("mail: invalid IPv6 address in domain-literal: %q", dtext)
+		}
+		if ip.Zone() != "" {
+			fail say.Fault("mail: invalid IPv6 address in domain-literal: %q", dtext)
+		}
+	} else {
+		let ip = netip.ParseAddr(dtext) catch _ {
+			fail say.Fault("mail: invalid IP address in domain-literal: %q", dtext)
+		}
+		if ip.Zone() != "" || !ip.Is4() && !ip.Is4In6() {
+			fail say.Fault("mail: invalid IP address in domain-literal: %q", dtext)
+		}
+	}
+	return "[" + dtext + "]"
+}
+
+// consumeDisplayNameComment reads the comment after an addr-spec as its display name, with
+// encoded words decoded and runs of spaces and tabs read as one space.
+fn (p mut addrParser) consumeDisplayNameComment() !str {
+	if !p.consume('(') {
+		fail say.Fault("mail: comment does not start with (")
+	}
+	let (comment, ok) = p.consumeComment()
+	if !ok {
+		fail say.Fault("mail: misformatted parenthetical comment")
+	}
+	mut words = []str{}
+	for w in twine.FieldsFunc(comment, isWSP) {
+		let (decoded, isEncoded, bad) = decodeRFC2047Word(w)
+		if bad != "" {
+			fail say.Fault("%s", bad)
+		}
+		if isEncoded {
+			words = append(words, decoded)
+		} else {
+			words = append(words, w)
+		}
+	}
+	return twine.Join(words, " ")
+}
+
+// consume skips the byte c if p starts with it.
+fn (p mut addrParser) consume(c u8) bool {
+	if p.empty() || p.peek() != c {
+		return false
+	}
+	p.s = p.s[1:len(p.s)]
+	return true
+}
+
+// skipSpace skips spaces and tabs.
+fn (p mut addrParser) skipSpace() {
+	p.s = twine.TrimLeft(p.s, " \t")
+}
+
+// peek is the first byte left; p must not be empty.
+fn (p addrParser) peek() u8 {
+	return p.s[0]
+}
+
+// empty reports whether nothing is left.
+fn (p addrParser) empty() bool {
+	return len(p.s) == 0
+}
+
+// skipCFWS skips spaces, tabs and comments; false for an unclosed comment.
+fn (p mut addrParser) skipCFWS() bool {
+	p.skipSpace()
+	for p.consume('(') {
+		let (_, ok) = p.consumeComment()
+		if !ok {
+			return false
+		}
+		p.skipSpace()
+	}
+	return true
+}
+
+// consumeComment reads a comment after its '(' through the matching ')', with nested comments and
+// backslash escapes; ok is false when it is not closed.
+fn (p mut addrParser) consumeComment() (str, bool) {
+	mut depth = 1
+	mut out = []u8{}
+	for len(p.s) > 0 && depth > 0 {
+		if p.s[0] == '\\' && len(p.s) > 1 {
+			p.s = p.s[1:len(p.s)]
+		} else if p.s[0] == '(' {
+			depth += 1
+		} else if p.s[0] == ')' {
+			depth -= 1
+		}
+		if depth > 0 {
+			out = append(out, p.s[0])
+		}
+		p.s = p.s[1:len(p.s)]
+	}
+	return str(out), depth == 0
+}
+
+// decodeRFC2047Word decodes s when it is an RFC 2047 encoded word. A word that is not one comes back
+// as it is, with false; a well-formed word in a charset Tin cannot convert gives an error message,
+// as in Go.
+fn decodeRFC2047Word(s str) (str, bool, str) {
+	let d = mime.WordDecoder{}
+	mut ok = true
+	let word = d.Decode(s) catch _ {
+		ok = false
+		""
+	}
+	if ok {
+		return word, true, ""
+	}
+	// Go's decoder fails on the charset only after the word's form and its encoded text pass:
+	// decode the same text as ISO-8859-1, which converts any bytes, to tell the two apart.
+	if len(s) >= 8 && twine.HasPrefix(s, "=?") && twine.HasSuffix(s, "?=") && twine.Count(s, "?") == 4 {
+		let (charset, rest, _) = twine.Cut(s[2:len(s)-2], "?")
+		let (enc, text, _) = twine.Cut(rest, "?")
+		if charset != "" && len(enc) == 1 {
+			mut payloadOk = true
+			d.Decode("=?iso-8859-1?" + enc + "?" + text + "?=") catch _ {
+				payloadOk = false
+			}
+			if payloadOk {
+				return "", false, say.Fmt("charset not supported: %q", charset)
+			}
+		}
+	}
+	return s, false, ""
+}
+
+// isAtext reports whether r is RFC 5322 atext (and '.' when dot).
+fn isAtext(r i32, dot bool) bool {
+	if r == '.' {
+		return dot
+	}
+	if r == '(' || r == ')' || r == '<' || r == '>' || r == '[' || r == ']' || r == ':' || r == ';' || r == '@' || r == '\\' || r == ',' || r == '"' {
+		return false
+	}
+	return isVchar(r)
+}
+
+// isQtext reports whether r is RFC 5322 qtext: printable, not a backslash or a quote.
+fn isQtext(r i32) bool {
+	if r == '\\' || r == '"' {
+		return false
+	}
+	return isVchar(r)
+}
+
+// isVchar reports whether r is printable US-ASCII or a multi-byte rune (RFC 6532).
+fn isVchar(r i32) bool {
+	return r >= '!' && r <= '~' || r >= 0x80
+}
+
+// isWSP reports whether r is a space or a tab.
+fn isWSP(r i32) bool {
+	return r == ' ' || r == '\t'
+}
+
+// isDtext reports whether r is RFC 5322 dtext: printable, not "[", "]" or a backslash.
+fn isDtext(r i32) bool {
+	if r == '[' || r == ']' || r == '\\' {
+		return false
+	}
+	return isVchar(r)
 }
 
 // DecodeHeader decodes RFC 2047 encoded words in a header value.

@@ -22,7 +22,7 @@ let Done = fault("ledger: end of input")
 
 // ErrBareQuote is the cause of a parse fault for a quote in a non-quoted field:
 // fault.Is(err, ledger.ErrBareQuote).
-let ErrBareQuote = fault(`bare " in non-quoted field`)
+let ErrBareQuote = fault(`bare " in non-quoted-field`)
 
 // ErrQuote is the cause of a parse fault for an extraneous or missing quote in a quoted field:
 // fault.Is(err, ledger.ErrQuote).

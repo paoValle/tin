@@ -4,7 +4,7 @@ lone text
 bad mime: invalid media parameter mime: expected slash after first token mime: expected token after slash
 ext image/png application/json 
 added application/x-tinz .png 
-word café café cafÃ©
+word café café café
 word bad mime: invalid RFC 2047 encoding "x" mime: unhandled charset "nope"
 header Subject: café time
 encode word =?utf-8?Q?caf=C3=A9?= plain

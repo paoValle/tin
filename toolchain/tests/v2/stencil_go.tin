@@ -1,0 +1,87 @@
+package main
+
+// stencil follows Go's text/template (#1247): trim markers need a space, character constants,
+// undefined variables are parse errors, nil is not a command, eq is true when the first operand
+// equals any other and refuses mixed kinds, and and or stop early, index and slice with no indices,
+// the escapers print several operands, fields of a non-map fail, and printf marks bad verbs. Every
+// line is what Go 1.27 prints for the same template and data.
+
+import "say"
+import "stencil"
+
+fn data() stencil.Value {
+	mut m = make(map[str]stencil.Value)
+	m["s"] = stencil.Str("a<b&'\"")
+	m["n"] = stencil.Int(3)
+	m["f"] = stencil.Float(1.5)
+	m["b"] = stencil.Bool(true)
+	m["l"] = stencil.List([]stencil.Value{stencil.Str("x"), stencil.Str("y"), stencil.Int(2)})
+	mut mm = make(map[str]stencil.Value)
+	mm["k"] = stencil.Str("v")
+	mm["a"] = stencil.Str("b")
+	m["m"] = stencil.Map(mm)
+	m["e"] = stencil.Str("")
+	m["z"] = stencil.Int(0)
+	m["nl"] = stencil.List([]stencil.Value{})
+	return stencil.Map(m)
+}
+
+fn main() {
+	let d = data()
+	for src in []str{
+		`a {{- 1 -}} b`,
+		`a {{-1 -}} b`,
+		`a {{1}}  {{- /* c */ -}} 	 b`,
+		`{{/* c */ }}`,
+		`{{ /* c */ }}`,
+		`x {{ 1 -}}	  y`,
+		`{{'a'}} {{'\n'}} {{'\x41'}} {{'é'}} {{'\''}} {{'\101'}}`,
+		`{{'ab'}}`,
+		`{{''}}`,
+		`{{"é\t"}}`,
+		`{{` + "`" + `a\n` + "`" + `}}`,
+		`{{"\q"}}`,
+		`{{$x}}`,
+		`{{with $x := 1}}{{$x}}{{end}}{{$x}}`,
+		`{{if 1}}{{$y := 2}}{{end}}{{$y}}`,
+		`{{range $}}{{.}};{{end}}`,
+		`{{range $ | len}}{{.}}{{end}}`,
+		`{{$x = 1}}`,
+		`{{$x := 1}}{{$x = 2}}{{$x}}`,
+		`{{print $ .n}}`,
+		`{{nil}}`,
+		`{{print nil}} {{print .missing}} {{.missing}} {{html .missing}} {{printf "%v|%d" nil nil}}`,
+		`{{eq 1 2 1}} {{eq .missing .missing}} {{eq .missing 1}} {{le 2 2}} {{gt "b" "a"}} {{ne 1 2}}`,
+		`{{eq 1 1.0}}`,
+		`{{eq .l .l}}`,
+		`{{lt 1 1.5}}`,
+		`{{lt true false}}`,
+		`{{or 1 (index nil 1)}} {{and 0 (index nil 1)}} {{1 | and 2}} {{0 | or ""}}`,
+		`{{and}}`,
+		`{{index .l}} {{index .s 0}} {{slice .s 1 3}} {{slice .l 1}} {{slice .l 1 2 3}}`,
+		`{{index nil}}`,
+		`{{slice .s 1 2 3}}`,
+		`{{slice .l 2 1}}`,
+		`{{html 1 "a"}} {{js "<" 1}} {{urlquery "a b" 1}} [{{html}}]`,
+		`{{.s.x}}`,
+		`{{.missing.x}}`,
+		`{{range .s}}x{{end}}`,
+		`{{range .missing}}x{{else}}E{{end}} {{range -2}}x{{else}}E{{end}} {{range $v := 3}}{{$v}}{{end}}`,
+		`{{range $i, $v := 3}}{{end}}`,
+		`{{define "d"}}A{{end}}{{define "d"}} {{end}}{{template "d"}}`,
+		`{{define "d"}}A{{end}}{{define "d"}}B{{end}}`,
+		`{{printf "%s|%x|%5.2f|%q" 1 "hi" "ab" 3}} {{printf "%d" .l}} {{printf "%x %X" 1.5 -0.1}} {{printf "%v" 1 2}} {{printf "%3%d" 1}}`,
+	} {
+		let (t, pe) = stencil.Parse("t", src)
+		if pe != nil {
+			say.Line(say.Fmt("%q parse error", src))
+			continue
+		}
+		let (out, xe) = t.Execute(d)
+		if xe != nil {
+			say.Line(say.Fmt("%q exec error", src))
+			continue
+		}
+		say.Line(say.Fmt("%q out %q", src, out))
+	}
+}

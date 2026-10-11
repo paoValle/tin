@@ -28,6 +28,13 @@ fn main() {
 	let (_, eh) = seal.HexDecode("abc")
 	let (_, eh2) = seal.HexDecode("zz")
 	say.Line("badhex", eh != nil, eh2 != nil)
+	// Go's decoders skip "\r" and "\n" anywhere, so wrapped base64 decodes (#1244).
+	for s in []str{"Zm9v\r\nYmFy", "Zm9v\nYg=\n=", "\r\n", "Zg=\r"} {
+		let (b, err) = seal.B64Decode(s)
+		say.Line(say.Fmt("wrapped64 %q %q %v", s, str(b), err != nil))
+	}
+	let (wu, ewu) = seal.B64URLDecode("Zm9v\nYmE")
+	say.Line(say.Fmt("wrappedurl %q %v", str(wu), ewu != nil))
 	say.Line("cteq", seal.ConstantTimeEq([]u8("abc"), []u8("abc")), seal.ConstantTimeEq([]u8("abc"), []u8("abd")), seal.ConstantTimeEq([]u8("a"), []u8("ab")))
 	let r1 = seal.RandomBytes(32)
 	let r2 = seal.RandomBytes(32)

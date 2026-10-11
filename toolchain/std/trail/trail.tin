@@ -257,7 +257,9 @@ fn sameRange(a str, alo i64, ahi i64, b str, blo i64, bhi i64) bool {
 	return true
 }
 
-// Match reports whether name matches the shell pattern: '*' (no slash), '?', '[a-z]', '[^x]' and '\' escapes, like Go's filepath.Match.
+// Match reports whether name matches the shell pattern: '*' (no slash), '?', '[a-z]', '[^x]' and '\' escapes, like Go's
+// path.Match: a malformed pattern is a fault even when the name stops matching before it (Go's filepath.Match returns
+// false there).
 fn Match(pattern str, name str) !bool {
 	mut pi = 0
 	mut ni = 0

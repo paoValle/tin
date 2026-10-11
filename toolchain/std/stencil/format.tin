@@ -45,6 +45,11 @@ fn format(f str, args []Value) !str {
 		let verb = f[i]
 		i += 1
 		let spec = f[specStart:i]
+		if verb == '%' {
+			// Go's %% ignores the flags, width and precision before it and takes no operand.
+			out += "%"
+			continue
+		}
 		if argi >= len(args) {
 			out += say.Fmt("%%!%s(MISSING)", stringOf(verb))
 			continue
@@ -55,12 +60,16 @@ fn format(f str, args []Value) !str {
 		out += piece
 	}
 	if argi < len(args) {
-		out += "%!(EXTRA"
+		out += "%!(EXTRA "
 		for k in argi..len(args) {
 			if k > argi {
 				out += ", "
 			}
-			out += kindOf(args[k]) + "=" + printValue(args[k])
+			if args[k].kind == KindNone {
+				out += "<nil>"
+			} else {
+				out += kindOf(args[k]) + "=" + printValue(args[k])
+			}
 		}
 		out += ")"
 	}
@@ -72,7 +81,8 @@ fn isFlag(c u8) bool {
 	return c == '-' || c == '+' || c == ' ' || c == '0' || c == '#'
 }
 
-// kindOf names a value's type as Go's %! marks do.
+// kindOf names a value's type as Go's %! marks do for the same data in Go (an int, a []any, a
+// map[string]any).
 fn kindOf(v Value) str {
 	if v.kind == KindNone {
 		return "<nil>"
@@ -81,7 +91,7 @@ fn kindOf(v Value) str {
 		return "string"
 	}
 	if v.kind == KindInt {
-		return "int64"
+		return "int"
 	}
 	if v.kind == KindFloat {
 		return "float64"
@@ -90,47 +100,90 @@ fn kindOf(v Value) str {
 		return "bool"
 	}
 	if v.kind == KindList {
-		return "[]stencil.Value"
+		return "[]interface {{}}"
 	}
-	return "map[string]stencil.Value"
+	return "map[string]interface {{}}"
 }
 
-// formatOne formats one value with one verb.
+// formatOne formats one value with one verb, as Go's fmt does: a list or a map formats each element
+// with the verb, and a verb that does not fit the value is marked %!verb(type=value).
 fn formatOne(spec str, verb u8, v Value) !str {
+	return formatDepth(spec, verb, v, 0)
+}
+
+// formatDepth is formatOne inside depth lists and maps, where a nil element prints as <nil>.
+fn formatDepth(spec str, verb u8, v Value, depth i64) str {
+	if verb == 'T' {
+		return say.Fmt("%s", kindOf(v))
+	}
+	if v.kind == KindNone {
+		if depth > 0 {
+			return "<nil>"
+		}
+		if verb == 'v' {
+			return say.Fmt(spec[0:len(spec)-1] + "s", "<nil>")
+		}
+		return say.Fmt("%%!%s(<nil>)", stringOf(verb))
+	}
+	if v.kind == KindList {
+		mut out = "["
+		for i, item in v.xs {
+			if i > 0 {
+				out += " "
+			}
+			out += formatDepth(spec, verb, item, depth + 1)
+		}
+		return out + "]"
+	}
+	if v.kind == KindMap {
+		mut out = "map["
+		for i, k in sortedKeys(v.m) {
+			if i > 0 {
+				out += " "
+			}
+			out += formatDepth(spec, verb, Str(k), depth + 1) + ":" + formatDepth(spec, verb, v.m[k], depth + 1)
+		}
+		return out + "]"
+	}
+	if !verbFits(verb, v.kind) {
+		let vspec = spec[0:len(spec)-1] + "v"
+		return say.Fmt("%%!%s(%s=%s)", stringOf(verb), kindOf(v), scalarFormat(vspec, v))
+	}
+	return scalarFormat(spec, v)
+}
+
+// verbFits reports whether Go's fmt formats a value of the kind with the verb.
+fn verbFits(verb u8, kind i64) bool {
 	if verb == 'v' {
-		return printValue(v)
+		return true
 	}
-	if verb == 's' {
-		return say.Fmt(spec, printValue(v))
+	if kind == KindStr {
+		return verb == 's' || verb == 'q' || verb == 'x' || verb == 'X'
 	}
-	if verb == 'q' {
-		if v.kind == KindStr {
-			return say.Fmt(spec, v.s)
-		}
-		return say.Fmt("%%!q(%s=%s)", kindOf(v), printValue(v))
+	if kind == KindInt {
+		return verb == 'd' || verb == 'b' || verb == 'o' || verb == 'O' || verb == 'x' || verb == 'X' || verb == 'c' || verb == 'q' || verb == 'U'
 	}
-	if verb == 'd' || verb == 'x' || verb == 'X' || verb == 'o' || verb == 'b' || verb == 'c' {
-		if v.kind == KindInt {
-			return say.Fmt(spec, v.n)
-		}
-		return say.Fmt("%%!%s(%s=%s)", stringOf(verb), kindOf(v), printValue(v))
+	if kind == KindFloat {
+		return verb == 'b' || verb == 'e' || verb == 'E' || verb == 'f' || verb == 'F' || verb == 'g' || verb == 'G' || verb == 'x' || verb == 'X'
 	}
-	if verb == 't' {
-		if v.kind == KindBool {
-			return say.Fmt(spec, v.b)
-		}
-		return say.Fmt("%%!t(%s=%s)", kindOf(v), printValue(v))
+	if kind == KindBool {
+		return verb == 't'
 	}
-	if verb == 'f' || verb == 'F' || verb == 'g' || verb == 'G' || verb == 'e' || verb == 'E' {
-		if v.kind == KindFloat {
-			return say.Fmt(spec, v.f)
-		}
-		if v.kind == KindInt {
-			return say.Fmt(spec, f64(v.n))
-		}
-		return say.Fmt("%%!%s(%s=%s)", stringOf(verb), kindOf(v), printValue(v))
+	return false
+}
+
+// scalarFormat formats a string, number or bool with a printf spec.
+fn scalarFormat(spec str, v Value) str {
+	if v.kind == KindStr {
+		return say.Fmt(spec, v.s)
 	}
-	fail say.Fault("stencil: printf: unsupported verb %%%s", stringOf(verb))
+	if v.kind == KindInt {
+		return say.Fmt(spec, v.n)
+	}
+	if v.kind == KindFloat {
+		return say.Fmt(spec, v.f)
+	}
+	return say.Fmt(spec, v.b)
 }
 
 // escapeHTML escapes text for HTML element content, as Go's html escaper does.

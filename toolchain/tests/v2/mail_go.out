@@ -1,0 +1,47 @@
+address "a@b.c (Jane Doe)" name "Jane Doe" address "a@b.c"
+address "a@b.c (=?utf-8?q?J=C3=A9?= Doe)" name "Jé Doe" address "a@b.c"
+address "=?iso-8859-1?b?Suk=?= <a@b.c>" name "Jé" address "a@b.c"
+address "John (middle) Doe <j@d.e>" name "John Doe" address "j@d.e"
+address "\"q s\"@b.c" name "" address "q s@b.c"
+address "=?utf-8?q?bad <a@b.c>" name "=?utf-8?q?bad" address "a@b.c"
+address "a@[1.2.3.4]" name "" address "a@[1.2.3.4]"
+address "a@[IPv6:::1]" name "" address "a@[IPv6:::1]"
+address "jane" error mail: missing '@' or angle-addr
+address "Jane Doe" error mail: no angle-addr
+address "a..b@c.d" error mail: missing '@' or angle-addr
+address ".a@b.c" error mail: missing '@' or angle-addr
+address "a@[::1]" error mail: missing '@' or angle-addr
+address "\"unclosed <a@b.c>" error mail: missing word in phrase: mail: unclosed quoted-string
+address "=?x-unknown?q?a?= <a@b.c>" error mail: missing word in phrase: charset not supported: "x-unknown"
+address "a@b.c (unclosed" error mail: misformatted parenthetical comment
+address "G: ;" error mail: empty group
+list "," error mail: no address
+list " " error mail: no address
+list "a@b.c, ,c@d.e," 2 ""/"a@b.c" ""/"c@d.e"
+list "G: a@b.c, c@d.e;, f@g.h" 3 ""/"a@b.c" ""/"c@d.e" ""/"f@g.h"
+list "G: ;" 0 
+list "G: a@b.c; x@y.z" error mail: expected comma
+list "a@b.c (one), (two) c@d.e" error mail: missing word in phrase: mail: invalid string
+date "Fri, 21 Nov 1997 09:55:06 EST" 880106106000000000
+date "21 Nov 97 09:55:06 UT" 880106106000000000
+date "Fri, 21 Nov 1997 09:55 -0600" 880127700000000000
+date "Fri, 21 Nov 1997 09:55:06 -0600 (MDT)" 880127706000000000
+date "Fri, 21 Nov 1997\r\n 09:55:06 -0600" 880127706000000000
+date "Fri, 21 Nov 1997 09:55:06 -0600\r" error
+date "Fri, 21 Nov 1997 09:55:06 -0600 (unclosed" error
+date "Fri, 21 Nov 1997 09:55:06" error
+date "1 Jan 2000 00:00:00 +0130" 946679400000000000
+message "Subject: a\n\nbody" Subject="a" body "body"
+message "Subject: a\r\n\r\nX\n\nY" Subject="a" body "X\n\nY"
+message " lead: x\r\n\r\n" error
+message "A: 1\r\nA: 2\r\n\r\n" A="1|2" body ""
+message "Bad\r\n\r\n" error
+message "" error
+message "Subject: no end" Subject="no end" body ""
+message ": empty key\r\nB: x\r\n\r\nb" B="x" body "b"
+message "Subject:   spaced  \r\n\r\n" Subject="spaced" body ""
+message "S: a\r\n  b\r\n\tc\r\n\r\nrest" S="a b c" body "rest"
+message "S: a\rb\r\n\r\n" S="a\rb" body ""
+word "=?us-ascii?q?caf=E9?=" "caf�" <nil>
+word "=?ISO-8859-1?b?Suk=?=" "Jé" <nil>
+word "=?UTF-8?q?caf=C3=A9?=" "café" <nil>

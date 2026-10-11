@@ -554,25 +554,37 @@ fn hexVal(c u8) i64 {
 	return -1
 }
 
-// convertCharset turns raw bytes in a charset into UTF-8: utf-8 and us-ascii pass through and
-// iso-8859-1 (latin-1) is widened; another charset is refused, as Go refuses one it has no
-// reader for.
+// convertCharset turns raw bytes in a charset into UTF-8, as Go's WordDecoder does: utf-8 passes
+// through, us-ascii turns each byte above 0x7F into U+FFFD, and iso-8859-1 (latin-1) is widened;
+// another charset is refused, as Go refuses one it has no reader for.
 fn convertCharset(charset str, raw str) !str {
-	if charset == "utf-8" || charset == "us-ascii" || charset == "ascii" || len(charset) == 0 {
+	if charset == "utf-8" || len(charset) == 0 {
 		return raw
 	}
-	if charset == "iso-8859-1" || charset == "latin1" || charset == "latin-1" {
-		mut out = ""
+	if charset == "us-ascii" || charset == "ascii" {
+		mut out = []u8{}
 		for i in 0..len(raw) {
 			let c = raw[i]
 			if c < 0x80 {
-				out += raw[i:i+1]
+				out = append(out, c)
 			} else {
-				// Widen to the UTF-8 encoding of U+0080..U+00FF.
-				out += say.Fmt("%c%c", i64(0xC0 | (c >> 6)), i64(0x80 | (c & 0x3F)))
+				out = append(out, u8(0xEF), u8(0xBF), u8(0xBD))
 			}
 		}
-		return out
+		return str(out)
+	}
+	if charset == "iso-8859-1" || charset == "latin1" || charset == "latin-1" {
+		mut out = []u8{}
+		for i in 0..len(raw) {
+			let c = raw[i]
+			if c < 0x80 {
+				out = append(out, c)
+			} else {
+				// Widen to the UTF-8 encoding of U+0080..U+00FF.
+				out = append(out, u8(0xC0 | (c >> 6)), u8(0x80 | (c & 0x3F)))
+			}
+		}
+		return str(out)
 	}
 	fail say.Fault("mime: unhandled charset %q", charset)
 }

@@ -101,9 +101,13 @@ fn (st State) declare(name str, v Value) {
 
 // set assigns a variable: a declaration ($x :=) shadows, an assignment ($x =) reaches the
 // variable that was declared.
-fn (st State) set(name str, v Value, isSet bool) {
+fn (st State) set(name str, v Value, isSet bool) ! {
 	if isSet {
 		let c = st.cell()
+		let (_, ok) = c.vars[name]
+		if !ok {
+			fail say.Fault("stencil: undefined variable: %s", name)
+		}
 		c.vars[name] = v
 	} else {
 		st.declare(name, v)
@@ -120,7 +124,7 @@ fn (st State) walk(nodes []Node) ! {
 			Action(p, mode) => {
 				let v = try st.evalPipe(p)
 				if p.hasAssign {
-					st.set(p.assign, v, p.isSet)
+					try st.set(p.assign, v, p.isSet)
 				} else {
 					let out = try actionOutput(mode, v)
 					try st.emit(out)
@@ -131,7 +135,7 @@ fn (st State) walk(nodes []Node) ! {
 				st.push()
 				let v = try st.evalPipe(b.pipe)
 				if b.pipe.hasAssign {
-					st.set(b.pipe.assign, v, b.pipe.isSet)
+					try st.set(b.pipe.assign, v, b.pipe.isSet)
 				}
 				if truthy(v) {
 					try st.block(b.then)
@@ -146,7 +150,7 @@ fn (st State) walk(nodes []Node) ! {
 				let v = try st.evalPipe(b.pipe)
 				let c = st.cell()
 				if b.pipe.hasAssign {
-					st.set(b.pipe.assign, v, b.pipe.isSet)
+					try st.set(b.pipe.assign, v, b.pipe.isSet)
 				}
 				if truthy(v) {
 					let save = c.dot
@@ -183,10 +187,16 @@ fn (st State) doRange(r RangeNode) ! {
 	let v = try st.evalPipe(r.pipe)
 	let c = st.cell()
 	if r.pipe.hasAssign {
-		st.set(r.pipe.assign, v, r.pipe.isSet)
+		try st.set(r.pipe.assign, v, r.pipe.isSet)
 	}
 	let save = c.dot
 	mut count = i64(0)
+	if v.kind == KindInt && len(r.keyVar) > 0 {
+		fail say.Fault("stencil: can't use %d to iterate over more than one variable", v.n)
+	}
+	if v.kind == KindStr || v.kind == KindFloat || v.kind == KindBool {
+		fail say.Fault("stencil: range can't iterate over %s", printValue(v))
+	}
 	if v.kind == KindList {
 		for i, item in v.xs {
 			st.setLoop(r, i, item)
@@ -280,6 +290,12 @@ fn (st State) evalPipe(p Pipe) !Value {
 
 // evalCmd evaluates one command, with the piped value appended as the last argument.
 fn (st State) evalCmd(c Cmd, piped Value, first bool) !Value {
+	match c.args[0] {
+		Nil => {
+			fail say.Fault("stencil: nil is not a command")
+		}
+		_ => {}
+	}
 	if len(c.args) == 1 {
 		match c.args[0] {
 			Fn(name) => {
@@ -300,6 +316,17 @@ fn (st State) evalCmd(c Cmd, piped Value, first bool) !Value {
 			}
 		}
 	}
+	match c.args[0] {
+		Fn(name) => {
+			if name == "and" || name == "or" {
+				let (_, user) = st.tpl.funcs[name]
+				if !user {
+					return try st.andOr(name == "or", c, piped, first)
+				}
+			}
+		}
+		_ => {}
+	}
 	mut vals = []Value{}
 	for i in 1..len(c.args) {
 		let v = try st.evalArg(c.args[i])
@@ -317,6 +344,22 @@ fn (st State) evalCmd(c Cmd, piped Value, first bool) !Value {
 		}
 	}
 	fail say.Fault("stencil: unreachable")
+}
+
+// andOr is Go's and and or: the operands are evaluated in order and the first false one (and) or true
+// one (or) is the result without evaluating the rest; otherwise the piped value, if any, or the last.
+fn (st State) andOr(isOr bool, c Cmd, piped Value, first bool) !Value {
+	mut v = None()
+	for i in 1..len(c.args) {
+		v = try st.evalArg(c.args[i])
+		if truthy(v) == isOr {
+			return v
+		}
+	}
+	if !first {
+		return piped
+	}
+	return v
 }
 
 // evalArg evaluates one operand.
@@ -353,16 +396,23 @@ fn (st State) evalArg(a Arg) !Value {
 		Pipe(inner) => {
 			return try st.evalPipe(inner)
 		}
+		Nil => {
+			return None()
+		}
 	}
 	fail say.Fault("stencil: unreachable")
 }
 
-// walkPath walks .a.b from v: map lookups, a missing key is None.
+// walkPath walks .a.b from v: map lookups, where a missing key is None and a field of None is None; a
+// field of any other value is an error, as in Go.
 fn walkPath(v Value, path []str) !Value {
 	mut cur = v
 	for _, name in path {
-		if cur.kind != KindMap {
+		if cur.kind == KindNone {
 			return None()
+		}
+		if cur.kind != KindMap {
+			fail say.Fault("stencil: can't evaluate field %s in a %s", name, kindName(cur))
 		}
 		let (next, ok) = cur.m[name]
 		if !ok {

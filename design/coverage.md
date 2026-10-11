@@ -237,7 +237,7 @@ Ordered by import path, as `go list std` prints them.
 | `text/template/parse` |  | missing |  |  |
 | `time` | 1012+272 | partial | tide | Now, Since, Sleep, Wait, durations with parse and format, RFC 3339 and HTTP date, calendar arithmetic; no time zones or Location, no layout-based Format and Parse, no Timer, Ticker or After, no Month and Weekday types |
 | `time/tzdata` |  | missing |  |  |
-| `unicode` | 14+0 | partial | glyph | Unicode 15.0.0 as Go has it: Is over every category, script and property (the Table enum), IsOneOf, IsLetter, IsDigit, IsNumber, IsSpace, IsUpper, IsLower, IsTitle, IsMark, IsPunct, IsSymbol, IsControl, IsGraphic, IsPrint, To, ToUpper, ToLower, ToTitle, SimpleFold, generated from Go's tables by tools/gen/gen_unicode.tin; no RangeTable values, no SpecialCase, no FoldCategory or FoldScript |
+| `unicode` | 14+0 | partial | glyph | Unicode 17.0.0 as Go has it: Is over every category, script and property (the Table enum), IsOneOf, IsLetter, IsDigit, IsNumber, IsSpace, IsUpper, IsLower, IsTitle, IsMark, IsPunct, IsSymbol, IsControl, IsGraphic, IsPrint, To, ToUpper, ToLower, ToTitle, SimpleFold, generated from Go's tables by tools/gen/gen_unicode.tin; no RangeTable values, no SpecialCase, no FoldCategory or FoldScript |
 | `unicode/utf16` |  | missing |  |  |
 | `unicode/utf8` | 10+0 | done | glyph | every function |
 | `unique` |  | missing |  |  |

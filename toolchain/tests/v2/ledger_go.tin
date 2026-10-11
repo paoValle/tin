@@ -1,0 +1,53 @@
+package main
+
+// A record that fails to parse still sets FieldsPerRecord, when it is 0, to the fields it
+// completed, and the bare-quote fault reads as Go's. Every line is Go 1.27's encoding/csv.
+
+import "fault"
+import "ledger"
+import "say"
+
+fn run(name str, input str, fpr i64, lazy bool) {
+	mut rd = ledger.NewReader(input)
+	rd.FieldsPerRecord = fpr
+	rd.LazyQuotes = lazy
+	mut out = name
+	for {
+		mut done = false
+		mut msg = ""
+		let rec = rd.Read() catch e {
+			if fault.Is(e, ledger.Done) {
+				done = true
+			} else {
+				msg = say.Str(e)
+			}
+			[]str{}
+		}
+		if done {
+			break
+		}
+		if msg != "" {
+			out = out + " | " + msg
+			continue
+		}
+		mut q = "["
+		for i in 0..len(rec) {
+			if i > 0 {
+				q = q + " "
+			}
+			q = q + say.Fmt("%q", rec[i])
+		}
+		out = out + " | " + q + "]"
+	}
+	say.Line(out)
+}
+
+fn main() {
+	run("bare quote sets the count", "a,b\"\nc,d\ne\n", 0, false)
+	run("quote sets the count", "x,\"a\"b\ny,z\nw\n", 0, false)
+	run("first field fails", "\"a\"b,c\nd\ne,f\n", 0, false)
+	run("multi-line quote", "p,\"a\nb\"c,q\nr,s\nt\n", 0, false)
+	run("count already set", "a,b\"\nc,d\n", 2, false)
+	run("any count", "a,b\"\nc,d\ne\n", -1, false)
+	run("lazy", "a,b\"\nc,d\n", 0, true)
+}

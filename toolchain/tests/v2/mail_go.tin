@@ -1,0 +1,140 @@
+package main
+
+// mail follows Go's net/mail (#1243): addresses, groups, comments and encoded words in display
+// names, obsolete date zones, header reading, and the charsets of RFC 2047 words. Every line is
+// what Go 1.27 prints for the same input.
+
+import "mail"
+import "mime"
+import "say"
+import "twine"
+
+type stringReader struct {
+	data str
+	pos  i64
+}
+
+fn (r mut stringReader) Read(buf mut []u8) !i64 {
+	if r.pos >= len(r.data) {
+		return 0
+	}
+	let n = min(len(buf), len(r.data)-r.pos)
+	for i in 0..n {
+		buf[i] = r.data[r.pos+i]
+	}
+	r.pos += n
+	return n
+}
+
+fn addresses() {
+	for s in []str{
+		"a@b.c (Jane Doe)",
+		"a@b.c (=?utf-8?q?J=C3=A9?= Doe)",
+		"=?iso-8859-1?b?Suk=?= <a@b.c>",
+		"John (middle) Doe <j@d.e>",
+		"\"q s\"@b.c",
+		"=?utf-8?q?bad <a@b.c>",
+		"a@[1.2.3.4]",
+		"a@[IPv6:::1]",
+		"jane",
+		"Jane Doe",
+		"a..b@c.d",
+		".a@b.c",
+		"a@[::1]",
+		"\"unclosed <a@b.c>",
+		"=?x-unknown?q?a?= <a@b.c>",
+		"a@b.c (unclosed",
+		"G: ;",
+	} {
+		let (a, err) = mail.ParseAddress(s)
+		if err != nil {
+			say.Line(say.Fmt("address %q error %v", s, err))
+		} else {
+			say.Line(say.Fmt("address %q name %q address %q", s, a.Name, a.Address))
+		}
+	}
+}
+
+fn lists() {
+	for s in []str{",", " ", "a@b.c, ,c@d.e,", "G: a@b.c, c@d.e;, f@g.h", "G: ;", "G: a@b.c; x@y.z", "a@b.c (one), (two) c@d.e"} {
+		let (l, err) = mail.ParseAddressList(s)
+		if err != nil {
+			say.Line(say.Fmt("list %q error %v", s, err))
+			continue
+		}
+		mut o = []str{}
+		for a in l {
+			o = append(o, say.Fmt("%q/%q", a.Name, a.Address))
+		}
+		say.Line(say.Fmt("list %q %d %s", s, len(l), twine.Join(o, " ")))
+	}
+}
+
+fn dates() {
+	for s in []str{
+		"Fri, 21 Nov 1997 09:55:06 EST",
+		"21 Nov 97 09:55:06 UT",
+		"Fri, 21 Nov 1997 09:55 -0600",
+		"Fri, 21 Nov 1997 09:55:06 -0600 (MDT)",
+		"Fri, 21 Nov 1997\r\n 09:55:06 -0600",
+		"Fri, 21 Nov 1997 09:55:06 -0600\r",
+		"Fri, 21 Nov 1997 09:55:06 -0600 (unclosed",
+		"Fri, 21 Nov 1997 09:55:06",
+		"1 Jan 2000 00:00:00 +0130",
+	} {
+		let (t, err) = mail.ParseDate(s)
+		if err != nil {
+			say.Line(say.Fmt("date %q error", s))
+		} else {
+			say.Line(say.Fmt("date %q %d", s, t))
+		}
+	}
+}
+
+fn messages() {
+	for s in []str{
+		"Subject: a\n\nbody",
+		"Subject: a\r\n\r\nX\n\nY",
+		" lead: x\r\n\r\n",
+		"A: 1\r\nA: 2\r\n\r\n",
+		"Bad\r\n\r\n",
+		"",
+		"Subject: no end",
+		": empty key\r\nB: x\r\n\r\nb",
+		"Subject:   spaced  \r\n\r\n",
+		"S: a\r\n  b\r\n\tc\r\n\r\nrest",
+		"S: a\rb\r\n\r\n",
+	} {
+		mut src = stringReader{data: s, pos: 0}
+		let (m, err) = mail.ReadMessage(mut src)
+		if err != nil {
+			// Go's messages name its textproto errors; only the failure is compared.
+			say.Line(say.Fmt("message %q error", s))
+			continue
+		}
+		mut line = say.Fmt("message %q", s)
+		for k in []str{"Subject", "A", "B", "S"} {
+			let (v, ok) = m.Header[k]
+			if ok {
+				line += say.Fmt(" %s=%q", k, twine.Join(v, "|"))
+			}
+		}
+		say.Line(line + say.Fmt(" body %q", m.Body))
+	}
+}
+
+fn words() {
+	let d = mime.WordDecoder{}
+	for s in []str{"=?us-ascii?q?caf=E9?=", "=?ISO-8859-1?b?Suk=?=", "=?UTF-8?q?caf=C3=A9?="} {
+		let (w, err) = d.Decode(s)
+		say.Line(say.Fmt("word %q %q %v", s, w, err))
+	}
+}
+
+fn main() {
+	addresses()
+	lists()
+	dates()
+	messages()
+	words()
+}

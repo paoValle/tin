@@ -53,6 +53,10 @@ fn actionOutput(mode i64, v Value) !str {
 		let out = try ctxEscape(mode, v)
 		return out
 	}
+	// An action prints a missing value as "<no value>", as Go's does.
+	if v.kind == KindNone {
+		return escapeFor(mode, "<no value>")
+	}
 	return escapeFor(mode, printValue(v))
 }
 

@@ -60,7 +60,7 @@ fn (r mut Reader) Read() ![]str {
 			if !r.LazyQuotes {
 				let j = twine.IndexByte(field, '"')
 				if j >= 0 {
-					try parseFault(ErrBareQuote, recLine, posLine, posCol + j)
+					try r.failAt(ErrBareQuote, recLine, posLine, posCol + j, len(fields))
 				}
 			}
 			fb = append(fb, field...)
@@ -104,14 +104,14 @@ fn (r mut Reader) Read() ![]str {
 					fb = append(fb, '"')
 					continue
 				}
-				try parseFault(ErrQuote, recLine, posLine, posCol - 1)
+				try r.failAt(ErrQuote, recLine, posLine, posCol - 1, len(fields))
 			}
 			// No quote in what is left of the line: the field goes on on the next line.
 			fb = append(fb, line...)
 			posCol += len(line)
 			if !eol {
 				if !r.LazyQuotes {
-					try parseFault(ErrQuote, recLine, posLine, posCol)
+					try r.failAt(ErrQuote, recLine, posLine, posCol, len(fields))
 				}
 				fields = append(fields, str(fb))
 				fb = fb[0:0]
@@ -122,7 +122,7 @@ fn (r mut Reader) Read() ![]str {
 			let (l, e, ok) = try r.line()
 			if !ok {
 				if !r.LazyQuotes {
-					try parseFault(ErrQuote, recLine, posLine, posCol)
+					try r.failAt(ErrQuote, recLine, posLine, posCol, len(fields))
 				}
 				fields = append(fields, str(fb))
 				fb = fb[0:0]
@@ -162,6 +162,15 @@ fn parseFault(sentinel fault, recLine i64, line i64, col i64) ! {
 		fail fault.Wrap(sentinel, say.Fmt("ledger: line %d, column %d", line, col))
 	}
 	fail fault.Wrap(sentinel, say.Fmt("ledger: record on line %d; line %d, column %d", recLine, line, col))
+}
+
+// failAt fails like parseFault. A record that fails still sets FieldsPerRecord, when it is 0,
+// to the number of fields it completed, as Go's readRecord does.
+fn (r mut Reader) failAt(sentinel fault, recLine i64, line i64, col i64, done i64) ! {
+	if r.FieldsPerRecord == 0 {
+		r.FieldsPerRecord = done
+	}
+	return try parseFault(sentinel, recLine, line, col)
 }
 
 // countFault fails with ErrFieldCount at the record's line.

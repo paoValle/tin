@@ -1,0 +1,7 @@
+bare quote sets the count | ledger: line 1, column 4: bare " in non-quoted-field | ledger: record on line 2: wrong number of fields | ["e"]
+quote sets the count | ledger: line 1, column 5: extraneous or missing " in quoted-field | ledger: record on line 2: wrong number of fields | ["w"]
+first field fails | ledger: line 1, column 3: extraneous or missing " in quoted-field | ["d"] | ledger: record on line 3: wrong number of fields
+multi-line quote | ledger: record on line 1; line 2, column 2: extraneous or missing " in quoted-field | ledger: record on line 3: wrong number of fields | ["t"]
+count already set | ledger: line 1, column 4: bare " in non-quoted-field | ["c" "d"]
+any count | ledger: line 1, column 4: bare " in non-quoted-field | ["c" "d"] | ["e"]
+lazy | ["a" "b\""] | ["c" "d"]

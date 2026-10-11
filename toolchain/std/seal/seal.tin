@@ -504,7 +504,21 @@ fn b64val(c u8, url bool) i64 {
 	return -1
 }
 
-fn b64dec(s str, url bool, padded bool) ![]u8 {
+fn b64dec(s0 str, url bool, padded bool) ![]u8 {
+	// Go's decoders skip "\r" and "\n" anywhere, so wrapped base64 (MIME, PEM) decodes.
+	mut s = s0
+	for i in 0..len(s0) {
+		if s0[i] == '\r' || s0[i] == '\n' {
+			mut clean = make([]u8, 0, len(s0))
+			for j in 0..len(s0) {
+				if s0[j] != '\r' && s0[j] != '\n' {
+					clean = append(clean, s0[j])
+				}
+			}
+			s = str(clean)
+			break
+		}
+	}
 	mut n = len(s)
 	if padded {
 		if n%4 != 0 {
@@ -543,7 +557,8 @@ fn B64(b []u8) str {
 	return b64enc(b, b64std, true)
 }
 
-// B64Decode decodes standard padded base64.
+// B64Decode decodes standard padded base64 as Go's strict StdEncoding does: "\r" and "\n" are
+// skipped and the unused low bits must be zero.
 fn B64Decode(s str) ![]u8 {
 	return try b64dec(s, false, true)
 }
@@ -553,7 +568,8 @@ fn B64URL(b []u8) str {
 	return b64enc(b, b64url, false)
 }
 
-// B64URLDecode decodes unpadded URL-safe base64.
+// B64URLDecode decodes unpadded URL-safe base64 as Go's strict RawURLEncoding does: "\r" and "\n"
+// are skipped and the unused low bits must be zero.
 fn B64URLDecode(s str) ![]u8 {
 	return try b64dec(s, true, false)
 }
@@ -578,7 +594,7 @@ fn Base32NoPad(b []u8) str {
 	return b32enc(b, b32std, false)
 }
 
-// Base32Decode decodes standard base32; the padding is optional.
+// Base32Decode decodes standard padded base32, as Go's StdEncoding does: "\r" and "\n" are skipped.
 fn Base32Decode(s str) ![]u8 {
 	return try b32dec(s, false)
 }

@@ -1,5 +1,6 @@
 package stencil
 
+import "glyph"
 import "mint"
 import "say"
 
@@ -66,6 +67,7 @@ type Arg enum {
 	Bool(bool)
 	Fn(str) // a function name (or a builtin)
 	Pipe(Pipe) // a parenthesized pipeline
+	Nil // nil: an untyped nil argument, never a command
 }
 
 // ParseHTML parses text into a Template whose actions are escaped by their HTML context, as Go's
@@ -90,7 +92,7 @@ fn ParseHTML(name str, text str) !Template {
 
 // Parse parses text into a Template; errors carry name, line and column.
 fn Parse(name str, text str) !Template {
-	mut p = Parser{name: name, text: text, pos: 0, line: 1, col: 1, tpl: Template{name: name, root: []Node{}, defs: make(map[str][]Node), funcs: make(map[str]fn([]Value) !Value)}}
+	mut p = Parser{name: name, text: text, pos: 0, line: 1, col: 1, vars: []str{"$"}, trimNext: false, tpl: Template{name: name, root: []Node{}, defs: make(map[str][]Node), funcs: make(map[str]fn([]Value) !Value)}}
 	try p.parseTop()
 	if len(p.tpl.root) == 0 && len(p.tpl.defs) == 0 {
 		// An empty template is fine.
@@ -106,6 +108,10 @@ type Parser struct {
 	line i64
 	col  i64
 	tpl  Template
+	// vars are the variables in scope, innermost last: $ and every $x := not yet closed by its {{end}}.
+	vars []str
+	// trimNext is set by a right trim marker ( -}}): the text after it loses its leading white space.
+	trimNext bool
 }
 
 // failAt is a parse error with the position.
@@ -186,11 +192,31 @@ fn (p mut Parser) readText() !str {
 		i += 1
 	}
 	mut text = p.text[start:end]
-	if end + 2 < len(p.text) && p.text[end+2] == '-' {
+	if p.trimNext {
+		text = trimLeftSpace(text)
+		p.trimNext = false
+	}
+	if p.leftTrimAt(end) {
 		text = trimRightSpace(text)
 	}
 	p.advanceTo(end)
 	return text
+}
+
+// leftTrimAt reports whether the action at i opens with a left trim marker: "{{-" and a space, as Go's
+// lexer requires ("{{-3}}" is the number -3).
+fn (p Parser) leftTrimAt(i i64) bool {
+	return i + 3 < len(p.text) && p.text[i] == '{' && p.text[i+1] == '{' && p.text[i+2] == '-' && isTrimSpace(p.text[i+3])
+}
+
+// rightTrimAt reports whether a right trim marker starts at i: a space, then "-}}".
+fn (p Parser) rightTrimAt(i i64) bool {
+	return i > 0 && isTrimSpace(p.text[i-1]) && i + 2 < len(p.text) && p.text[i] == '-' && p.text[i+1] == '}' && p.text[i+2] == '}'
+}
+
+// isTrimSpace is one of the white space bytes of Go's template lexer.
+fn isTrimSpace(c u8) bool {
+	return c == ' ' || c == '\t' || c == '\r' || c == '\n'
 }
 
 // peekAction looks at the keyword after the next {{, without consuming anything.
@@ -198,7 +224,7 @@ fn (p Parser) peekAction() !str {
 	// p.pos is at the {{.
 	let start = p.pos + 2
 	mut i = start
-	if i < len(p.text) && p.text[i] == '-' {
+	if p.leftTrimAt(p.pos) {
 		i += 1
 	}
 	for i < len(p.text) && (p.text[i] == ' ' || p.text[i] == '\t' || p.text[i] == '\n' || p.text[i] == '\r') {
@@ -220,31 +246,53 @@ fn isWordByte(c u8) bool {
 fn (p mut Parser) parseAction() !?Node {
 	let startLine = p.line
 	let startCol = p.col
-	p.advanceTo(p.pos + 2)
-	if p.pos < len(p.text) && p.text[p.pos] == '-' {
-		p.advance()
+	// A comment starts right after the {{ or the trim marker's "- ", and its */ sits right before the
+	// }} or the " -}}", as Go's lexer requires.
+	let trim = p.leftTrimAt(p.pos)
+	mut after = p.pos + 2
+	if trim {
+		after += 2
 	}
-	p.skipSpace()
-	if p.pos + 1 < len(p.text) && p.text[p.pos] == '/' && p.text[p.pos+1] == '*' {
-		// A comment: skip to */.
+	if after + 1 < len(p.text) && p.text[after] == '/' && p.text[after+1] == '*' {
+		p.advanceTo(after + 2)
 		let end = p.indexOf("*/")
 		if end < 0 {
 			fail p.failAt("unclosed comment")
 		}
 		p.advanceTo(end + 2)
-		p.skipSpace()
-		try p.expectClose()
-		return nil
+		if p.pos + 1 < len(p.text) && p.text[p.pos] == '}' && p.text[p.pos+1] == '}' {
+			p.advanceTo(p.pos + 2)
+			return nil
+		}
+		if p.pos + 1 < len(p.text) && isTrimSpace(p.text[p.pos]) && p.rightTrimAt(p.pos + 1) {
+			p.advanceTo(p.pos + 4)
+			p.trimNext = true
+			return nil
+		}
+		fail p.failAt("comment ends before closing delimiter")
 	}
+	p.advanceTo(p.pos + 2)
+	if trim {
+		p.advance()
+	}
+	p.skipSpace()
 	let word = p.peekWord()
+	// A variable an if, range or with declares, in its pipe or its body, ends at its {{end}}.
+	let scope = len(p.vars)
 	if word == "if" {
-		return try p.parseIf()
+		let node = try p.parseIf()
+		p.vars = p.vars[0:scope]
+		return node
 	}
 	if word == "range" {
-		return try p.parseRange()
+		let node = try p.parseRange()
+		p.vars = p.vars[0:scope]
+		return node
 	}
 	if word == "with" {
-		return try p.parseWith()
+		let node = try p.parseWith()
+		p.vars = p.vars[0:scope]
+		return node
 	}
 	if word == "template" {
 		return try p.parseTemplateCall()
@@ -277,8 +325,9 @@ fn (p mut Parser) openAction() !str {
 	if p.pos + 1 >= len(p.text) || p.text[p.pos] != '{' || p.text[p.pos+1] != '{' {
 		fail p.failAt("expected an action")
 	}
+	let trim = p.leftTrimAt(p.pos)
 	p.advanceTo(p.pos + 2)
-	if p.pos < len(p.text) && p.text[p.pos] == '-' {
+	if trim {
 		p.advance()
 	}
 	p.skipSpace()
@@ -380,7 +429,7 @@ fn (p mut Parser) parseRange() !Node {
 	p.skipSpace()
 	mut keyVar = ""
 	mut valVar = ""
-	if p.pos < len(p.text) && p.text[p.pos] == '$' {
+	if p.rangeDeclares() {
 		let first = try p.parseVarName()
 		p.skipSpace()
 		if p.pos < len(p.text) && p.text[p.pos] == ',' {
@@ -399,6 +448,10 @@ fn (p mut Parser) parseRange() !Node {
 		} else {
 			fail p.failAt("range: expected :=")
 		}
+		if len(keyVar) > 0 {
+			p.vars = append(p.vars, keyVar)
+		}
+		p.vars = append(p.vars, valVar)
 	}
 	let pipe = try p.parsePipe(false)
 	try p.expectClose()
@@ -425,6 +478,32 @@ fn (p mut Parser) parseRange() !Node {
 	return Node.Range(node)
 }
 
+// rangeDeclares reports whether the range's pipeline starts with a declaration ($v := or $i, $v :=)
+// rather than a variable it ranges over ({{range $}}).
+fn (p Parser) rangeDeclares() bool {
+	if p.pos >= len(p.text) || p.text[p.pos] != '$' {
+		return false
+	}
+	mut j = p.pos + 1
+	for j < len(p.text) && isWordByte(p.text[j]) {
+		j += 1
+	}
+	for j < len(p.text) && (p.text[j] == ' ' || p.text[j] == '\t') {
+		j += 1
+	}
+	return j < len(p.text) && p.text[j] == ',' || j + 1 < len(p.text) && p.text[j] == ':' && p.text[j+1] == '='
+}
+
+// hasVar reports whether the variable name is in scope.
+fn (p Parser) hasVar(name str) bool {
+	for _, v in p.vars {
+		if v == name {
+			return true
+		}
+	}
+	return false
+}
+
 // parseTemplateCall parses {{template "name" pipe}}.
 fn (p mut Parser) parseTemplateCall() !Node {
 	try p.consumeWord("template")
@@ -433,7 +512,7 @@ fn (p mut Parser) parseTemplateCall() !Node {
 	p.skipSpace()
 	mut hasPipe = false
 	mut pipe = Pipe{}
-	if !(p.pos < len(p.text) && p.text[p.pos] == '}' || p.pos + 1 < len(p.text) && p.text[p.pos] == '-' && p.text[p.pos+1] == '}') {
+	if !(p.pos < len(p.text) && p.text[p.pos] == '}' || p.rightTrimAt(p.pos)) {
 		pipe = try p.parsePipe(false)
 		hasPipe = true
 	}
@@ -447,14 +526,48 @@ fn (p mut Parser) parseDefine() ! {
 	p.skipSpace()
 	let name = try p.parseStringLiteral()
 	try p.expectClose()
+	// A defined template sees only its own $.
+	let outer = p.vars
+	p.vars = []str{"$"}
 	let body = try p.parseList("end")
+	p.vars = outer
 	let word = try p.openAction()
 	if word != "end" {
 		fail p.failAt(say.Fmt("expected end, found %s", word))
 	}
 	try p.consumeWord("end")
 	try p.expectClose()
+	try p.define(name, body)
+}
+
+// define stores a defined template as Go's parser does: an empty body (white space and comments) never
+// replaces a template, and two non-empty bodies for one name are an error.
+fn (p mut Parser) define(name str, body []Node) ! {
+	let (old, had) = p.tpl.defs[name]
+	if had && !emptyBody(old) {
+		if !emptyBody(body) {
+			fail say.Fault("stencil: %s: multiple definition of template %q", p.name, name)
+		}
+		return
+	}
 	p.tpl.defs[name] = body
+}
+
+// emptyBody reports whether a template body is only white space.
+fn emptyBody(nodes []Node) bool {
+	for _, n in nodes {
+		match n {
+			Text(t) => {
+				if len(trimLeftSpace(t)) > 0 {
+					return false
+				}
+			}
+			_ => {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // parseBlock parses {{block "name" pipe}}body{{end}}: a define plus a call.
@@ -465,14 +578,17 @@ fn (p mut Parser) parseBlock() !Node {
 	p.skipSpace()
 	let pipe = try p.parsePipe(false)
 	try p.expectClose()
+	let outer = p.vars
+	p.vars = []str{"$"}
 	let body = try p.parseList("end")
+	p.vars = outer
 	let word = try p.openAction()
 	if word != "end" {
 		fail p.failAt(say.Fmt("expected end, found %s", word))
 	}
 	try p.consumeWord("end")
 	try p.expectClose()
-	p.tpl.defs[name] = body
+	try p.define(name, body)
 	return Node.Call(TemplateCall{name: name, pipe: pipe, hasPipe: true})
 }
 
@@ -500,11 +616,15 @@ fn (p mut Parser) parsePipe(allowAssign bool) !Pipe {
 		if k + 1 < len(p.text) && p.text[k] == ':' && p.text[k+1] == '=' {
 			pipe.assign = p.text[p.pos:j]
 			pipe.hasAssign = true
+			p.vars = append(p.vars, pipe.assign)
 			p.advanceTo(k + 2)
 			p.skipSpace()
 		} else if k < len(p.text) && p.text[k] == '=' && (k+1 >= len(p.text) || p.text[k+1] != '=') {
 			// $x = expr assigns the variable it was declared with, as Go's template does.
+			// Go's parser puts an assigned variable in scope too; assigning one never declared fails
+			// when it runs.
 			pipe.assign = p.text[p.pos:j]
+			p.vars = append(p.vars, pipe.assign)
 			pipe.hasAssign = true
 			pipe.isSet = true
 			p.advanceTo(k + 1)
@@ -537,7 +657,7 @@ fn (p mut Parser) parseCmd() !Cmd {
 		if p.pos >= len(p.text) || p.text[p.pos] == '}' || p.text[p.pos] == '|' || p.text[p.pos] == ')' {
 			break
 		}
-		if p.text[p.pos] == '-' && p.pos + 1 < len(p.text) && p.text[p.pos+1] == '}' {
+		if p.rightTrimAt(p.pos) {
 			// The right trim marker, {{ . -}}.
 			break
 		}
@@ -560,7 +680,10 @@ fn (p mut Parser) parseArg() !Arg {
 	}
 	if c == '$' {
 		let name = try p.parseVarName()
-		p.skipSpace()
+		if !p.hasVar(name) {
+			fail p.failAt(say.Fmt("undefined variable %q", name))
+		}
+		// $x.a is a field of $x; $x .a is two operands.
 		if p.pos < len(p.text) && p.text[p.pos] == '.' {
 			p.advance()
 			let path = try p.parseFieldPath()
@@ -585,6 +708,9 @@ fn (p mut Parser) parseArg() !Arg {
 	if c == '-' || c >= '0' && c <= '9' {
 		return try p.parseNumber()
 	}
+	if c == '\'' {
+		return try p.parseCharConstant()
+	}
 	let word = p.peekWord()
 	if len(word) == 0 {
 		fail p.failAt(say.Fmt("unexpected character %q", stringOf(c)))
@@ -597,7 +723,7 @@ fn (p mut Parser) parseArg() !Arg {
 		return Arg.Bool(false)
 	}
 	if word == "nil" {
-		return Arg.Str("")
+		return Arg.Nil
 	}
 	return Arg.Fn(word)
 }
@@ -641,41 +767,131 @@ fn (p mut Parser) parseVarName() !str {
 	return "$" + word
 }
 
-// parseStringLiteral parses a "..." or `...` literal.
+// parseStringLiteral parses a "..." or `...` literal, unquoted as Go's strconv.Unquote does.
 fn (p mut Parser) parseStringLiteral() !str {
 	let quote = p.text[p.pos]
-	p.advance()
-	mut out = []u8{}
-	for p.pos < len(p.text) {
-		let c = p.text[p.pos]
+	let start = p.pos
+	mut i = p.pos + 1
+	for {
+		if i >= len(p.text) || quote == '"' && p.text[i] == '\n' {
+			fail p.failAt("unterminated string")
+		}
+		let c = p.text[i]
+		if quote == '"' && c == '\\' && i + 1 < len(p.text) {
+			i += 2
+			continue
+		}
 		if c == quote {
-			p.advance()
-			return rt_str_from_raw(cast(i64, out)[2], len(out))
+			break
 		}
-		if quote == '"' && c == '\\' {
-			p.advance()
-			if p.pos >= len(p.text) {
-				fail p.failAt("unterminated string")
-			}
-			let e = p.text[p.pos]
-			if e == 'n' {
-				out = append(out, u8(10))
-			} else if e == 't' {
-				out = append(out, u8(9))
-			} else if e == 'r' {
-				out = append(out, u8(13))
-			} else if e == '\\' || e == '"' {
-				out = append(out, e)
-			} else {
-				out = append(out, e)
-			}
-			p.advance()
-		} else {
-			out = append(out, c)
-			p.advance()
-		}
+		i += 1
 	}
-	fail p.failAt("unterminated string")
+	let lit = p.text[start:i+1]
+	let (out, err) = mint.Unquote(lit)
+	if err != nil {
+		fail p.failAt(say.Fmt("bad string %s", lit))
+	}
+	p.advanceTo(i + 1)
+	return out
+}
+
+// parseCharConstant parses a character constant ('a', '\n', '\x41', '\u00e9', '\101'), an integer as in
+// Go's templates.
+fn (p mut Parser) parseCharConstant() !Arg {
+	let start = p.pos
+	mut i = p.pos + 1
+	for {
+		if i >= len(p.text) || p.text[i] == '\n' {
+			fail p.failAt("unterminated character constant")
+		}
+		if p.text[i] == '\\' {
+			i += 2
+			continue
+		}
+		if p.text[i] == '\'' {
+			break
+		}
+		i += 1
+	}
+	let lit = p.text[start:i+1]
+	let body = lit[1:len(lit)-1]
+	let (r, n) = charValue(body)
+	if n <= 0 || n != len(body) {
+		fail p.failAt(say.Fmt("malformed character constant: %s", lit))
+	}
+	p.advanceTo(i + 1)
+	return Arg.Int(r)
+}
+
+// charValue reads the character or escape at the start of s, as Go's strconv.UnquoteChar does for a
+// single-quoted constant: its value and the bytes it used, or 0 bytes when it is not one.
+fn charValue(s str) (i64, i64) {
+	if len(s) == 0 || s[0] == '\'' || s[0] == '\n' {
+		return 0, 0
+	}
+	if s[0] != '\\' {
+		let (r, size) = glyph.DecodeRune(s, 0)
+		if r == glyph.RuneError && size == 1 {
+			return 0, 0
+		}
+		return i64(r), size
+	}
+	if len(s) < 2 {
+		return 0, 0
+	}
+	let e = s[1]
+	let simple = "a\x07b\x08f\x0cn\nr\rt\tv\x0b\\\\''"
+	mut k = 0
+	for k + 1 < len(simple) {
+		if simple[k] == e {
+			return i64(simple[k+1]), 2
+		}
+		k += 2
+	}
+	mut digits = 0
+	mut base = i64(16)
+	if e == 'x' {
+		digits = 2
+	} else if e == 'u' {
+		digits = 4
+	} else if e == 'U' {
+		digits = 8
+	} else if e >= '0' && e <= '7' {
+		digits = 3
+		base = 8
+	} else {
+		return 0, 0
+	}
+	mut at = 2
+	if base == 8 {
+		at = 1
+	}
+	if at + digits > len(s) {
+		return 0, 0
+	}
+	mut v = i64(0)
+	for j in at..at+digits {
+		let c = s[j]
+		mut d = i64(-1)
+		if c >= '0' && c <= '9' {
+			d = i64(c - '0')
+		} else if c >= 'a' && c <= 'f' {
+			d = i64(c-'a') + 10
+		} else if c >= 'A' && c <= 'F' {
+			d = i64(c-'A') + 10
+		}
+		if d < 0 || d >= base {
+			return 0, 0
+		}
+		v = v*base + d
+	}
+	if base == 8 && v > 255 {
+		return 0, 0
+	}
+	if (e == 'u' || e == 'U') && (v > 0x10FFFF || v >= 0xD800 && v < 0xE000) {
+		return 0, 0
+	}
+	return v, at + digits
 }
 
 // parseNumber parses an integer or a float, with Go's bases (0x, 0o, 0b, a leading 0 for octal)
@@ -812,8 +1028,9 @@ fn (p mut Parser) consumeWord(word str) ! {
 // expectClose consumes the closing }} (with the optional trim marker).
 fn (p mut Parser) expectClose() ! {
 	p.skipSpace()
-	if p.pos < len(p.text) && p.text[p.pos] == '-' {
+	if p.rightTrimAt(p.pos) {
 		p.advance()
+		p.trimNext = true
 	}
 	if p.pos + 1 >= len(p.text) || p.text[p.pos] != '}' || p.text[p.pos+1] != '}' {
 		fail p.failAt("expected }}")
@@ -865,7 +1082,16 @@ fn (p mut Parser) advanceTo(to i64) {
 	}
 }
 
-// trimRightSpace removes trailing spaces and tabs.
+// trimLeftSpace removes leading white space (spaces, tabs, carriage returns and newlines).
+fn trimLeftSpace(s str) str {
+	mut i = 0
+	for i < len(s) && isTrimSpace(s[i]) {
+		i += 1
+	}
+	return s[i:len(s)]
+}
+
+// trimRightSpace removes trailing white space (spaces, tabs, carriage returns and newlines).
 fn trimRightSpace(s str) str {
 	mut n = len(s)
 	for n > 0 && (s[n-1] == ' ' || s[n-1] == '\t' || s[n-1] == '\n' || s[n-1] == '\r') {

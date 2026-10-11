@@ -834,7 +834,7 @@ Package glyph is UTF-8 (like Go's unicode/utf8) and Unicode: general categories,
 - `FullRune(s str, i i64) bool`: FullRune reports whether s[i:] begins with a complete encoded rune (invalid bytes count as complete).
 - `RuneCount(s str) i64`: RuneCount returns the number of runes in s, counting each invalid byte as one rune.
 - `Valid(s str) bool`: Valid reports whether s is entirely valid UTF-8.
-- `const UnicodeVersion = "15.0.0"`: UnicodeVersion is the version of the Unicode Character Database the tables come from.
+- `const UnicodeVersion = "17.0.0"`: UnicodeVersion is the version of the Unicode Character Database the tables come from.
 - `type Table enum`: Table names a set of code points by Unicode's own name: a general category (Lu, Nd, P), a script (Latin, Han, Arabic) or a property (White_Space, Dash). Use it with Is.
 - `TableOf(name str) ?Table`: TableOf returns the table with a Unicode name: a general category (Lu, Nd, P), a script (Latin, Han, Arabic) or a property (White_Space, Dash). It returns nil for a name with no table, so a pattern like \p{Greek} can be refused.
 - `TableRanges(t Table) []i64`: TableRanges returns the table's code points as low, high pairs, with strides expanded, for a caller that builds its own classes (lasso's \p{...}).
@@ -1479,7 +1479,7 @@ Package trail manipulates slash-separated file paths (like Go's path/filepath on
 - `Join2(a str, b str) str`: Join2 joins two path elements like Go's filepath.Join(a, b).
 - `Join3(a str, b str, c str) str`: Join3 joins three path elements like Go's filepath.Join(a, b, c).
 - `Rel(base str, targ str) !str`: Rel returns a relative path that is lexically equivalent to targ when joined to base, or a fault when one is absolute and the other is not or base holds "..".
-- `Match(pattern str, name str) !bool`: Match reports whether name matches the shell pattern: '*' (no slash), '?', '[a-z]', '[^x]' and '\' escapes, like Go's filepath.Match.
+- `Match(pattern str, name str) !bool`: Match reports whether name matches the shell pattern: '*' (no slash), '?', '[a-z]', '[^x]' and '\' escapes, like Go's path.Match: a malformed pattern is a fault even when the name stops matching before it (Go's filepath.Match returns false there).
 
 ## lever
 
@@ -2269,13 +2269,13 @@ Package seal has cryptographic hashes (MD5, SHA-256, SHA-384, SHA-512, SHA-1, SH
 - `Hex(b []u8) str`: Hex encodes b in lower-case hexadecimal.
 - `HexDecode(s str) ![]u8`: HexDecode decodes hexadecimal text.
 - `B64(b []u8) str`: B64 encodes b as standard padded base64.
-- `B64Decode(s str) ![]u8`: B64Decode decodes standard padded base64.
+- `B64Decode(s str) ![]u8`: B64Decode decodes standard padded base64 as Go's strict StdEncoding does: "\r" and "\n" are skipped and the unused low bits must be zero.
 - `B64URL(b []u8) str`: B64URL encodes b as unpadded URL-safe base64 (as in JWTs).
-- `B64URLDecode(s str) ![]u8`: B64URLDecode decodes unpadded URL-safe base64.
+- `B64URLDecode(s str) ![]u8`: B64URLDecode decodes unpadded URL-safe base64 as Go's strict RawURLEncoding does: "\r" and "\n" are skipped and the unused low bits must be zero.
 - `Base32(b []u8) str`: Base32 encodes b as standard padded base32 (RFC 4648).
 - `Base32Hex(b []u8) str`: Base32Hex encodes b as padded base32 with the extended-hex alphabet (RFC 4648).
 - `Base32NoPad(b []u8) str`: Base32NoPad encodes b as standard base32 without the padding characters.
-- `Base32Decode(s str) ![]u8`: Base32Decode decodes standard base32; the padding is optional.
+- `Base32Decode(s str) ![]u8`: Base32Decode decodes standard padded base32, as Go's StdEncoding does: "\r" and "\n" are skipped.
 - `Base32HexDecode(s str) ![]u8`: Base32HexDecode decodes extended-hex base32.
 - `Ascii85(b []u8) str`: Ascii85 encodes b with the ascii85 alphabet. The <~ and ~> delimiters are the caller's.
 - `Ascii85MaxLen(n i64) i64`: Ascii85MaxLen is the most Ascii85 writes for n bytes.
@@ -3164,7 +3164,7 @@ Capsule envelope version 2 (design/interface_replay.md section 6.1; #1004): a fr
 
 ## stencil
 
-Package stencil renders templates loaded at run time, like Go's text/template over a dynamic value tree: {{.user.name}}, {{if}}, {{range}}, {{with}}, pipelines with the builtins (len, index, eq, ne, lt, le, gt, ge, and, or, not, printf, print, println, html, urlquery, js), {{define}}, {{template}} and {{block}}, and user functions registered with Func. Parse errors carry line and column; execution is bounded by a template recursion limit and a maximum output size. ParseHTML renders in HTML mode instead: an action's escaping follows its context in the surrounding markup (element text, attribute values, URL attributes and JavaScript inside <script>), and a context the mode cannot judge is a parse error rather than a guess.
+Package stencil renders templates loaded at run time, like Go's text/template over a dynamic value tree: {{.user.name}}, {{if}}, {{range}}, {{with}}, pipelines with the builtins (len, index, slice, eq, ne, lt, le, gt, ge, and, or, not, printf, print, println, html, urlquery, js), {{define}}, {{template}} and {{block}}, and user functions registered with Func. Parse errors carry line and column; execution is bounded by a template recursion limit and a maximum output size. ParseHTML renders in HTML mode instead: an action's escaping follows its context in the surrounding markup (element text, attribute values, URL attributes and JavaScript inside <script>), and a context the mode cannot judge is a parse error rather than a guess.
 
 URL attributes (href, src, action, formaction, poster, background) are escaped by position, as Go's html/template does: at the start the scheme is filtered (only http, https, mailto and relative URLs pass, else #ZgotmplZ) and the value is percent-encoded where it leaves the URL grammar; after the start it is percent-encoded the same way; after a "?" or "#" every byte outside the unreserved set is percent-encoded, so a value cannot add query parameters. Hex digits are lower case, then the value is HTML-escaped.
 
@@ -3506,13 +3506,13 @@ Package mail reads RFC 5322 messages, addresses and dates.
 - `type Address struct`: Address is a name-addr or addr-spec with an optional display name.
 - `type Header map[str][]str`: Header holds canonical header names and all values in wire order.
 - `type Message struct`: Message is a parsed RFC 5322 message.
-- `ReadMessage(src mut dyn io.Reader) !Message`: ReadMessage reads a message and separates its headers from its body.
+- `ReadMessage(src mut dyn io.Reader) !Message`: ReadMessage reads a message and separates its headers from its body, as Go's ReadMessage does: a header ends at the first empty line, a line that starts with a space or a tab continues the one before it, and a message that ends inside its header keeps the fields read so far.
 - `(h Header) Get(key str) str`: Get returns the first value associated with key, or an empty string.
 - `(h Header) AddressList(key str) ![]Address`: AddressList parses all addresses in the named header field.
 - `(h Header) Date() !i64`: Date parses the Date field as an RFC 5322 date.
-- `ParseDate(value str) !i64`: ParseDate parses a date in one of the standard RFC 5322 and obsolete formats.
-- `ParseAddress(value str) !Address`: ParseAddress parses a single address, accepting display names and comments.
-- `ParseAddressList(value str) ![]Address`: ParseAddressList parses comma-separated addresses and RFC 5322 groups.
+- `ParseDate(value str) !i64`: ParseDate parses an RFC 5322 date as Go's ParseDate does: the day of the week and the seconds are optional, the year has four or two digits, the zone is a numeric offset or an abbreviation such as UT or EST (read as offset 0), and a comment may follow the zone.
+- `ParseAddress(value str) !Address`: ParseAddress parses a single RFC 5322 address, such as "Barry Gibbs <bg@example.com>", with Go's net/mail parser.
+- `ParseAddressList(value str) ![]Address`: ParseAddressList parses comma-separated addresses and RFC 5322 groups with Go's net/mail parser; empty entries between commas are skipped (obs-addr-list).
 - `DecodeHeader(value str) !str`: DecodeHeader decodes RFC 2047 encoded words in a header value.
 
 ## textproto
