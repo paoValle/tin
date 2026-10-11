@@ -1,0 +1,46 @@
+media attachment filename="€ rates"
+media attachment filename="a bABc"
+media attachment filename="€"
+media attachment title="plain"
+media attachment filename="A"
+media form-data name="C:\\dev\\go\\x.txt"
+media form-data name="a\"b"
+media text/plain 
+media mime: invalid media parameter
+media mime: unexpected content after media subtype
+media mime: no media type
+media mime: invalid media parameter
+media text/plain a="{x}"
+media text/html a="b"
+format text/plain; charset=utf-8; q="a \"b\""; t="a	b"; title*=utf-8''caf%C3%A9
+format bad "" "" "text"
+word "café au lait"
+word "é"
+word "a�"
+word mime: invalid hex byte 0x47
+word mime: invalid RFC 2047 encoded-word
+word illegal base64 data at input byte 0
+word illegal base64 data at input byte 4
+word mime: invalid RFC 2047 encoded-word
+word mime: unhandled charset "KOI8-R"
+word ""
+header "ab c"
+header "x =?utf-8?q?=G1?= b"
+header mime: unhandled charset "koi8-r"
+header "=?utf-8?q?a?"
+encode =?utf-8?q?caf=C3=A9_caf=C3=A9_caf=C3=A9_caf=C3=A9_caf=C3=A9_caf=C3=A9_caf?= =?utf-8?q?=C3=A9_caf=C3=A9_caf=C3=A9_caf=C3=A9_caf=C3=A9_caf=C3=A9_caf?= =?utf-8?q?=C3=A9_caf=C3=A9_caf=C3=A9_caf=C3=A9_?=
+encode =?UTF-8?b?Y2Fmw6kgY2Fmw6kgY2Fmw6kgY2Fmw6kgY2Fmw6kgY2Fmw6kgY2Fmw6kgY2Fm?= =?UTF-8?b?w6kgY2Fmw6kgY2Fmw6kgY2Fmw6kgY2Fmw6kgY2Fmw6kgY2Fmw6kgY2Fmw6kg?= =?UTF-8?b?Y2Fmw6kg?=
+encode "" "a\tb" "=?iso-8859-1?b?6XTp?="
+qp quotedprintable: invalid bytes after =: ""
+qp quotedprintable: invalid hex byte 0x0d
+qp "x= y\nz"
+qp quotedprintable: invalid unescaped byte 0x01 in body
+qp "ok"
+qp "ab=4"
+qp "=4\n"
+qp "caféx"
+qp enc "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\r\n=20\r\n"
+qp enc "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\r\n=09"
+qp enc "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=\r\n=3D"
+qp enc "a\r\n=01b"
+qp enc "x=20\r\ny=09"

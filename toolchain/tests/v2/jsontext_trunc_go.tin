@@ -1,0 +1,55 @@
+package main
+
+// jsontext's decoder errors at a character cut by the end of the input, and with pointers longer than 100 bytes, which Go 1.27's
+// encoding/json/jsontext shortens around "…". Every line is Go's output: the length of the text, then the decoder's error.
+
+import "fault"
+import "jsontext"
+import "say"
+import "twine"
+
+// nest opens n containers, each naming name when it is an object, then writes tail.
+fn nest(open str, name str, n i64, tail str) str {
+	mut s = ""
+	for k in 0..n {
+		s += open
+		if name != "" {
+			s += say.Fmt("%q:", name)
+		}
+	}
+	return s + tail
+}
+
+fn main() {
+	let docs = []str{
+		"\"\xe2\x82",
+		"[\"a\xe2\x82",
+		"[\"a\xe2\x82\"]",
+		"{{\"\xf0\x9f\x98",
+		"\"\xe2\x82x\"",
+		nest("{{", "a", 60, "1:"),
+		nest("{{", "ab", 33, "1:"),
+		nest("[", "", 60, "1:"),
+		nest("[", "", 40, "x"),
+		nest("{{", "€€€€€€€€€", 8, "1:"),
+		nest("{{", "é", 40, "1 2"),
+		nest("{{", "a/b~c", 25, "1:"),
+		nest("[{{", "k", 20, "1:"),
+		nest("{{", "abcdefghij", 10, "1:"),
+	}
+	for doc in docs {
+		mut d = jsontext.NewDecoder(doc, jsontext.Options{})
+		mut items = []str{}
+		for {
+			d.ReadToken() catch err {
+				if fault.Is(err, jsontext.EOF) {
+					items = append(items, "EOF")
+				} else {
+					items = append(items, say.Str(err))
+				}
+				break
+			}
+		}
+		say.Line(say.Fmt("%d: %s", len(doc), twine.Join(items, " ")))
+	}
+}

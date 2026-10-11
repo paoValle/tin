@@ -1,0 +1,91 @@
+package main
+
+// html.Parse against golang.org/x/net/html v0.58.0 on the elements the tree builder once got wrong or left out: applet, marquee
+// and object (a scope marker each, where Parse panicked), template in every insertion mode it switches (rows, columns, tables,
+// forms, nested templates, the end of the input inside one, a template among foreign content), and frameset documents. Every
+// tree in html_parse_go.out is the one Go builds, printed as tools/ci/fixtures/html_parse_twin.tin prints it.
+
+import "html"
+import "say"
+import "twine"
+
+// enc writes s with printable ASCII (and no backslash) as is and every other byte as \xHH, as the twin does.
+fn enc(s str) str {
+	let hex = "0123456789abcdef"
+	mut out = twine.NewBuilder(len(s) + 8)
+	for i in 0..len(s) {
+		let c = s[i]
+		if c >= 0x20 && c <= 0x7e && c != '\\' {
+			out.Byte(c)
+		} else {
+			out.Str("\\x")
+			out.Byte(hex[c>>4])
+			out.Byte(hex[c&15])
+		}
+	}
+	return out.String()
+}
+
+// show prints the tree under node n, two spaces per level.
+fn show(d html.Document, n i64, depth i64) {
+	mut c = d.FirstChild(n)
+	for c != -1 {
+		let indent = twine.Repeat("  ", depth)
+		let typ = d.Type(c)
+		if typ == html.TextNode {
+			say.Line(indent + "\"" + enc(d.Data(c)) + "\"")
+		} else if typ == html.CommentNode {
+			say.Line(indent + "<!--" + enc(d.Data(c)) + "-->")
+		} else if typ == html.DoctypeNode {
+			mut line = indent + "<!DOCTYPE " + enc(d.Data(c))
+			for a in d.Attrs(c) {
+				line += " " + a.Key + "=\"" + enc(a.Val) + "\""
+			}
+			say.Line(line + ">")
+		} else if typ == html.ElementNode {
+			mut name = d.Data(c)
+			if d.Namespace(c) != "" {
+				name = d.Namespace(c) + " " + d.Data(c)
+			}
+			say.Line(indent + "<" + enc(name) + ">")
+			for a in d.Attrs(c) {
+				mut key = a.Key
+				if a.Namespace != "" {
+					key = a.Namespace + ":" + a.Key
+				}
+				say.Line(indent + "  " + enc(key) + "=\"" + enc(a.Val) + "\"")
+			}
+			show(d, c, depth+1)
+		}
+		c = d.NextSibling(c)
+	}
+}
+
+// parse prints the label and the tree of the document.
+fn parse(label str, text str) {
+	say.Line("== " + label)
+	let d = html.Parse(text) catch err {
+		say.Line("error", err)
+		return
+	}
+	show(d, d.Root(), 0)
+}
+
+fn main() {
+	parse("applet", "<p><applet code=a><b>x</applet>y</b><marquee>m</marquee><object>o</object>")
+	parse("template in head", "<head><template><td>cell</td></template></head><body>b")
+	parse("template rows", "<template><tr><td>a</td></tr><caption>c</caption></template>")
+	parse("template columns", "<template><col><col></template><template><colgroup><col></template>")
+	parse("nested templates", "<template><div><template><p>inner</template>after</div></template>")
+	parse("template in table", "<table><template><tr><td>x</template><tr><td>y</table>")
+	parse("table in template", "<template><table>text<tr><td>z</table></template>")
+	parse("forms in template", "<form id=outer><template><form id=t>x</form></template></form><form id=next>")
+	parse("template end tags", "<body></template><div><template>a</div>b</template>c")
+	parse("unclosed template", "<template><b><i>open")
+	parse("template html and body", "<template><html lang=x><body class=y><p>p</template>")
+	parse("template after foreign", "<svg><template><p>dropped</svg><p>also dropped")
+	parse("frameset", "<!DOCTYPE html><html><head><title>f</title></head><frameset cols=50%,50%><frame src=a><frameset><frame src=b></frameset><noframes>n</noframes></frameset>x <!--c--> y</html> z<!--after-->")
+	parse("frameset replaces body", "<body>  <frameset><frame></frameset>")
+	parse("frameset after text", "<body>t<frameset><frame></frameset>")
+	parse("frameset in head", "<head></head><frameset></frameset><noframes>n</noframes><p>ignored")
+}

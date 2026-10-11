@@ -1,0 +1,155 @@
+== applet
+<html>
+  <head>
+  <body>
+    <p>
+      <applet>
+        code="a"
+        <b>
+          "x"
+      "y"
+      <marquee>
+        "m"
+      <object>
+        "o"
+== template in head
+<html>
+  <head>
+    <template>
+      <td>
+        "cell"
+  <body>
+    "b"
+== template rows
+<html>
+  <head>
+    <template>
+      <tr>
+        <td>
+          "a"
+      "c"
+  <body>
+== template columns
+<html>
+  <head>
+    <template>
+      <col>
+      <col>
+    <template>
+      <colgroup>
+        <col>
+  <body>
+== nested templates
+<html>
+  <head>
+    <template>
+      <div>
+        <template>
+          <p>
+            "inner"
+        "after"
+  <body>
+== template in table
+<html>
+  <head>
+  <body>
+    <table>
+      <template>
+        <tr>
+          <td>
+            "x"
+      <tbody>
+        <tr>
+          <td>
+            "y"
+== table in template
+<html>
+  <head>
+    <template>
+      "text"
+      <table>
+        <tbody>
+          <tr>
+            <td>
+              "z"
+  <body>
+== forms in template
+<html>
+  <head>
+  <body>
+    <form>
+      id="outer"
+      <template>
+        <form>
+          id="t"
+          "x"
+    <form>
+      id="next"
+== template end tags
+<html>
+  <head>
+  <body>
+    <div>
+      <template>
+        "ab"
+      "c"
+== unclosed template
+<html>
+  <head>
+    <template>
+      <b>
+        <i>
+          "open"
+  <body>
+== template html and body
+<html>
+  <head>
+    <template>
+      <p>
+        "p"
+  <body>
+== template after foreign
+<html>
+  <head>
+  <body>
+    <svg svg>
+      <svg template>
+    <p>
+      "dropped"
+    <p>
+      "also dropped"
+== frameset
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>
+      "f"
+  <frameset>
+    cols="50%,50%"
+    <frame>
+      src="a"
+    <frameset>
+      <frame>
+        src="b"
+    <noframes>
+      "n"
+  " "
+  <!--c-->
+  "  "
+<!--after-->
+== frameset replaces body
+<html>
+  <head>
+  <body>
+    "  "
+== frameset after text
+<html>
+  <head>
+  <body>
+    "t"
+== frameset in head
+<html>
+  <head>
+  <frameset>
+  <noframes>
+    "n"

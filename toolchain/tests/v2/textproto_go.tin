@@ -52,4 +52,7 @@ fn main() {
 		dw.Close() catch _ {}
 		say.Line("writer", q(twine.Join(chunks, "|")), q(w.String()))
 	}
+	for k in []str{"\u0141", "x-\u0141", "content-type", "x-\u00e9-y", "CONTENT-md5", "a b", "\u0161ok"} {
+		say.Line("canonical", q(k), q(textproto.CanonicalMIMEHeaderKey(k)))
+	}
 }

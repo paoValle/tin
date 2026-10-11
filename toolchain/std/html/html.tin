@@ -2,7 +2,7 @@
 // text and attribute values; a Tokenizer that splits a document into text, tags, attributes, comments and doctypes with the WHATWG
 // tokenization rules (raw text in script, style, textarea, title and the other raw elements; bogus comments; the legacy
 // references without a semicolon); and Parse, which builds the document tree with the tree-construction rules (implicit closes,
-// the adoption agency, tables, select, svg and math content). Parse does not support the template and frameset modes. The
+// the adoption agency, tables, select, templates, framesets, svg and math content). The
 // tokenizer reads a whole string, so its tokens are the same as Go's over a reader. The Go twins (bench/ref/html and
 // tools/ci/html_check.tin) compare the token streams and the trees over a corpus of pages and generated documents.
 package html

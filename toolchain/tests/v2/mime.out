@@ -1,18 +1,18 @@
 type text/html UTF-8 b
-format text/plain; a b=c; charset=utf-8
+format 
 lone text
-bad mime: invalid media parameter mime: expected slash after first token mime: expected token after slash
+bad mime: invalid media parameter mime: no media type mime: unexpected content after media subtype
 ext image/png application/json 
 added application/x-tinz .png 
 word café café café
-word bad mime: invalid RFC 2047 encoding "x" mime: unhandled charset "nope"
+word bad mime: invalid RFC 2047 encoded-word mime: unhandled charset "nope"
 header Subject: café time
-encode word =?utf-8?Q?caf=C3=A9?= plain
+encode word =?utf-8?q?caf=C3=A9?= plain
 qp café suite =   	
  a
 b
  =zz trailing
-qp bad ok =4 quotedprintable: invalid bytes after the soft break quotedprintable: invalid unescaped byte 0x01 in body
+qp bad ok =4 quotedprintable: invalid bytes after =: "" quotedprintable: invalid unescaped byte 0x01 in body
 qp enc 68656c6c6f20776f726c640d0a 747261696c696e673d32300d0a 3d334478
 qp enc long 206 123
 multipart parts  [name||value] [f|a.txt|café]

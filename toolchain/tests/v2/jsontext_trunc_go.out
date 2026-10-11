@@ -1,0 +1,14 @@
+3: jsontext: unexpected EOF after offset 1
+5: jsontext: unexpected EOF within "/0" after offset 3
+7: jsontext: invalid UTF-8 within "/0" after offset 3
+5: jsontext: unexpected EOF after offset 2
+5: jsontext: invalid UTF-8 after offset 1
+302: jsontext: invalid character ':' after object value (expecting ',' or '}') within "/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/…/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a" after offset 301
+200: jsontext: invalid character ':' after object value (expecting ',' or '}') within "/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab" after offset 199
+62: jsontext: invalid character ':' after array element (expecting ',' or ']') within "/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/…/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0" after offset 61
+41: jsontext: invalid character 'x' at start of value within "/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0" after offset 40
+250: jsontext: invalid character ':' after object value (expecting ',' or '}') within "/€€€€€€€€€/…/€€€€€€€€€" after offset 249
+243: jsontext: invalid character '2' after object value (expecting ',' or '}') within "/é/é/é/é/é/é/é/é/é/é/é/é/é/é/é/é/…/é/é/é/é/é/é/é/é/é/é/é/é/é/é/é/é" after offset 242
+227: jsontext: invalid character ':' after object value (expecting ',' or '}') within "/a~1b~0c/a~1b~0c/a~1b~0c/a~1b~0c/a~1b~0c/a~1b~0c/…/a~1b~0c/a~1b~0c/a~1b~0c/a~1b~0c/a~1b~0c/a~1b~0c" after offset 226
+122: jsontext: invalid character ':' after object value (expecting ',' or '}') within "/0/k/0/k/0/k/0/k/0/k/0/k/0/k/0/k/0/k/0/k/0/k/0/k/0/k/0/k/0/k/0/k/0/k/0/k/0/k/0" after offset 121
+142: jsontext: invalid character ':' after object value (expecting ',' or '}') within "/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij" after offset 141

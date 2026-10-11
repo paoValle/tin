@@ -49,6 +49,17 @@ const imAfterBody = 14
 
 const imAfterAfterBody = 15
 
+const imInTemplate = 16
+
+const imInFrameset = 17
+
+const imAfterFrameset = 18
+
+const imAfterAfterFrameset = 19
+
+// imIgnoreRemaining drops every token, as Go's ignoreTheRemainingTokens does after a template in foreign content.
+const imIgnoreRemaining = 20
+
 // whitespace is the set of white space bytes the tree builder trims.
 const whitespace = " \t\r\n\f"
 
@@ -68,6 +79,8 @@ type parser struct {
 	framesetOK bool
 	im i64
 	originalIM i64
+	// templateStack holds the insertion modes of the open template elements.
+	templateStack []i64
 	fosterParenting bool
 	quirks bool
 	failed str
@@ -75,7 +88,7 @@ type parser struct {
 
 // newParser returns a parser of text, with the root and the scope marker in place.
 fn newParser(text str) parser {
-	mut p = parser{tokenizer: NewTokenizer(text), tok: Token{Type: ErrorToken, Data: "", Attr: []Attribute{}}, hasSelfClosingToken: false, nodes: []treeNode{}, doc: -1, oe: []i64{}, afe: []i64{}, head: -1, form: -1, scripting: true, framesetOK: true, im: imInitial, originalIM: -1, fosterParenting: false, quirks: false, failed: ""}
+	mut p = parser{tokenizer: NewTokenizer(text), tok: Token{Type: ErrorToken, Data: "", Attr: []Attribute{}}, hasSelfClosingToken: false, nodes: []treeNode{}, doc: -1, oe: []i64{}, afe: []i64{}, head: -1, form: -1, scripting: true, framesetOK: true, im: imInitial, originalIM: -1, templateStack: []i64{}, fosterParenting: false, quirks: false, failed: ""}
 	p.newNode(scopeMarkerNode, "", "", []Attribute{})
 	p.doc = p.newNode(DocumentNode, "", "", []Attribute{})
 	return p
@@ -349,6 +362,18 @@ fn (p mut parser) fosterParent(n i64) {
 			break
 		}
 	}
+	// Inside a template opened after the table, content goes into the template.
+	let top12 = len(p.oe) - 1
+	for k12 in 0..top12+1 {
+		let j = top12 - k12
+		if p.nodes[p.oe[j]].data == "template" {
+			if table == -1 || j > ti {
+				p.appendChild(p.oe[j], n)
+				return
+			}
+			break
+		}
+	}
 	mut parent = i64(-1)
 	if table == -1 {
 		parent = p.oe[0]
@@ -535,10 +560,17 @@ fn (p mut parser) resetInsertionMode() {
 			p.im = imInColumnGroup
 		} else if tag == "table" {
 			p.im = imInTable
+		} else if tag == "template" {
+			if p.nodes[n].ns != "" {
+				continue
+			}
+			p.im = p.templateTop()
 		} else if tag == "head" {
 			p.im = imInHead
 		} else if tag == "body" {
 			p.im = imInBody
+		} else if tag == "frameset" {
+			p.im = imInFrameset
 		} else if tag == "html" {
 			if p.head == -1 {
 				p.im = imBeforeHead
@@ -554,6 +586,38 @@ fn (p mut parser) resetInsertionMode() {
 		}
 		return
 	}
+}
+
+// templateTop returns the insertion mode of the innermost open template, or -1 when none is open.
+fn (p parser) templateTop() i64 {
+	if len(p.templateStack) == 0 {
+		return -1
+	}
+	return p.templateStack[len(p.templateStack)-1]
+}
+
+// setTemplateMode replaces the innermost template's insertion mode with m and switches to it.
+fn (p mut parser) setTemplateMode(m i64) {
+	p.templateStack[len(p.templateStack)-1] = m
+	p.im = m
+}
+
+// closeTemplate pops the open elements up to and including the innermost HTML template, with its active formatting elements
+// and insertion mode, and resets the insertion mode.
+fn (p mut parser) closeTemplate() {
+	p.generateImpliedEndTags([]str{})
+	let top13 = len(p.oe) - 1
+	for k13 in 0..top13+1 {
+		let i = top13 - k13
+		let n = p.oe[i]
+		if p.nodes[n].ns == "" && p.nodes[n].data == "template" {
+			p.oe = p.oe[:i]
+			break
+		}
+	}
+	p.clearActiveFormattingElements()
+	p.templateStack = p.templateStack[:len(p.templateStack)-1]
+	p.resetInsertionMode()
 }
 
 // parseImpliedToken runs an end or start tag that the parser makes up (html, head, body, ...) through the modes.
@@ -619,6 +683,16 @@ fn (p mut parser) runIM() bool {
 		return p.inCellIM()
 	} else if m == imAfterBody {
 		return p.afterBodyIM()
+	} else if m == imInTemplate {
+		return p.inTemplateIM()
+	} else if m == imInFrameset {
+		return p.inFramesetIM()
+	} else if m == imAfterFrameset {
+		return p.afterFramesetIM()
+	} else if m == imAfterAfterFrameset {
+		return p.afterAfterFramesetIM()
+	} else if m == imIgnoreRemaining {
+		return true
 	}
 	return p.afterAfterBodyIM()
 }
@@ -760,6 +834,20 @@ fn (p mut parser) inHeadIM() bool {
 			return true
 		} else if tag == "head" {
 			return true
+		} else if tag == "template" {
+			// As in Go, a template among foreign content ends the parse: the rest of the input is dropped.
+			for e in p.oe {
+				if p.nodes[e].ns != "" {
+					p.im = imIgnoreRemaining
+					return true
+				}
+			}
+			p.addElement()
+			p.afe = append(p.afe, 0)
+			p.framesetOK = false
+			p.im = imInTemplate
+			p.templateStack = append(p.templateStack, imInTemplate)
+			return true
 		}
 	} else if p.tok.Type == EndTagToken {
 		let tag = p.tok.Data
@@ -770,6 +858,11 @@ fn (p mut parser) inHeadIM() bool {
 		} else if tag == "body" || tag == "html" || tag == "br" {
 			p.parseImpliedToken(EndTagToken, "head")
 			return false
+		} else if tag == "template" {
+			if p.oeContains("template") {
+				p.closeTemplate()
+			}
+			return true
 		}
 		return true
 	} else if p.tok.Type == CommentToken {
@@ -840,7 +933,11 @@ fn (p mut parser) afterHeadIM() bool {
 			p.framesetOK = false
 			p.im = imInBody
 			return true
-		} else if tag == "base" || tag == "basefont" || tag == "bgsound" || tag == "link" || tag == "meta" || tag == "noframes" || tag == "script" || tag == "style" || tag == "title" {
+		} else if tag == "frameset" {
+			p.addElement()
+			p.im = imInFrameset
+			return true
+		} else if tag == "base" || tag == "basefont" || tag == "bgsound" || tag == "link" || tag == "meta" || tag == "noframes" || tag == "script" || tag == "style" || tag == "template" || tag == "title" {
 			p.oe = append(p.oe, p.head)
 			let r = p.inHeadIM()
 			p.oeRemove(p.head)
@@ -851,6 +948,8 @@ fn (p mut parser) afterHeadIM() bool {
 	} else if p.tok.Type == EndTagToken {
 		let tag = p.tok.Data
 		if tag == "body" || tag == "html" || tag == "br" {
+		} else if tag == "template" {
+			return p.inHeadIM()
 		} else {
 			return true
 		}
@@ -920,6 +1019,10 @@ fn (p mut parser) inBodyIM() bool {
 	} else if p.tok.Type == CommentToken {
 		let n = p.newNode(CommentNode, p.tok.Data, "", []Attribute{})
 		p.addChild(n)
+	} else if p.tok.Type == ErrorToken && len(p.templateStack) > 0 {
+		// The end of the input inside a template closes it in the template mode.
+		p.im = imInTemplate
+		return false
 	}
 	return true
 }
@@ -929,14 +1032,20 @@ fn (p mut parser) inBodyStartTag() bool {
 	let tag = p.tok.Data
 	match tag {
 		"html" => {
+			if p.oeContains("template") {
+				return true
+			}
 			if len(p.oe) > 0 {
 				p.copyAttributes(p.oe[0])
 			}
 		}
-		"base", "basefont", "bgsound", "link", "meta", "noframes", "script", "style", "title" => {
+		"base", "basefont", "bgsound", "link", "meta", "noframes", "script", "style", "template", "title" => {
 			return p.inHeadIM()
 		}
 		"body" => {
+			if p.oeContains("template") {
+				return true
+			}
 			if len(p.oe) >= 2 {
 				let body = p.oe[1]
 				if p.nodes[body].typ == ElementNode && p.nodes[body].data == "body" {
@@ -944,6 +1053,20 @@ fn (p mut parser) inBodyStartTag() bool {
 					p.copyAttributes(body)
 				}
 			}
+		}
+		"frameset" => {
+			if !p.framesetOK || len(p.oe) < 2 || p.nodes[p.oe[1]].data != "body" {
+				return true
+			}
+			let body = p.oe[1]
+			let parent = p.nodes[body].parent
+			if parent != -1 {
+				p.removeChild(parent, body)
+			}
+			p.oe = p.oe[:1]
+			p.addElement()
+			p.im = imInFrameset
+			return true
 		}
 		"address", "article", "aside", "blockquote", "center", "details", "dialog", "dir", "div", "dl", "fieldset", "figcaption", "figure", "footer", "header", "hgroup", "main", "menu", "nav", "ol", "p", "search", "section", "summary", "ul" => {
 			p.popUntil(scopeButton, []str{"p"})
@@ -966,12 +1089,14 @@ fn (p mut parser) inBodyStartTag() bool {
 			p.framesetOK = false
 		}
 		"form" => {
-			if p.form != -1 {
+			if p.form != -1 && !p.oeContains("template") {
 				return true
 			}
 			p.popUntil(scopeButton, []str{"p"})
 			p.addElement()
-			p.form = p.top()
+			if !p.oeContains("template") {
+				p.form = p.top()
+			}
 		}
 		"li" => {
 			p.framesetOK = false
@@ -1056,6 +1181,12 @@ fn (p mut parser) inBodyStartTag() bool {
 				p.reconstructActiveFormattingElements()
 			}
 			p.addFormattingElement()
+		}
+		"applet", "marquee", "object" => {
+			p.reconstructActiveFormattingElements()
+			p.addElement()
+			p.afe = append(p.afe, 0)
+			p.framesetOK = false
 		}
 		"table" => {
 			if !p.quirks {
@@ -1225,14 +1356,26 @@ fn (p mut parser) inBodyEndTag() bool {
 			p.popUntil(scopeDefault, []str{tag})
 		}
 		"form" => {
-			let node = p.form
-			p.form = -1
-			let i = p.indexOfElementInScope(scopeDefault, []str{"form"})
-			if node == -1 || i == -1 || p.oe[i] != node {
-				return true
+			if p.oeContains("template") {
+				let i = p.indexOfElementInScope(scopeDefault, []str{"form"})
+				if i == -1 {
+					return true
+				}
+				p.generateImpliedEndTags([]str{})
+				if p.nodes[p.oe[i]].data != "form" {
+					return true
+				}
+				p.popUntil(scopeDefault, []str{"form"})
+			} else {
+				let node = p.form
+				p.form = -1
+				let i = p.indexOfElementInScope(scopeDefault, []str{"form"})
+				if node == -1 || i == -1 || p.oe[i] != node {
+					return true
+				}
+				p.generateImpliedEndTags([]str{})
+				p.oeRemove(node)
 			}
-			p.generateImpliedEndTags([]str{})
-			p.oeRemove(node)
 		}
 		"p" => {
 			if !p.elementInScope(scopeButton, []str{"p"}) {
@@ -1260,6 +1403,9 @@ fn (p mut parser) inBodyEndTag() bool {
 		"br" => {
 			p.tok.Type = StartTagToken
 			return false
+		}
+		"template" => {
+			return p.inHeadIM()
 		}
 		_ => {
 			p.inBodyEndTagOther(tag)
@@ -1474,7 +1620,7 @@ fn (p mut parser) inTableIM() bool {
 				return false
 			}
 			return true
-		} else if tag == "style" || tag == "script" {
+		} else if tag == "style" || tag == "script" || tag == "template" {
 			return p.inHeadIM()
 		} else if tag == "input" {
 			for t in p.tok.Attr {
@@ -1485,7 +1631,7 @@ fn (p mut parser) inTableIM() bool {
 				}
 			}
 		} else if tag == "form" {
-			if p.form != -1 {
+			if p.oeContains("template") || p.form != -1 {
 				return true
 			}
 			p.addElement()
@@ -1501,6 +1647,8 @@ fn (p mut parser) inTableIM() bool {
 			return true
 		} else if tag == "body" || tag == "caption" || tag == "col" || tag == "colgroup" || tag == "html" || tag == "tbody" || tag == "td" || tag == "tfoot" || tag == "th" || tag == "thead" || tag == "tr" {
 			return true
+		} else if tag == "template" {
+			return p.inHeadIM()
 		}
 	} else if p.tok.Type == CommentToken {
 		let n = p.newNode(CommentNode, p.tok.Data, "", []Attribute{})
@@ -1577,6 +1725,8 @@ fn (p mut parser) inColumnGroupIM() bool {
 			p.popOE()
 			p.acknowledgeSelfClosingTag()
 			return true
+		} else if tag == "template" {
+			return p.inHeadIM()
 		}
 	} else if p.tok.Type == EndTagToken {
 		let tag = p.tok.Data
@@ -1588,6 +1738,8 @@ fn (p mut parser) inColumnGroupIM() bool {
 			return true
 		} else if tag == "col" {
 			return true
+		} else if tag == "template" {
+			return p.inHeadIM()
 		}
 	} else if p.tok.Type == ErrorToken {
 		return p.inBodyIM()
@@ -1783,6 +1935,137 @@ fn (p mut parser) afterAfterBodyIM() bool {
 	}
 	p.im = imInBody
 	return false
+}
+
+// inTemplateIM is the mode inside a template: the first tag picks the mode of the template's content.
+fn (p mut parser) inTemplateIM() bool {
+	if p.tok.Type == TextToken || p.tok.Type == CommentToken || p.tok.Type == DoctypeToken {
+		return p.inBodyIM()
+	} else if p.tok.Type == StartTagToken {
+		let tag = p.tok.Data
+		if tag == "base" || tag == "basefont" || tag == "bgsound" || tag == "link" || tag == "meta" || tag == "noframes" || tag == "script" || tag == "style" || tag == "template" || tag == "title" {
+			return p.inHeadIM()
+		} else if tag == "caption" || tag == "colgroup" || tag == "tbody" || tag == "tfoot" || tag == "thead" {
+			p.setTemplateMode(imInTable)
+		} else if tag == "col" {
+			p.setTemplateMode(imInColumnGroup)
+		} else if tag == "tr" {
+			p.setTemplateMode(imInTableBody)
+		} else if tag == "td" || tag == "th" {
+			p.setTemplateMode(imInRow)
+		} else {
+			p.setTemplateMode(imInBody)
+		}
+		return false
+	} else if p.tok.Type == EndTagToken {
+		if p.tok.Data == "template" {
+			return p.inHeadIM()
+		}
+		return true
+	} else if p.tok.Type == ErrorToken {
+		if !p.oeContains("template") {
+			return true
+		}
+		p.closeTemplate()
+		return false
+	}
+	return false
+}
+
+// keepWhitespace returns the space, tab, newline, form feed and carriage return bytes of s, the only text a frameset keeps.
+fn keepWhitespace(s str) str {
+	mut out = []u8{}
+	for i in 0..len(s) {
+		let c = s[i]
+		if c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r' {
+			out = append(out, c)
+		}
+	}
+	return str(out)
+}
+
+// inFramesetIM is the mode inside a frameset.
+fn (p mut parser) inFramesetIM() bool {
+	if p.tok.Type == CommentToken {
+		let n = p.newNode(CommentNode, p.tok.Data, "", []Attribute{})
+		p.addChild(n)
+	} else if p.tok.Type == TextToken {
+		let s = keepWhitespace(p.tok.Data)
+		if s != "" {
+			p.addText(s)
+		}
+	} else if p.tok.Type == StartTagToken {
+		let tag = p.tok.Data
+		if tag == "html" {
+			return p.inBodyIM()
+		} else if tag == "frameset" {
+			p.addElement()
+		} else if tag == "frame" {
+			p.addElement()
+			p.popOE()
+			p.acknowledgeSelfClosingTag()
+		} else if tag == "noframes" {
+			return p.inHeadIM()
+		}
+	} else if p.tok.Type == EndTagToken {
+		if p.tok.Data == "frameset" && p.nodes[p.oeTop()].data != "html" {
+			p.popOE()
+			if p.nodes[p.oeTop()].data != "frameset" {
+				p.im = imAfterFrameset
+				return true
+			}
+		}
+	}
+	return true
+}
+
+// afterFramesetIM is the mode after the frameset element.
+fn (p mut parser) afterFramesetIM() bool {
+	if p.tok.Type == CommentToken {
+		let n = p.newNode(CommentNode, p.tok.Data, "", []Attribute{})
+		p.addChild(n)
+	} else if p.tok.Type == TextToken {
+		let s = keepWhitespace(p.tok.Data)
+		if s != "" {
+			p.addText(s)
+		}
+	} else if p.tok.Type == StartTagToken {
+		let tag = p.tok.Data
+		if tag == "html" {
+			return p.inBodyIM()
+		} else if tag == "noframes" {
+			return p.inHeadIM()
+		}
+	} else if p.tok.Type == EndTagToken {
+		if p.tok.Data == "html" {
+			p.im = imAfterAfterFrameset
+			return true
+		}
+	}
+	return true
+}
+
+// afterAfterFramesetIM is the mode after the html element of a frameset document.
+fn (p mut parser) afterAfterFramesetIM() bool {
+	if p.tok.Type == CommentToken {
+		p.addCommentTo(p.doc)
+	} else if p.tok.Type == TextToken {
+		let s = keepWhitespace(p.tok.Data)
+		if s != "" {
+			p.tok.Data = s
+			return p.inBodyIM()
+		}
+	} else if p.tok.Type == StartTagToken {
+		let tag = p.tok.Data
+		if tag == "html" {
+			return p.inBodyIM()
+		} else if tag == "noframes" {
+			return p.inHeadIM()
+		}
+	} else if p.tok.Type == DoctypeToken {
+		return p.inBodyIM()
+	}
+	return true
 }
 
 // inForeignContent reports whether the current token is handled by the rules of svg and math content.
@@ -2157,8 +2440,8 @@ fn quirkyIDs() []str {
 	return []str{"+//silmaril//dtd html pro v0r11 19970101//", "-//advasoft ltd//dtd html 3.0 aswedit + extensions//", "-//as//dtd html 3.0 aswedit + extensions//", "-//ietf//dtd html 2.0 level 1//", "-//ietf//dtd html 2.0 level 2//", "-//ietf//dtd html 2.0 strict level 1//", "-//ietf//dtd html 2.0 strict level 2//", "-//ietf//dtd html 2.0 strict//", "-//ietf//dtd html 2.0//", "-//ietf//dtd html 2.1e//", "-//ietf//dtd html 3.0//", "-//ietf//dtd html 3.2 final//", "-//ietf//dtd html 3.2//", "-//ietf//dtd html 3//", "-//ietf//dtd html level 0//", "-//ietf//dtd html level 1//", "-//ietf//dtd html level 2//", "-//ietf//dtd html level 3//", "-//ietf//dtd html strict level 0//", "-//ietf//dtd html strict level 1//", "-//ietf//dtd html strict level 2//", "-//ietf//dtd html strict level 3//", "-//ietf//dtd html strict//", "-//ietf//dtd html//", "-//metrius//dtd metrius presentational//", "-//microsoft//dtd internet explorer 2.0 html strict//", "-//microsoft//dtd internet explorer 2.0 html//", "-//microsoft//dtd internet explorer 2.0 tables//", "-//microsoft//dtd internet explorer 3.0 html strict//", "-//microsoft//dtd internet explorer 3.0 html//", "-//microsoft//dtd internet explorer 3.0 tables//", "-//netscape comm. corp.//dtd html//", "-//netscape comm. corp.//dtd strict html//", "-//o'reilly and associates//dtd html 2.0//", "-//o'reilly and associates//dtd html extended 1.0//", "-//o'reilly and associates//dtd html extended relaxed 1.0//", "-//softquad software//dtd hotmetal pro 6.0::19990601::extensions to html 4.0//", "-//softquad//dtd hotmetal pro 4.0::19971010::extensions to html 4.0//", "-//spyglass//dtd html 2.0 extended//", "-//sq//dtd html 2.0 hotmetal + extensions//", "-//sun microsystems corp.//dtd hotjava html//", "-//sun microsystems corp.//dtd hotjava strict html//", "-//w3c//dtd html 3 1995-03-24//", "-//w3c//dtd html 3.2 draft//", "-//w3c//dtd html 3.2 final//", "-//w3c//dtd html 3.2//", "-//w3c//dtd html 3.2s draft//", "-//w3c//dtd html 4.0 frameset//", "-//w3c//dtd html 4.0 transitional//", "-//w3c//dtd html experimental 19960712//", "-//w3c//dtd html experimental 970421//", "-//w3c//dtd w3 html//", "-//w3o//dtd w3 html 3.0//", "-//webtechs//dtd mozilla html 2.0//", "-//webtechs//dtd mozilla html//"}
 }
 
-// Parse builds the tree of an HTML document, as Go's html.Parse does (scripting enabled; the template and frameset modes are not
-// supported). A tree that the tree builder cannot make, such as one nested more than 512 elements deep, is a fault.
+// Parse builds the tree of an HTML document, as Go's html.Parse does, with scripting enabled; a template's content is its
+// children, as in Go. A tree that the tree builder cannot make, such as one nested more than 512 elements deep, is a fault.
 fn Parse(text str) !Document {
 	mut p = newParser(text)
 	p.parseAll()

@@ -101,6 +101,11 @@ text</textarea><textarea>
 		`text only, no markup &amp; "quotes" 'apostrophes'`,
 		``,
 		`<!DOCTYPE html><!--c1--><!--c2--><p>x</p><![CDATA[x]]>`,
+		`<p><applet code=a><b>x</applet>y</b><marquee>m</marquee><object>o</object>`,
+		`<head><template><td>cell</td></template></head><table><template><tr><td>x</template><tr><td>y</table><template><col></template>`,
+		`<form id=outer><template><form id=t>x</form><div><template><p>inner</template></div></template></form><template><b><i>open`,
+		`<!DOCTYPE html><html><head><title>f</title></head><frameset cols=50%,50%><frame src=a><frameset><frame src=b></frameset><noframes>n</noframes></frameset>x <!--c--> y</html> z<!--after-->`,
+		`<body>  <frameset><frame></frameset>`,
 	}
 }
 

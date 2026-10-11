@@ -9,8 +9,10 @@ package mime
 //	print(mime.TypeByExtension(".png"))       // image/png
 //
 // A media type is "type/subtype" (both lowercased) with parameters; a parameter value may be a
-// token or a quoted string, and FormatMediaType quotes it again when it has to.
+// token, a quoted string or RFC 2231 percent-encoded text, and FormatMediaType quotes or encodes
+// it again when it has to.
 
+import "glyph"
 import "say"
 import "twine"
 
@@ -19,132 +21,285 @@ type Params map[str]str
 
 // ---- media types ----
 
-// ParseMediaType parses a media type and its parameters, like Go's mime.ParseMediaType. The
-// media type is lowercased; parameter names are lowercased and their values unquoted; a
-// parameter repeated with the same value is kept once, a different value is an error.
+// ParseMediaType parses a media type and its parameters, like Go's mime.ParseMediaType (RFC 1521,
+// RFC 2183). The media type is lowercased and trimmed; parameter names are lowercased and their
+// values unquoted. RFC 2231 parameters are decoded: name*=utf-8''%e2%82%ac is "€", and the pieces
+// name*0, name*1* ... are joined. A parameter repeated with the same value is kept once, a
+// different value is a fault, and a trailing ";" is allowed. Where Go returns the media type with
+// ErrInvalidMediaParameter, this returns only the fault.
 fn ParseMediaType(v str) !(str, Params) {
-	// The media type ends at the first ';'.
-	mut base = ""
-	mut rest = ""
-	mut i = i64(0)
-	for i < len(v) && v[i] != ';' {
-		i += 1
+	mut base = v
+	let semi = twine.IndexByte(v, ';')
+	if semi >= 0 {
+		base = v[0:semi]
 	}
-	base = v[0:i]
-	if i < len(v) {
-		rest = v[i+1:len(v)]
+	let mediatype = twine.TrimSpace(twine.ToLower(base))
+	try checkMediaType(mediatype)
+	mut params = make(Params)
+	// starred holds the parameters whose names have a '*' (RFC 2231), by full name, and bases
+	// their names before the '*', in the order first seen.
+	mut starred = make(Params)
+	mut bases = []str{}
+	mut rest = v[len(base):len(v)]
+	for len(rest) > 0 {
+		rest = trimLeftSpace(rest)
+		if len(rest) == 0 {
+			break
+		}
+		let (key, value, after) = consumeMediaParam(rest)
+		if len(key) == 0 {
+			if twine.TrimSpace(after) == ";" {
+				// A trailing semicolon is not an error.
+				break
+			}
+			fail say.Fault("mime: invalid media parameter")
+		}
+		let star = twine.IndexByte(key, '*')
+		if star >= 0 {
+			let name = key[0:star]
+			mut seen = false
+			for _, b in bases {
+				if b == name {
+					seen = true
+				}
+			}
+			if !seen {
+				bases = append(bases, name)
+			}
+			let (old, found) = starred[key]
+			if found && old != value {
+				fail say.Fault("mime: duplicate parameter name")
+			}
+			starred[key] = value
+		} else {
+			let (old, found) = params[key]
+			if found && old != value {
+				fail say.Fault("mime: duplicate parameter name")
+			}
+			params[key] = value
+		}
+		rest = after
 	}
-	let mediatype = try checkMediaType(trimSpace(base))
-	let params = try parseParams(rest)
+	// Join the RFC 2231 pieces: name* is one encoded value, name*0, name*1 ... are plain pieces
+	// and name*0*, name*1* ... encoded ones, the charset coming with the first.
+	for _, name in bases {
+		let (whole, single) = starred[name+"*"]
+		if single {
+			let (dec, ok) = decode2231Enc(whole)
+			if ok {
+				params[name] = dec
+			}
+			continue
+		}
+		mut joined = ""
+		mut valid = false
+		mut n = i64(0)
+		for {
+			let simple = name + "*" + say.Fmt("%d", n)
+			let (piece, plain) = starred[simple]
+			if plain {
+				valid = true
+				joined += piece
+				n += 1
+				continue
+			}
+			let (enc, encoded) = starred[simple+"*"]
+			if !encoded {
+				break
+			}
+			valid = true
+			if n == 0 {
+				let (dec, ok) = decode2231Enc(enc)
+				if ok {
+					joined += dec
+				}
+			} else {
+				let (dec, _) = percentHexUnescape(enc)
+				joined += dec
+			}
+			n += 1
+		}
+		if valid {
+			params[name] = joined
+		}
+	}
 	return mediatype, params
 }
 
-// checkMediaType validates and lowercases "type/subtype", following Go's
-// checkMediaTypeDisposition: a lone token with no slash is a media type with no subtype, a slash
-// must be followed by a subtype token and nothing else.
-fn checkMediaType(v str) !str {
-	if len(v) == 0 {
+// checkMediaType checks a lowercased, trimmed media type as Go's checkMediaTypeDisposition
+// does: a token, optionally followed by "/" and another token.
+fn checkMediaType(v str) ! {
+	let (typ, rest) = consumeToken(v)
+	if len(typ) == 0 {
 		fail say.Fault("mime: no media type")
 	}
-	let slash = twine.IndexByte(v, '/')
-	if slash < 0 {
-		if !isToken(v) {
-			fail say.Fault("mime: expected slash after first token")
-		}
-		return lower(v)
+	if len(rest) == 0 {
+		return
 	}
-	let typ = v[0:slash]
-	let rest = v[slash+1:len(v)]
-	if !isToken(typ) {
+	if rest[0] != '/' {
 		fail say.Fault("mime: expected slash after first token")
 	}
-	if len(rest) == 0 || !isToken(rest) {
+	let (subtype, after) = consumeToken(rest[1:len(rest)])
+	if len(subtype) == 0 {
 		fail say.Fault("mime: expected token after slash")
 	}
-	return lower(v)
-}
-
-// parseParams parses the ";"-separated parameter assignments of a media type.
-fn parseParams(s str) !Params {
-	mut params = make(Params)
-	mut rest = s
-	for {
-		rest = trimSpace(rest)
-		for len(rest) > 0 && rest[0] == ';' {
-			rest = rest[1:len(rest)]
-			rest = trimSpace(rest)
-		}
-		if len(rest) == 0 {
-			return params
-		}
-		mut i = i64(0)
-		for i < len(rest) && rest[i] != '=' && rest[i] != ';' {
-			i += 1
-		}
-		if i >= len(rest) || rest[i] != '=' {
-			fail say.Fault("mime: invalid media parameter")
-		}
-		let name = trimSpace(rest[0:i])
-		if !isToken(name) {
-			fail say.Fault("mime: invalid media parameter")
-		}
-		let (value, used) = try parseParamValue(rest[i+1:len(rest)])
-		let key = lower(name)
-		let (old, found) = params[key]
-		if found && old != value {
-			fail say.Fault("mime: duplicate parameter name")
-		}
-		params[key] = value
-		rest = rest[i+1+used:len(rest)]
+	if len(after) != 0 {
+		fail say.Fault("mime: unexpected content after media subtype")
 	}
 }
 
-// parseParamValue parses a parameter value, a token or a quoted string, and returns it with the
-// bytes it took.
-fn parseParamValue(s str) !(str, i64) {
-	mut i = i64(0)
-	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+// consumeMediaParam reads one "; name=value" from v, as Go's consumeMediaParam does, and returns
+// the lowercased name, the value and the rest; the name is "" and the rest is v when v does not
+// start with a parameter.
+fn consumeMediaParam(v str) (str, str, str) {
+	mut rest = trimLeftSpace(v)
+	if len(rest) == 0 || rest[0] != ';' {
+		return "", "", v
+	}
+	rest = trimLeftSpace(rest[1:len(rest)])
+	let (tok, afterTok) = consumeToken(rest)
+	let param = lower(tok)
+	if len(param) == 0 {
+		return "", "", v
+	}
+	rest = trimLeftSpace(afterTok)
+	if len(rest) == 0 || rest[0] != '=' {
+		return "", "", v
+	}
+	rest = trimLeftSpace(rest[1:len(rest)])
+	let (value, rest2) = consumeValue(rest)
+	if len(value) == 0 && rest2 == rest {
+		return "", "", v
+	}
+	return param, value, rest2
+}
+
+// consumeToken splits v after its leading token characters.
+fn consumeToken(v str) (str, str) {
+	for i in 0..len(v) {
+		if !isTokenChar(v[i]) {
+			return v[0:i], v[i:len(v)]
+		}
+	}
+	return v, ""
+}
+
+// consumeValue reads a token or a quoted string from the start of v, as Go's consumeValue does,
+// and returns it unquoted with the rest; on failure it returns "" and v. A backslash escapes only
+// a tspecial, so an unquoted Windows path keeps its backslashes, and a CR or LF ends the string
+// in failure.
+fn consumeValue(v str) (str, str) {
+	if len(v) == 0 {
+		return "", ""
+	}
+	if v[0] != '"' {
+		return consumeToken(v)
+	}
+	mut out = []u8{}
+	mut i = i64(1)
+	for i < len(v) {
+		let c = v[i]
+		if c == '"' {
+			return str(out), v[i+1:len(v)]
+		}
+		if c == '\\' && i+1 < len(v) && isTSpecial(v[i+1]) {
+			out = append(out, v[i+1])
+			i += 2
+			continue
+		}
+		if c == '\r' || c == '\n' {
+			return "", v
+		}
+		out = append(out, c)
 		i += 1
 	}
-	if i >= len(s) {
-		fail say.Fault("mime: invalid media parameter")
-	}
-	if s[i] == '"' {
-		mut out = ""
-		mut j = i + 1
-		for j < len(s) {
-			if s[j] == '\\' {
-				if j+1 >= len(s) {
-					fail say.Fault("mime: invalid quoted string")
-				}
-				out += s[j+1:j+2]
-				j += 2
-			} else if s[j] == '"' {
-				return out, j + 1
-			} else {
-				out += s[j:j+1]
-				j += 1
-			}
-		}
-		fail say.Fault("mime: invalid quoted string")
-	}
-	mut j = i
-	for j < len(s) && s[j] != ';' {
-		j += 1
-	}
-	let tok = trimSpace(s[i:j])
-	if !isToken(tok) {
-		fail say.Fault("mime: invalid media parameter")
-	}
-	return tok, j
+	return "", v
 }
 
-// FormatMediaType returns the media type with its parameters, like Go's mime.FormatMediaType:
-// parameters are sorted by name and a value that is not a token is quoted.
+// decode2231Enc decodes an RFC 2231 value, charset'language'percent-encoded text; only the
+// us-ascii and utf-8 charsets are decoded, as in Go.
+fn decode2231Enc(v str) (str, bool) {
+	let q1 = twine.IndexByte(v, '\'')
+	if q1 < 0 {
+		return "", false
+	}
+	let charset = twine.ToLower(v[0:q1])
+	let rest = v[q1+1:len(v)]
+	let q2 = twine.IndexByte(rest, '\'')
+	if q2 < 0 {
+		return "", false
+	}
+	if charset != "us-ascii" && charset != "utf-8" {
+		return "", false
+	}
+	return percentHexUnescape(rest[q2+1:len(rest)])
+}
+
+// percentHexUnescape decodes %XX escapes; a malformed escape fails the whole text.
+fn percentHexUnescape(s str) (str, bool) {
+	mut percents = 0
+	mut i = i64(0)
+	for i < len(s) {
+		if s[i] != '%' {
+			i += 1
+			continue
+		}
+		percents += 1
+		if i+2 >= len(s) || hexVal(s[i+1]) < 0 || hexVal(s[i+2]) < 0 {
+			return "", false
+		}
+		i += 3
+	}
+	if percents == 0 {
+		return s, true
+	}
+	mut out = make([]u8, 0, len(s)-2*percents)
+	i = 0
+	for i < len(s) {
+		if s[i] == '%' {
+			out = append(out, u8(hexVal(s[i+1])*16+hexVal(s[i+2])))
+			i += 3
+		} else {
+			out = append(out, s[i])
+			i += 1
+		}
+	}
+	return str(out), true
+}
+
+// trimLeftSpace drops the leading Unicode white space, as strings.TrimLeftFunc(s, unicode.IsSpace).
+fn trimLeftSpace(s str) str {
+	mut i = i64(0)
+	for i < len(s) {
+		let (r, size) = glyph.DecodeRune(s, i)
+		if !glyph.IsSpace(r) {
+			break
+		}
+		i += size
+	}
+	return s[i:len(s)]
+}
+
+// FormatMediaType returns the media type with its parameters, like Go's mime.FormatMediaType: the
+// type and the parameter names are lowercased and the parameters sorted by name. A value that is
+// a token is written as it is, one with only printable ASCII is quoted, and any other is
+// written as RFC 2231 utf-8 with percent escapes (name*=utf-8''caf%C3%A9). A type or a name that
+// is not a token gives "".
 fn FormatMediaType(t str, params Params) str {
-	mut out = t
-	if len(params) == 0 {
-		return out
+	mut out = ""
+	let slash = twine.IndexByte(t, '/')
+	if slash < 0 {
+		if !isToken(t) {
+			return ""
+		}
+		out = lower(t)
+	} else {
+		let major = t[0:slash]
+		let sub = t[slash+1:len(t)]
+		if !isToken(major) || !isToken(sub) {
+			return ""
+		}
+		out = lower(major) + "/" + lower(sub)
 	}
 	// Go sorts the parameters by name; a map of str has no stable order, so sort the keys.
 	mut keys = []str{}
@@ -153,24 +308,54 @@ fn FormatMediaType(t str, params Params) str {
 	}
 	keys = sortStrings(keys)
 	for _, k in keys {
-		out += "; " + k + "=" + quoteParam(params[k])
+		if !isToken(k) {
+			return ""
+		}
+		let value = params[k]
+		out += "; " + lower(k)
+		if needsEncoding(value) {
+			// RFC 2231 section 4: attribute-char is any ASCII CHAR but space, CTLs, "*", "'",
+			// "%" and the tspecials.
+			out += "*=utf-8''"
+			for i in 0..len(value) {
+				let c = value[i]
+				if c <= ' ' || c >= 0x7f || c == '*' || c == '\'' || c == '%' || isTSpecial(c) {
+					out += "%" + upperHex[i64(c>>4):i64(c>>4)+1] + upperHex[i64(c&15):i64(c&15)+1]
+				} else {
+					out += value[i:i+1]
+				}
+			}
+			continue
+		}
+		out += "="
+		if isToken(value) {
+			out += value
+			continue
+		}
+		out += "\""
+		for i in 0..len(value) {
+			if value[i] == '"' || value[i] == '\\' {
+				out += "\\"
+			}
+			out += value[i:i+1]
+		}
+		out += "\""
 	}
 	return out
 }
 
-// quoteParam quotes a parameter value when it is not a token.
-fn quoteParam(v str) str {
-	if len(v) > 0 && isToken(v) {
-		return v
-	}
-	mut out = "\""
-	for i in 0..len(v) {
-		if v[i] == '"' || v[i] == '\\' {
-			out += "\\"
+// upperHex is the digits of the %XX and =XX escapes.
+const upperHex = "0123456789ABCDEF"
+
+// needsEncoding reports whether s has a byte that is not printable ASCII or a tab.
+fn needsEncoding(s str) bool {
+	for i in 0..len(s) {
+		let c = s[i]
+		if (c < ' ' || c > '~') && c != '\t' {
+			return true
 		}
-		out += v[i:i+1]
 	}
-	return out + "\""
+	return false
 }
 
 // sortStrings sorts a copy of the slice bytewise.
@@ -193,30 +378,29 @@ fn sortStrings(xs []str) []str {
 	return a
 }
 
-// isToken reports whether s is an RFC 7230 token (no separators, no whitespace, no controls).
+// isToken reports whether s is a token as RFC 1521 and RFC 2045 define it.
 fn isToken(s str) bool {
 	if len(s) == 0 {
 		return false
 	}
 	for i in 0..len(s) {
-		if !isTokenByte(s[i]) {
+		if !isTokenChar(s[i]) {
 			return false
 		}
 	}
 	return true
 }
 
-// isTokenByte reports whether c may appear in a token.
-fn isTokenByte(c u8) bool {
-	if c <= ' ' || c >= 0x7f {
-		return false
-	}
-	if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
-		return true
-	}
-	return c == '!' || c == '#' || c == '$' || c == '%' || c == '&' || c == '\'' || c == '*' ||
-		c == '+' || c == '-' || c == '.' || c == '^' || c == '_' || c == '`' || c == '|' ||
-		c == '~'
+// isTokenChar reports whether c may appear in a token: an ASCII character other than space,
+// the controls and the tspecials.
+fn isTokenChar(c u8) bool {
+	return c > ' ' && c < 0x7f && !isTSpecial(c)
+}
+
+// isTSpecial reports whether c is one of RFC 2045's tspecials: ()<>@,;:\"/[]?=
+fn isTSpecial(c u8) bool {
+	return c == '(' || c == ')' || c == '<' || c == '>' || c == '@' || c == ',' || c == ';' ||
+		c == ':' || c == '\\' || c == '"' || c == '/' || c == '[' || c == ']' || c == '?' || c == '='
 }
 
 // ---- extensions ----
@@ -291,139 +475,113 @@ fn ExtensionsByType(mediatype str) []str {
 // type must be valid and the extension must begin with a dot.
 fn AddExtensionType(ext str, mediatype str) ! {
 	if len(ext) == 0 || ext[0] != '.' {
-		fail say.Fault("mime: extension %q is missing a leading dot", ext)
+		fail say.Fault("mime: extension %q missing leading dot", ext)
 	}
-	try checkMediaType(mediatype)
+	try ParseMediaType(mediatype)
 	extraTypes[lower(ext)] = mediatype
 }
 
 // ---- RFC 2047 encoded words ----
 
-// WordDecoder decodes RFC 2047 encoded words in header text (the =?utf-8?q?...?= form).
+// WordDecoder decodes RFC 2047 encoded words in header text (the =?utf-8?q?...?= form). The
+// charsets utf-8, iso-8859-1 and us-ascii are decoded, as Go's are without a CharsetReader.
 type WordDecoder struct{}
 
 // Decode decodes one RFC 2047 encoded word, like Go's WordDecoder.Decode: it must be exactly
-// "=?charset?encoding?text?=" with one letter of encoding, and the charset must be one Tin can
-// convert (utf-8, us-ascii or iso-8859-1); anything else is a fault.
+// "=?charset?encoding?text?=", with an empty text allowed, and the encoding one of B, b, Q and q.
 fn (d WordDecoder) Decode(word str) !str {
-	if len(word) < 8 || !twine.HasPrefix(word, "=?") || !twine.HasSuffix(word, "?=") {
-		fail say.Fault("mime: invalid RFC 2047 word")
+	if len(word) < 8 || !twine.HasPrefix(word, "=?") || !twine.HasSuffix(word, "?=") || twine.Count(word, "?") != 4 {
+		fail say.Fault("mime: invalid RFC 2047 encoded-word")
 	}
-	mut qs = i64(0)
-	for i in 0..len(word) {
-		if word[i] == '?' {
-			qs += 1
-		}
-	}
-	if qs != 4 {
-		fail say.Fault("mime: invalid RFC 2047 word")
-	}
-	let body = word[2:len(word)-2]
-	mut parts = twine.SplitN(body, "?", 3)
-	if len(parts) != 3 {
-		fail say.Fault("mime: invalid RFC 2047 word")
-	}
-	let charset = lower(parts[0])
+	let body = word[2 : len(word)-2]
+	let q1 = twine.IndexByte(body, '?')
+	let charset = body[0:q1]
 	if len(charset) == 0 {
-		fail say.Fault("mime: invalid RFC 2047 word")
+		fail say.Fault("mime: invalid RFC 2047 encoded-word")
 	}
-	let enc = parts[1]
-	if len(enc) != 1 {
-		fail say.Fault("mime: invalid RFC 2047 word")
+	let rest = body[q1+1:len(body)]
+	let q2 = twine.IndexByte(rest, '?')
+	if q2 != 1 {
+		fail say.Fault("mime: invalid RFC 2047 encoded-word")
 	}
-	let text = parts[2]
-	mut raw = ""
-	if enc == "B" || enc == "b" {
-		raw = try decodeB(text)
-	} else if enc == "Q" || enc == "q" {
-		raw = try decodeQ(text)
-	} else {
-		fail say.Fault("mime: invalid RFC 2047 encoding %q", enc)
-	}
-	return try convertCharset(charset, raw)
+	let content = try decodeWord(rest[0], rest[2:len(rest)])
+	return try convertCharset(charset, content)
 }
 
-// DecodeHeader decodes every encoded word in a header value, like Go's DecodeHeader: the plain
-// text around the words is kept, the whitespace between two encoded words is dropped, and a word
-// that cannot be decoded is kept as it was.
-fn (d WordDecoder) DecodeHeader(v str) !str {
-	let first = twine.Index(v, "=?")
+// DecodeHeader decodes every encoded word in a header value, like Go's DecodeHeader: the text
+// around the words is kept, the white space between two encoded words is dropped, a word whose
+// text cannot be decoded is kept as it was, and a charset it cannot convert is a fault.
+fn (d WordDecoder) DecodeHeader(header str) !str {
+	let first = twine.Index(header, "=?")
 	if first < 0 {
-		return v
+		return header
 	}
-	mut out = v[0:first]
-	mut rest = v[first:len(v)]
+	mut out = header[0:first]
+	mut rest = header[first:len(header)]
 	mut between = false
 	for {
 		let start = twine.Index(rest, "=?")
 		if start < 0 {
 			break
 		}
-		let (text, end, ok) = try tryDecodeAt(rest, start)
-		if !ok {
-			// Not a word: keep it and go on after the "=?".
-			let head = rest[0:start+2]
-			out += head
-			rest = rest[start+2:len(rest)]
+		mut cur = start + 2
+		let q = twine.IndexByte(rest[cur:len(rest)], '?')
+		if q < 0 {
+			break
+		}
+		let charset = rest[cur : cur+q]
+		cur += q + 1
+		if len(rest) < cur+4 {
+			break
+		}
+		let enc = rest[cur]
+		cur += 1
+		if rest[cur] != '?' {
+			break
+		}
+		cur += 1
+		let j = twine.Index(rest[cur:len(rest)], "?=")
+		if j < 0 {
+			break
+		}
+		let text = rest[cur : cur+j]
+		let end = cur + j + 2
+		mut bad = false
+		let content = decodeWord(enc, text) catch _ {
+			bad = true
+			""
+		}
+		if bad {
 			between = false
+			out += rest[0:end]
+			rest = rest[end:len(rest)]
 			continue
 		}
-		if start > 0 && (!between || hasNonSpace(rest[0:start])) {
+		// The text before the word is kept, unless it is only the white space between two words.
+		if start > 0 && (!between || hasNonWhitespace(rest[0:start])) {
 			out += rest[0:start]
 		}
-		out += text
+		out += try convertCharset(charset, content)
 		rest = rest[end:len(rest)]
 		between = true
 	}
-	out += rest
-	return out
+	return out + rest
 }
 
-// tryDecodeAt decodes the encoded word at rest[at] and reports where it ended; ok is false when
-// the text is not a decodable word (then the caller keeps it as it was).
-fn tryDecodeAt(rest str, at i64) !(str, i64, bool) {
-	mut cur = at + 2
-	let q = twine.Index(rest[cur:len(rest)], "?")
-	if q < 0 {
-		return "", 0, false
-	}
-	let charset = lower(rest[cur:cur+q])
-	cur += q + 1
-	if len(rest) < cur+4 {
-		return "", 0, false
-	}
-	let enc = rest[cur]
-	cur += 1
-	if rest[cur] != '?' {
-		return "", 0, false
-	}
-	cur += 1
-	let j = twine.Index(rest[cur:len(rest)], "?=")
-	if j < 0 {
-		return "", 0, false
-	}
-	let body = rest[cur:cur+j]
-	let end = cur + j + 2
-	mut raw = ""
+// decodeWord decodes the text of an encoded word in its encoding, B (base64) or Q.
+fn decodeWord(enc u8, text str) !str {
 	if enc == 'B' || enc == 'b' {
-		raw = decodeB(body) catch _ {
-			return "", 0, false
-		}
-	} else if enc == 'Q' || enc == 'q' {
-		raw = decodeQ(body) catch _ {
-			return "", 0, false
-		}
-	} else {
-		return "", 0, false
+		return try decodeBase64(text)
 	}
-	let text = convertCharset(charset, raw) catch _ {
-		return "", 0, false
+	if enc == 'Q' || enc == 'q' {
+		return try decodeQ(text)
 	}
-	return text, end, true
+	fail say.Fault("mime: invalid RFC 2047 encoded-word")
 }
 
-// hasNonSpace reports whether s has a byte that is not whitespace.
-fn hasNonSpace(s str) bool {
+// hasNonWhitespace reports whether s has a byte other than space, tab, CR and LF, the linear white
+// space that may separate two encoded words.
+fn hasNonWhitespace(s str) bool {
 	for i in 0..len(s) {
 		if s[i] != ' ' && s[i] != '\t' && s[i] != '\r' && s[i] != '\n' {
 			return true
@@ -432,23 +590,8 @@ fn hasNonSpace(s str) bool {
 	return false
 }
 
-// decodeB decodes the base64 body of a B word (base64 with a possibly missing padding).
-fn decodeB(s str) !str {
-	// The body has whitespace removed already in practice; the base64 decoder wants it clean.
-	mut clean = ""
-	for i in 0..len(s) {
-		if s[i] != ' ' && s[i] != '\t' && s[i] != '\n' && s[i] != '\r' {
-			clean += s[i:i+1]
-		}
-	}
-	mut padded = clean
-	for len(padded)%4 != 0 {
-		padded += "="
-	}
-	return try decodeBase64(padded)
-}
-
-// decodeQ decodes the Q body: "_" is a space and =XX is a byte escape.
+// decodeQ decodes the Q text, as Go's qDecode does: "_" is a space, =XX a byte, and printable
+// ASCII, tab, CR and LF stand for themselves.
 fn decodeQ(s str) !str {
 	mut out = []u8{}
 	mut i = i64(0)
@@ -456,53 +599,121 @@ fn decodeQ(s str) !str {
 		let c = s[i]
 		if c == '_' {
 			out = append(out, ' ')
-			i += 1
 		} else if c == '=' {
 			if i+2 >= len(s) {
-				fail say.Fault("mime: invalid RFC 2047 escape")
+				fail say.Fault("mime: invalid RFC 2047 encoded-word")
 			}
 			let hi = hexVal(s[i+1])
+			if hi < 0 {
+				fail say.Fault("mime: invalid hex byte %#02x", i64(s[i+1]))
+			}
 			let lo = hexVal(s[i+2])
-			if hi < 0 || lo < 0 {
-				fail say.Fault("mime: invalid RFC 2047 escape")
+			if lo < 0 {
+				fail say.Fault("mime: invalid hex byte %#02x", i64(s[i+2]))
 			}
 			out = append(out, u8(hi*16+lo))
-			i += 3
-		} else {
+			i += 2
+		} else if c >= ' ' && c <= '~' || c == '\n' || c == '\r' || c == '\t' {
 			out = append(out, c)
-			i += 1
+		} else {
+			fail say.Fault("mime: invalid RFC 2047 encoded-word")
 		}
+		i += 1
 	}
 	return str(out)
 }
 
-// WordEncoder encodes header text as encoded words when it needs to be, like Go's WordEncoder.
-type WordEncoder struct{}
+// WordEncoder encodes header text as RFC 2047 encoded words, in the Q encoding or, for
+// BEncoding, base64. The zero value is the Q encoding.
+type WordEncoder struct {
+	b bool
+}
 
-// EncodeWord returns the text as an RFC 2047 encoded word when it has bytes that are not
-// printable ASCII, and the text itself when it does not.
+// QEncoding is the Q encoding of RFC 2047, as Go's QEncoding.
+let QEncoding = WordEncoder{b: false}
+
+// BEncoding is the base64 encoding of RFC 2045, as Go's BEncoding.
+let BEncoding = WordEncoder{b: true}
+
+// EncodeWord returns s as encoded words in the charset, like Go's WordEncoder.Encode, or s itself
+// when it is ASCII with no control but tab. For utf-8, the text is split into words of at most
+// 75 bytes, separated by a space, without splitting a character.
 fn (e WordEncoder) EncodeWord(charset str, s str) str {
-	mut needs = false
-	for i in 0..len(s) {
-		if s[i] < 0x20 || s[i] >= 0x7f {
-			needs = true
-		}
-	}
-	if !needs && len(s) > 0 {
+	if !needsEncoding(s) {
 		return s
 	}
-	mut body = ""
+	mut kind = "q"
+	if e.b {
+		kind = "b"
+	}
+	let open = "=?" + charset + "?" + kind + "?"
+	let utf8 = twine.EqualFold(charset, "UTF-8")
+	if e.b {
+		// 63 bytes of base64 hold 45 bytes of text.
+		if !utf8 || (len(s)+2)/3*4 <= maxContentLen {
+			return open + encodeBase64(s) + "?="
+		}
+		mut out = open
+		mut current = i64(0)
+		mut last = i64(0)
+		mut i = i64(0)
+		for i < len(s) {
+			let (_, size) = glyph.DecodeRune(s, i)
+			if current+size <= maxContentLen/4*3 {
+				current += size
+			} else {
+				out += encodeBase64(s[last:i]) + "?= " + open
+				last = i
+				current = size
+			}
+			i += size
+		}
+		return out + encodeBase64(s[last:len(s)]) + "?="
+	}
+	if !utf8 {
+		return open + qString(s) + "?="
+	}
+	mut out = open
+	mut current = i64(0)
+	mut i = i64(0)
+	for i < len(s) {
+		let c = s[i]
+		mut size = i64(1)
+		mut encLen = i64(1)
+		if !(c >= ' ' && c <= '~' && c != '=' && c != '?' && c != '_') {
+			let (_, n) = glyph.DecodeRune(s, i)
+			size = n
+			encLen = 3 * n
+		}
+		if current+encLen > maxContentLen {
+			out += "?= " + open
+			current = 0
+		}
+		out += qString(s[i:i+size])
+		current += encLen
+		i += size
+	}
+	return out + "?="
+}
+
+// maxContentLen is how much encoded text fits in a 75-byte word after "=?UTF-8?q?" and "?=".
+const maxContentLen = 63
+
+// qString is s in the Q encoding: a space is "_", printable ASCII but "=", "?" and "_" is itself,
+// and any other byte is =XX.
+fn qString(s str) str {
+	mut out = []u8{}
 	for i in 0..len(s) {
 		let c = s[i]
 		if c == ' ' {
-			body += "_"
-		} else if c == '_' || c == '?' || c == '=' || c < 0x20 || c >= 0x7f {
-			body += say.Fmt("=%02X", i64(c))
+			out = append(out, '_')
+		} else if c >= '!' && c <= '~' && c != '=' && c != '?' && c != '_' {
+			out = append(out, c)
 		} else {
-			body += s[i:i+1]
+			out = append(out, '=', upperHex[i64(c>>4)], upperHex[i64(c&15)])
 		}
 	}
-	return "=?" + charset + "?Q?" + body + "?="
+	return str(out)
 }
 
 // ---- small helpers shared with the other mime files ----
@@ -527,19 +738,6 @@ fn lower(s str) str {
 	return out
 }
 
-// trimSpace trims ASCII whitespace.
-fn trimSpace(s str) str {
-	mut a = i64(0)
-	mut b = i64(len(s))
-	for a < b && (s[a] == ' ' || s[a] == '\t') {
-		a += 1
-	}
-	for b > a && (s[b-1] == ' ' || s[b-1] == '\t') {
-		b -= 1
-	}
-	return s[a:b]
-}
-
 // hexVal is a hex digit's value, or -1.
 fn hexVal(c u8) i64 {
 	if c >= '0' && c <= '9' {
@@ -554,26 +752,15 @@ fn hexVal(c u8) i64 {
 	return -1
 }
 
-// convertCharset turns raw bytes in a charset into UTF-8, as Go's WordDecoder does: utf-8 passes
-// through, us-ascii turns each byte above 0x7F into U+FFFD, and iso-8859-1 (latin-1) is widened;
-// another charset is refused, as Go refuses one it has no reader for.
+// convertCharset turns the decoded bytes of a word into UTF-8, as Go's WordDecoder does: utf-8
+// passes through, us-ascii turns each byte above 0x7F into U+FFFD, and iso-8859-1 (latin-1) is
+// widened; the names are matched ignoring case, and another charset is refused, as Go refuses one
+// it has no reader for.
 fn convertCharset(charset str, raw str) !str {
-	if charset == "utf-8" || len(charset) == 0 {
+	if twine.EqualFold(charset, "utf-8") {
 		return raw
 	}
-	if charset == "us-ascii" || charset == "ascii" {
-		mut out = []u8{}
-		for i in 0..len(raw) {
-			let c = raw[i]
-			if c < 0x80 {
-				out = append(out, c)
-			} else {
-				out = append(out, u8(0xEF), u8(0xBF), u8(0xBD))
-			}
-		}
-		return str(out)
-	}
-	if charset == "iso-8859-1" || charset == "latin1" || charset == "latin-1" {
+	if twine.EqualFold(charset, "iso-8859-1") {
 		mut out = []u8{}
 		for i in 0..len(raw) {
 			let c = raw[i]
@@ -586,29 +773,118 @@ fn convertCharset(charset str, raw str) !str {
 		}
 		return str(out)
 	}
+	if twine.EqualFold(charset, "us-ascii") {
+		mut out = []u8{}
+		for i in 0..len(raw) {
+			let c = raw[i]
+			if c < 0x80 {
+				out = append(out, c)
+			} else {
+				out = append(out, u8(0xEF), u8(0xBF), u8(0xBD))
+			}
+		}
+		return str(out)
+	}
 	fail say.Fault("mime: unhandled charset %q", charset)
 }
 
-// decodeBase64 decodes standard base64 with padding.
+// decodeBase64 decodes standard padded base64 as Go's StdEncoding.DecodeString does, CR and LF
+// skipped, with its "illegal base64 data at input byte N" faults.
 fn decodeBase64(s str) !str {
 	mut out = []u8{}
-	mut acc = i64(0)
-	mut bits = i64(0)
-	for i in 0..len(s) {
-		let c = s[i]
-		if c == '=' {
+	mut si = i64(0)
+	let n = len(s)
+	for si < n {
+		// One quantum: up to four characters, as Go's decodeQuantum reads them.
+		mut buf = [4]i64{0, 0, 0, 0}
+		mut dlen = 4
+		mut j = 0
+		mut trailing = -1
+		for j < 4 {
+			if si == n {
+				if j == 0 {
+					return str(out)
+				}
+				fail say.Fault("illegal base64 data at input byte %d", si-j)
+			}
+			let c = s[si]
+			si += 1
+			let v = b64Val(c)
+			if v >= 0 {
+				buf[j] = v
+				j += 1
+				continue
+			}
+			if c == '\n' || c == '\r' {
+				continue
+			}
+			if c != '=' || j < 2 {
+				fail say.Fault("illegal base64 data at input byte %d", si-1)
+			}
+			if j == 2 {
+				// "==" is expected; the first "=" is read.
+				for si < n && (s[si] == '\n' || s[si] == '\r') {
+					si += 1
+				}
+				if si == n {
+					fail say.Fault("illegal base64 data at input byte %d", n)
+				}
+				if s[si] != '=' {
+					fail say.Fault("illegal base64 data at input byte %d", si-1)
+				}
+				si += 1
+			}
+			for si < n && (s[si] == '\n' || s[si] == '\r') {
+				si += 1
+			}
+			if si < n {
+				trailing = si
+			}
+			dlen = j
 			break
 		}
-		let v = b64Val(c)
-		if v < 0 {
-			fail say.Fault("mime: invalid base64 in an encoded word")
+		let val = buf[0]<<18 | buf[1]<<12 | buf[2]<<6 | buf[3]
+		out = append(out, u8((val>>16)&0xff))
+		if dlen >= 3 {
+			out = append(out, u8((val>>8)&0xff))
 		}
-		acc = acc<<6 | v
-		bits += 6
-		if bits >= 8 {
-			bits -= 8
-			out = append(out, u8((acc>>bits)&0xff))
+		if dlen == 4 {
+			out = append(out, u8(val&0xff))
 		}
+		if trailing >= 0 {
+			fail say.Fault("illegal base64 data at input byte %d", trailing)
+		}
+	}
+	return str(out)
+}
+
+// b64Chars is the standard base64 alphabet.
+const b64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+// encodeBase64 is s in standard padded base64.
+fn encodeBase64(s str) str {
+	mut out = make([]u8, 0, (len(s)+2)/3*4)
+	mut i = i64(0)
+	for i < len(s) {
+		mut v = i64(s[i]) << 16
+		if i+1 < len(s) {
+			v |= i64(s[i+1]) << 8
+		}
+		if i+2 < len(s) {
+			v |= i64(s[i+2])
+		}
+		out = append(out, b64Chars[(v>>18)&63], b64Chars[(v>>12)&63])
+		if i+1 < len(s) {
+			out = append(out, b64Chars[(v>>6)&63])
+		} else {
+			out = append(out, '=')
+		}
+		if i+2 < len(s) {
+			out = append(out, b64Chars[v&63])
+		} else {
+			out = append(out, '=')
+		}
+		i += 3
 	}
 	return str(out)
 }

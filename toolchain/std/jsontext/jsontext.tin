@@ -373,12 +373,59 @@ fn (d Decoder) syntaxError(what str, at i64, eof bool) str {
 	mut msg = "jsontext: " + what
 	let p = d.pointer(eof, true)
 	if p != "" {
-		msg += " within " + mint.Quote(p)
+		msg += " within " + mint.Quote(truncatePointer(p, 100))
 	}
 	if at > 0 {
 		msg += " after offset " + mint.Itoa(at)
 	}
 	return msg
+}
+
+// truncatePointer shortens a pointer longer than n bytes to its two ends around "…", as Go's jsonwire.TruncatePointer does:
+// it cuts at a slash when it can and never inside a character.
+fn truncatePointer(s str, n i64) str {
+	if len(s) <= n {
+		return s
+	}
+	mut i = n / 2
+	mut j = len(s) - n/2
+	let k = twine.LastIndexByte(s[:i], '/')
+	if k > 0 {
+		i = k
+	}
+	let m = twine.IndexByte(s[j:], '/')
+	if m >= 0 {
+		j += m + 1
+	}
+	for i > 0 {
+		let (r, size) = glyph.DecodeLastRune(s, i)
+		if r != 0xfffd || size != 1 {
+			break
+		}
+		i -= 1
+	}
+	for j < len(s) {
+		let (r, size) = glyph.DecodeRune(s, j)
+		if r != 0xfffd || size != 1 {
+			break
+		}
+		j += 1
+	}
+	let mid = s[i:j]
+	let slashes = twine.Count(mid, "/")
+	mut middle = "…/…/…"
+	if slashes == 0 {
+		middle = "…"
+	} else if slashes == 1 {
+		middle = "…/…"
+	}
+	if middle != "…" && twine.HasPrefix(mid, "/") {
+		middle = middle[len("…"):]
+	}
+	if middle != "…" && twine.HasSuffix(mid, "/") {
+		middle = middle[:len(middle)-len("…")]
+	}
+	return s[:i] + middle + s[j:]
 }
 
 // closeFollows reports whether the first byte from at that is not white space closes an object or array.
@@ -399,7 +446,7 @@ fn (d Decoder) closeError(what str, at i64) str {
 		p = p[:cut]
 	}
 	if p != "" {
-		msg += " within " + mint.Quote(p)
+		msg += " within " + mint.Quote(truncatePointer(p, 100))
 	}
 	if at > 0 {
 		msg += " after offset " + mint.Itoa(at)
@@ -417,7 +464,7 @@ fn (d Decoder) parentError(what str, at i64) str {
 	mut msg = "jsontext: " + what
 	let p = d.pointer(false, false)
 	if p != "" {
-		msg += " within " + mint.Quote(p)
+		msg += " within " + mint.Quote(truncatePointer(p, 100))
 	}
 	if at > 0 {
 		msg += " after offset " + mint.Itoa(at)
@@ -546,6 +593,10 @@ fn (d mut Decoder) readString() !str {
 		}
 		let (r, size) = glyph.DecodeRune(d.src, d.pos)
 		if r == 0xfffd && size == 1 {
+			if !glyph.FullRune(d.src, d.pos) {
+				// A character cut by the end of the input is an unexpected EOF, as in Go's jsonwire.
+				fail d.syntaxError("unexpected EOF", d.pos, false)
+			}
 			fail d.syntaxError("invalid UTF-8", d.pos, false)
 		}
 		for k in 0..size {

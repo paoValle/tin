@@ -35,6 +35,20 @@ fn media() []str {
 		"text/plain; a=b; c=d; e=f",
 		"TEXT/HTML; CHARSET=UTF-8",
 		"application/octet-stream",
+		"attachment; filename*=utf-8''%e2%82%ac%20rates",
+		"attachment; filename*0=\"a b\"; filename*1*=%41%42; filename*2=c",
+		"attachment; filename*0*=UTF-8'en'%e2%82%ac; filename*1*=%zz",
+		"attachment; title*=iso-8859-1''x; title=plain",
+		"attachment; filename=plain; filename*=us-ascii''%41",
+		"form-data; name=\"C:\\dev\\go\\x.txt\"",
+		"form-data; name=\"a\\\"b\"",
+		"text/plain;;",
+		"text/plain; ;",
+		"text/plain extra",
+		"text/plain; a=\"line\r\nbreak\"",
+		"text/plain; a=",
+		"text/plain; a={{x}}",
+		"Text/HTML\u00a0; a=b",
 	}
 }
 

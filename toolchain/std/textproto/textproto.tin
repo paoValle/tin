@@ -283,8 +283,9 @@ fn CanonicalMIMEHeaderKey(key str) str {
 	}
 	mut out = []u8{}
 	mut upper = true
-	for _, rune in key {
-		let c = u8(rune)
+	for i in 0..len(key) {
+		// Bytes, not runes: a non-ASCII character is not a token byte, so the key is returned as it is.
+		let c = key[i]
 		if !isTokenByte(c) {
 			return key
 		}

@@ -1,0 +1,90 @@
+package main
+
+// mime against Go 1.27's mime: RFC 2231 parameters and continuations, quoted strings with
+// backslashes, the media type faults, FormatMediaType's RFC 2231 and refusals, encoded words in
+// both encodings with Go's faults, DecodeHeader's kept words, EncodeWord's splitting, and quoted-printable's
+// faults and the soft breaks of its escapes at the end of a full line.
+// Every line of mime_go.out is what the same calls print in Go.
+
+import "mime"
+import "mime/quotedprintable"
+import "say"
+import "sift"
+import "twine"
+
+fn media(v str) str {
+	let (t, p) = mime.ParseMediaType(v) catch e {
+		return say.Fmt("%v", e)
+	}
+	mut ks = []str{}
+	for k, _ in p {
+		ks = append(ks, k)
+	}
+	sift.Strs(mut ks)
+	mut kv = []str{}
+	for k in ks {
+		kv = append(kv, say.Fmt("%s=%q", k, p[k]))
+	}
+	return t + " " + twine.Join(kv, " ")
+}
+
+fn word(v str) str {
+	let s = mime.WordDecoder{}.Decode(v) catch e {
+		return say.Fmt("%v", e)
+	}
+	return say.Fmt("%q", s)
+}
+
+fn header(v str) str {
+	let s = mime.WordDecoder{}.DecodeHeader(v) catch e {
+		return say.Fmt("%v", e)
+	}
+	return say.Fmt("%q", s)
+}
+
+fn qp(v str) str {
+	let s = quotedprintable.Decode(v) catch e {
+		return say.Fmt("%v", e)
+	}
+	return say.Fmt("%q", s)
+}
+
+fn main() {
+	for v in []str{
+		"attachment; filename*=utf-8''%e2%82%ac%20rates",
+		"attachment; filename*0=\"a b\"; filename*1*=%41%42; filename*2=c",
+		"attachment; filename*0*=UTF-8'en'%e2%82%ac; filename*1*=%zz",
+		"attachment; title*=iso-8859-1''x; title=plain",
+		"attachment; filename=plain; filename*=us-ascii''%41",
+		"form-data; name=\"C:\\dev\\go\\x.txt\"",
+		"form-data; name=\"a\\\"b\"",
+		"text/plain;",
+		"text/plain;;",
+		"text/plain extra",
+		"/plain",
+		"text/plain; a=\"line\r\nbreak\"",
+		"text/plain; a={{x}}",
+		"Text/HTML\u00a0; a=b",
+	} {
+		say.Line("media", media(v))
+	}
+	say.Line("format", mime.FormatMediaType("Text/Plain", mime.Params{"Charset": "utf-8", "title": "café", "q": "a \"b\"", "t": "a\tb"}))
+	say.Line(say.Fmt("format bad %q %q %q", mime.FormatMediaType("text/plain", mime.Params{"a b": "c"}), mime.FormatMediaType("text/", mime.Params{}), mime.FormatMediaType("text", mime.Params{})))
+	for v in []str{"=?UTF-8?Q?caf=C3=A9_au_lait?=", "=?utf-8?b?w6k=?=", "=?us-ascii?q?a=E9?=", "=?utf-8?q?=G1?=", "=?utf-8?q?a=4?=", "=?utf-8?b?w6k?=", "=?utf-8?b?YQ==YQ==?=", "=?utf-8?q?a\x01?=", "=?KOI8-R?q?a?=", "=?utf-8?q??="} {
+		say.Line("word", word(v))
+	}
+	for v in []str{"=?utf-8?q?a?= \r\n =?utf-8?q?b?= c", "x =?utf-8?q?=G1?= =?utf-8?q?b?=", "=?koi8-r?q?a?= rest", "=?utf-8?q?a?"} {
+		say.Line("header", header(v))
+	}
+	let long = twine.Repeat("café ", 16)
+	say.Line("encode", mime.QEncoding.EncodeWord("utf-8", long))
+	say.Line("encode", mime.BEncoding.EncodeWord("UTF-8", long))
+	say.Line(say.Fmt("encode %q %q %q", mime.QEncoding.EncodeWord("utf-8", ""), mime.QEncoding.EncodeWord("utf-8", "a\tb"), mime.BEncoding.EncodeWord("iso-8859-1", "\xe9t\xe9")))
+	for v in []str{"=", "a=\rb\n", "x= y\nz", "\x01=  z", "ok=\n", "ab=4", "=4\n", "caf=C3=A9=\r\nx"} {
+		say.Line("qp", qp(v))
+	}
+	let y = twine.Repeat("y", 74)
+	for v in []str{y + " \n", y + "\t", y + "=", "a\r\x01\nb", "x \r\ny\t"} {
+		say.Line("qp enc", say.Fmt("%q", quotedprintable.Encode(v)))
+	}
+}

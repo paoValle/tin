@@ -22,7 +22,9 @@ import "twine"
 // lineMax is the longest line the encoder makes, Go's 76.
 const lineMax = 76
 
-// Decode returns the decoded bytes of a quoted-printable text.
+// Decode returns the decoded bytes of a quoted-printable text, as Go's Reader reads them, with its
+// faults: a bad byte in a line is reported where it is, and a bad soft break after the rest of its
+// line is decoded.
 fn Decode(s str) !str {
 	mut out = []u8{}
 	mut pos = i64(0)
@@ -45,16 +47,18 @@ fn Decode(s str) !str {
 			e -= 1
 		}
 		mut line = whole[0:e]
+		// A bad soft break is reported once the line before it is decoded, as Go's reader does.
+		mut softErr = ""
 		if len(line) > 0 && line[len(line)-1] == '=' {
 			// A soft break: only whitespace and the line ending may follow the "=".
 			let rest = trimLeftWs(whole[len(line):len(whole)])
+			line = line[0:len(line)-1]
 			// A soft break may be followed by the line ending, or be the last line of the input
 			// when something precedes the "=" (Go's rule exactly).
 			if !(twine.HasPrefix(rest, "\n") || twine.HasPrefix(rest, "\r\n") ||
-					(len(rest) == 0 && len(line) > 1 && done)) {
-				fail say.Fault("quotedprintable: invalid bytes after the soft break")
+					(len(rest) == 0 && len(line) > 0 && done)) {
+				softErr = say.Fmt("quotedprintable: invalid bytes after =: %q", rest)
 			}
-			line = line[0:len(line)-1]
 		} else if twine.HasSuffix(whole, "\r\n") {
 			line += "\r\n"
 		} else if twine.HasSuffix(whole, "\n") {
@@ -65,25 +69,27 @@ fn Decode(s str) !str {
 		for i < len(line) {
 			let b = line[i]
 			if b == '=' {
-				if i+1 >= len(line) || line[i+1] == '\r' || line[i+1] == '\n' {
-					fail say.Fault("quotedprintable: unexpected end of stream")
-				}
-				mut decoded = false
+				mut hi = i64(-1)
+				mut lo = i64(-1)
 				if i+2 < len(line) {
-					let hi = hexVal(line[i+1])
-					let lo = hexVal(line[i+2])
-					if hi >= 0 && lo >= 0 {
-						out = append(out, u8(hi*16+lo))
-						i += 3
-						decoded = true
-					}
+					hi = hexVal(line[i+1])
+					lo = hexVal(line[i+2])
 				}
-				if !decoded {
+				if hi >= 0 && lo >= 0 {
+					out = append(out, u8(hi*16+lo))
+					i += 3
+					continue
+				}
+				if i+1 < len(line) && line[i+1] != '\r' && line[i+1] != '\n' {
 					// A "=" not followed by two hex digits is a literal "=".
 					out = append(out, '=')
 					i += 1
+					continue
 				}
-				continue
+				if i+2 >= len(line) {
+					fail say.Fault("unexpected EOF")
+				}
+				fail say.Fault("quotedprintable: invalid hex byte 0x%02x", i64(line[i+1]))
 			}
 			if b == '\t' || b == '\r' || b == '\n' || b >= 0x80 {
 				out = append(out, b)
@@ -96,83 +102,83 @@ fn Decode(s str) !str {
 			out = append(out, b)
 			i += 1
 		}
+		if softErr != "" {
+			fail say.Fault("%s", softErr)
+		}
 	}
 	return str(out)
 }
 
-// Encode returns data as a quoted-printable text, with Go's writer's line breaking and escaping.
+// Encode returns data as a quoted-printable text, as Go's Writer writes it: lines of at most 76
+// bytes with soft breaks, "=" and the bytes outside printable ASCII escaped, line ends written as
+// CRLF, and a space or tab at the end of a line escaped (with a soft break first when the escape
+// does not fit).
 fn Encode(data str) str {
-	mut line = []u8{}
-	mut col = i64(0)
+	mut e = encoder{out: []u8{}, col: 0}
 	mut cr = false
-	mut i = i64(0)
-	for i < len(data) {
+	for i in 0..len(data) {
 		let b = data[i]
 		if b == '\n' || b == '\r' {
+			// The LF of a CRLF pair is already written.
 			if cr && b == '\n' {
-				// The CRLF of a CRLF pair is already written.
 				cr = false
-				i += 1
 				continue
 			}
 			if b == '\r' {
 				cr = true
 			}
-			// A trailing space or tab is escaped before the line ends.
-			if col > 0 && (line[len(line)-1] == ' ' || line[len(line)-1] == '\t') {
-				let last = line[len(line)-1]
-				line = line[0:len(line)-1]
-				col -= 1
-				let enc = say.Fmt("=%02X", i64(last))
-				line = append(line, []u8(enc)...)
-				col += 3
+			e.escapeLastSpace()
+			e.out = append(e.out, '\r', '\n')
+			e.col = 0
+		} else if b == '=' || (b < '!' || b > '~') && b != ' ' && b != '\t' {
+			// Go's escape does not touch the pending CR.
+			e.escape(b)
+		} else {
+			if e.col == lineMax-1 {
+				e.softBreak()
 			}
-			line = append(line, '\r', '\n')
-			col = 0
-			i += 1
-			continue
-		}
-		// "=" and the bytes outside the printable range are escaped; a space or tab is written
-		// as it is (and escaped above if the line ends after it), as Go's writer batches them.
-		if b == ' ' || b == '\t' {
-			if col == lineMax-1 {
-				line = append(line, '=', '\r', '\n')
-				col = 0
-			}
-			line = append(line, b)
-			col += 1
+			e.out = append(e.out, b)
+			e.col += 1
 			cr = false
-			i += 1
-			continue
 		}
-		if b == '=' || b < '!' || b > '~' {
-			if lineMax-1-col < 3 {
-				line = append(line, '=', '\r', '\n')
-				col = 0
-			}
-			let enc = say.Fmt("=%02X", i64(b))
-			line = append(line, []u8(enc)...)
-			col += 3
-			i += 1
-			continue
-		}
-		if col == lineMax-1 {
-			line = append(line, '=', '\r', '\n')
-			col = 0
-		}
-		line = append(line, b)
-		col += 1
-		cr = false
-		i += 1
 	}
-	// A trailing space or tab is escaped, so it survives the trip, as Go's Close does.
-	if col > 0 && (line[len(line)-1] == ' ' || line[len(line)-1] == '\t') {
-		let last = line[len(line)-1]
-		line = line[0:len(line)-1]
-		let enc = say.Fmt("=%02X", i64(last))
-		line = append(line, []u8(enc)...)
+	e.escapeLastSpace()
+	return str(e.out)
+}
+
+// encoder is Encode's output and the length of its current line.
+type encoder struct {
+	out []u8
+	col i64
+}
+
+// softBreak ends the line with "=" and CRLF.
+fn (e mut encoder) softBreak() {
+	e.out = append(e.out, '=', '\r', '\n')
+	e.col = 0
+}
+
+// escape writes b as =XX, after a soft break when the line has no room for it.
+fn (e mut encoder) escape(b u8) {
+	if lineMax-1-e.col < 3 {
+		e.softBreak()
 	}
-	return str(line)
+	let hex = "0123456789ABCDEF"
+	e.out = append(e.out, '=', hex[i64(b>>4)], hex[i64(b&15)])
+	e.col += 3
+}
+
+// escapeLastSpace escapes a space or tab that ends the line, as Go's checkLastByte does.
+fn (e mut encoder) escapeLastSpace() {
+	if e.col == 0 {
+		return
+	}
+	let last = e.out[len(e.out)-1]
+	if last == ' ' || last == '\t' {
+		e.out = e.out[0:len(e.out)-1]
+		e.col -= 1
+		e.escape(last)
+	}
 }
 
 // trimLeftWs trims leading whitespace.
