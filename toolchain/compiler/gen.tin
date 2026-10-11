@@ -3083,6 +3083,7 @@ fn gen_call(e i64, d i64) {
 	mut area = 0
 	mut temps_saved = 0
 	mut stack_stored = 0
+	mut held_d = d0
 	if nested == 0 {
 		// Temps never use x0-x7/d0-d7 in a function that calls, so args go straight there.
 		i = 0
@@ -3154,6 +3155,10 @@ fn gen_call(e i64, d i64) {
 					mut r = cast(ReturnStmt, gen_val(cast(i64, a), dd))
 					cast([]i64, regs)[i] = cast(i64, r)
 					dd = next_depth(cast(i64, r), dd)
+				}
+				if areg[i] < 0 && variadic == 0 {
+					// A stack argument keeps its temp until the stack stage stores it.
+					held_d = dd
 				}
 				i = i + 1
 			}
@@ -3266,16 +3271,16 @@ fn gen_call(e i64, d i64) {
 		i = 0
 		for i < n {
 			if regs[i] == -1 {
-				// The temps above d are free again once moved into argument registers.
+				// The temps above d are free again once moved into argument registers, but stack arguments keep theirs below held_d.
 				if is_dyn_value(cast(Ty, cast(Node, args[i]).type_)) != 0 {
 					mut r = cast(ReturnStmt, areg[i])
 					if cast(i64, r) < 0 {
 						err_code_at(cast(Node, args[i]).pos, "E990 INTERNAL", "a dyn argument needs two argument registers or the stack")
 					} else {
-						gen_dyn_pair(args[i], cast(i64, r), cast(i64, r) + 1, d0)
+						gen_dyn_pair(args[i], cast(i64, r), cast(i64, r) + 1, held_d)
 					}
 				} else {
-					gen_to(args[i], areg[i], d0)
+					gen_to(args[i], areg[i], held_d)
 				}
 			}
 			i = i + 1

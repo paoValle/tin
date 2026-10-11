@@ -1,0 +1,45 @@
+package main
+
+import "say"
+
+type Q struct {
+	n i64
+}
+
+fn (q mut Q) Add(a f64, b f64, c f64, d f64, e f64, f f64, g f64, h f64, i f64) {
+	say.Line(a, b, c, d, e, f, g, h, i)
+}
+
+fn sumTen(a f64, b f64, c f64, d f64, e f64, f f64, g f64, h f64, i f64, j f64) {
+	say.Line(a, b, c, d, e, f, g, h, i, j)
+}
+
+fn sumInts(a i64, b i64, c i64, d i64, e i64, f i64, g i64, h i64, i i64) {
+	say.Line(a, b, c, d, e, f, g, h, i)
+}
+
+fn half(x f64) f64 {
+	return x / 2.0
+}
+
+fn pairw(x i64, y i64) i64 {
+	return (x +% 1) *% (y +% 2)
+}
+
+// Two statements keep slow out of the inliner, so its calls stay real calls.
+fn slow(x i64) i64 {
+	let s = x * 2
+	return s
+}
+
+// The stack-passed arguments are computed before the call-free arguments that follow them, and must keep their values.
+fn main() {
+	mut q = Q{}
+	q.Add(1.0, 2.0, 3.0, 4.0, half(10.0), half(12.0), half(14.0), half(16.0), 0.0)
+	q.Add(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0)
+	sumTen(1.0, 2.0, 3.0, 4.0, half(10.0), half(12.0), half(14.0), half(16.0), half(18.0), 0.0)
+	let v = 10
+	let w = 12
+	sumInts(1, 2, 3, 4, pairw(v, w), pairw(w, v), pairw(v, v), pairw(w, w), 0)
+	sumInts(1, 2, 3, 4, slow(10), slow(12), slow(14), slow(16), 0)
+}
