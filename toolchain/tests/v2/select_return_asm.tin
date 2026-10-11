@@ -1,0 +1,24 @@
+package main
+
+import "say"
+
+fn minSigned(a i64, b i64) i64 {
+	if a < b {
+		return a
+	} else {
+		return b
+	}
+}
+
+fn maxUnsigned(a u64, b u64) u64 {
+	if a > b {
+		return a
+	} else {
+		return b
+	}
+}
+
+fn main() {
+	say.Line(minSigned(-9223372036854775807-1, 9223372036854775807), minSigned(7, -9))
+	say.Line(maxUnsigned(0, 18446744073709551615), maxUnsigned(18446744073709551615, 0))
+}

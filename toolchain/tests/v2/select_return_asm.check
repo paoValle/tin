@@ -1,0 +1,21 @@
+# Return arms that select between already computed integer locals use conditional selection.
+
+[arm64]
+CHECK: _minSigned:
+CHECK: cmp
+CHECK-NOT: b\.
+CHECK: csel x0
+CHECK: _maxUnsigned:
+CHECK: cmp
+CHECK-NOT: b\.
+CHECK: csel x0
+
+[amd64]
+CHECK: # L1: minSigned
+CHECK: # L2: maxUnsigned
+CHECK: L1:
+CHECK: cmp
+CHECK: jge L[0-9]+
+CHECK: L2:
+CHECK: cmp
+CHECK: jbe L[0-9]+
