@@ -1,0 +1,10 @@
+package main
+
+// A function literal's parameters need types too: `fn(a, b)` gave both no type.
+
+fn main() {
+	let add = fn(a, b) i64 {
+		return a + b
+	}
+	add(1, 2)
+}

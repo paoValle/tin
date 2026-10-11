@@ -1,0 +1,11 @@
+package main
+
+// A shape method's parameter needs a name and a type. `Put(str)` names a parameter str
+// with no type, which crashed the compiler with a segmentation fault.
+
+shape Sink {
+	Put(str)
+}
+
+fn main() {
+}

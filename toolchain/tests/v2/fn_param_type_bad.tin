@@ -1,0 +1,13 @@
+package main
+
+// A parameter needs a name and a type. `fn show(s)` compiled, and s silently became an i64.
+
+import "say"
+
+fn show(s) {
+	say.Line(s)
+}
+
+fn main() {
+	show(1)
+}

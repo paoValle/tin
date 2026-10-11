@@ -1,0 +1,1 @@
+toolchain/tests/v2/shape_param_type_bad.tin:7:9: error E020 UNEXPECTED: expected a type after parameter 'str': a parameter is a name and a type, like s str, found ')'

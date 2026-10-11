@@ -1,0 +1,1 @@
+toolchain/tests/v2/generic_func_value_bad.tin:13:10: error E504 CANNOT_INFER: cannot infer type parameter 'T' of 'id': a generic function can only be called; wrap the call in a function literal

@@ -1,0 +1,14 @@
+package main
+
+// A generic function can be called but not used as a value: `let g = id` has no type for T.
+// It passed the checker, and code generation crashed compiling id with no type.
+
+import "constraints"
+
+fn id[T constraints.Any](v T) T {
+	return v
+}
+
+fn main() {
+	let g = id
+}

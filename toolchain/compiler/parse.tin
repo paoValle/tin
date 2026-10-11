@@ -1717,6 +1717,15 @@ fn parse_params(f Fn) {
 		}
 		p_next()
 	}
+	if pending > 0 && p_is(")") != 0 {
+		// `fn f(s)` or a shape's `Put(str)`: the last names have no type, and an untyped
+		// parameter would reach the checker with none.
+		let e = cast([]i64, err_code(p_peek().pos, "E020 UNEXPECTED"))
+		buf_str(cast([]u8, e), "expected a type after parameter '")
+		buf_str(cast([]u8, e), f.params[len(f.params) - 1])
+		buf_str(cast([]u8, e), "': a parameter is a name and a type, like s str, found ')'")
+		fatal(cast([]u8, e))
+	}
 	p_expect(")")
 }
 

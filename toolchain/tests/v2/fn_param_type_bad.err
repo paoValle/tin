@@ -1,0 +1,1 @@
+toolchain/tests/v2/fn_param_type_bad.tin:7:10: error E020 UNEXPECTED: expected a type after parameter 's': a parameter is a name and a type, like s str, found ')'

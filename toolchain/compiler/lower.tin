@@ -554,6 +554,18 @@ fn use_sym(e i64, s Sym, want i64) i64 {
 	}
 	if k == SYM_FUNC {
 		let f = cast(Fn, s.fn_)
+		if cast(i64, f.tparams) != 0 && len(cast([]str, f.tparams)) > 0 {
+			// A generic function is a template, not a value: code generation would compile it
+			// with no type for its parameters and crash.
+			let u = err_code(cast(Node, e).pos, "E504 CANNOT_INFER")
+			buf_str(u, "cannot infer type parameter '")
+			buf_str(u, cast([]str, f.tparams)[0])
+			buf_str(u, "' of '")
+			buf_str(u, cast(IdentExpr, e).name)
+			buf_str(u, "': a generic function can only be called; wrap the call in a function literal")
+			err_end(cast([]u8, u))
+			return ty_int
+		}
 		runtime_use(cast(Node, e).pos, f, cast(IdentExpr, e).name)
 		cast(Node, e).kind = EX_FUNCREF
 		cast(FuncRef, e).fn_ = cast(i64, f)

@@ -1,0 +1,1 @@
+toolchain/tests/v2/closure_param_type_bad.tin:6:19: error E020 UNEXPECTED: expected a type after parameter 'b': a parameter is a name and a type, like s str, found ')'
