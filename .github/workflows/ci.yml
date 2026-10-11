@@ -6,17 +6,39 @@ on:
   pull_request:
   merge_group:
   workflow_dispatch:
+    inputs:
+      map_growth_stress:
+        description: Run only the native Linux hashmap growth seed sweep
+        required: false
+        type: boolean
+        default: false
+      seed_base:
+        description: Optional seed base for reproducing a failure (0 uses the workflow run number)
+        required: false
+        type: number
+        default: 0
+      hash_seed:
+        description: Runtime hash seed (0 derives per key seed; -1 leaves it random)
+        required: false
+        type: number
+        default: 0
+      run_count:
+        description: Number of executions in this batch (1 to 200; defaults to 200)
+        required: false
+        type: number
+        default: 200
 
 permissions:
   contents: read
   issues: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.map_growth_stress == true && github.run_id || 'shared' }}
   cancel-in-progress: true
 
 jobs:
   native:
+    if: github.event_name != 'workflow_dispatch' || inputs.map_growth_stress != true
     name: Native (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45 # the suite outgrew 30 min (the syslog check alone has taken 20 min)
@@ -358,6 +380,60 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+  hashmap-growth-stress:
+    if: github.event_name == 'workflow_dispatch' && inputs.map_growth_stress == true
+    name: Hashmap growth stress (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Verify native architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; x86_64|amd64) arch=amd64 ;; *) arch=unknown ;; esac
+          test "$arch" = "$EXPECTED_ARCH"
+      - name: Build self-hosted compiler
+        run: make bootstrap
+      - name: Compile hashmap growth stress fixture
+        run: ./tin build toolchain/tests/v2/map_growth_stress.tin -o bin/map_growth_stress
+      - name: Check 200 seeded executions
+        env:
+          SEED_BASE: ${{ inputs.seed_base || github.run_number }}
+          HASH_SEED: ${{ inputs.hash_seed }}
+          RUN_COUNT: ${{ inputs.run_count }}
+        run: |
+          expected='4200000 0 0 8819997900000 -1 0 0 true 0 false 0 0 false 0 false -1 0 0 0 true 0 0 false false 0 0 false'
+          if [ "$RUN_COUNT" -lt 1 ] || [ "$RUN_COUNT" -gt 200 ]; then
+            echo "run_count must be from 1 to 200; got $RUN_COUNT"
+            exit 2
+          fi
+          for i in $(seq 0 $((RUN_COUNT - 1))); do
+            seed=$((SEED_BASE * 1000 + i))
+            hash_seed=$HASH_SEED
+            if [ "$hash_seed" -eq 0 ]; then hash_seed=$seed; fi
+            actual=$(bin/map_growth_stress "$seed" "$hash_seed")
+            if [ "$actual" != "$expected" ]; then
+              echo "Mismatch: arch=${{ matrix.arch }} seed=$seed expected='$expected' actual='$actual'"
+              echo "Program: toolchain/tests/v2/map_growth_stress.tin"
+              exit 1
+            fi
+          done
+          {
+            echo "Native Linux ${{ matrix.arch }}: $RUN_COUNT/$RUN_COUNT seeded executions matched '$expected'."
+            echo "Seed range: $((SEED_BASE * 1000))..$((SEED_BASE * 1000 + RUN_COUNT - 1))"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
   issue-policy:
     name: Issue regression policy
     runs-on: ubuntu-24.04
@@ -374,7 +450,7 @@ jobs:
   gate:
     name: CI
     if: always()
-    needs: [native, issue-policy]
+    needs: [native, issue-policy, hashmap-growth-stress]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -382,6 +458,12 @@ jobs:
         env:
           NATIVE_RESULT: ${{ needs.native.result }}
           POLICY_RESULT: ${{ needs.issue-policy.result }}
+          STRESS_RESULT: ${{ needs.hashmap-growth-stress.result }}
+          MAP_STRESS: ${{ inputs.map_growth_stress }}
         run: |
-          test "$NATIVE_RESULT" = success
           test "$POLICY_RESULT" = success
+          if [ "$MAP_STRESS" = true ]; then
+            test "$STRESS_RESULT" = success
+          else
+            test "$NATIVE_RESULT" = success
+          fi

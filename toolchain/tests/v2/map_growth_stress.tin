@@ -1,6 +1,8 @@
 package main
 
 import "say"
+import "quarry"
+import "mint"
 
 // Incremental growth of a chunked map (#484): a lookup that runs while the index is being
 // migrated must still find every key inserted before the doubling began. The benchmark that
@@ -18,30 +20,91 @@ fn main() {
 	// Past the 2^21 and 2^22 slot doublings, which is where the report's missing value
 	// (2^22 + 16) sits.
 	let n = i64(4200000)
-	let m = make(map[i64]i64)
 	// The last four keys inserted, re-checked on every step so lookups run through the whole
 	// migration (sixteen entries move per operation).
 	mut k1 = i64(0)
 	mut k2 = i64(0)
 	mut k3 = i64(0)
 	mut k4 = i64(0)
-	mut k = i64(12345)
+	let args = quarry.Args()
+	// This seed reproduced the missing map value on native Linux amd64 (#484).
+	mut seed = i64(2233011)
+	if len(args) > 1 {
+		seed = mint.Atoi(args[1]) catch _ { 2233011 }
+	}
+	mut hashSeed = seed
+	if len(args) > 2 {
+		hashSeed = mint.Atoi(args[2]) catch _ { seed }
+	}
+	// Pin the runtime's randomized map hash key so a seed reproduces the same table layout.
+	// A negative override keeps the runtime's random hash key for probability sweeps.
+	if hashSeed >= 0 {
+		rtHashK0 = hashSeed
+	}
+	let m = make(map[i64]i64)
+	mut k = seed
 	mut bad = i64(0)
+	mut stepAt = i64(-1)
+	mut stepKey = i64(0)
+	mut stepWant = i64(0)
+	mut stepGot = i64(0)
+	mut stepOK = true
+	mut stepHash = i64(0)
 	for i in i64(0)..n {
 		k = lcg(k)
 		m[k] = i
 		if i > 4 {
-			if m[k4] != i-4 {
+			let recent4 = m[k4]
+			if recent4 != i-4 {
 				bad += 1
+				if stepAt < 0 {
+					stepAt = i
+					stepKey = k4
+					stepWant = i-4
+					stepGot = recent4
+					let (_, found) = m[k4]
+					stepOK = found
+					stepHash = rtHashK0
+				}
 			}
-			if m[k3] != i-3 {
+			let recent3 = m[k3]
+			if recent3 != i-3 {
 				bad += 1
+				if stepAt < 0 {
+					stepAt = i
+					stepKey = k3
+					stepWant = i-3
+					stepGot = recent3
+					let (_, found) = m[k3]
+					stepOK = found
+					stepHash = rtHashK0
+				}
 			}
-			if m[k2] != i-2 {
+			let recent2 = m[k2]
+			if recent2 != i-2 {
 				bad += 1
+				if stepAt < 0 {
+					stepAt = i
+					stepKey = k2
+					stepWant = i-2
+					stepGot = recent2
+					let (_, found) = m[k2]
+					stepOK = found
+					stepHash = rtHashK0
+				}
 			}
-			if m[k1] != i-1 {
+			let recent1 = m[k1]
+			if recent1 != i-1 {
 				bad += 1
+				if stepAt < 0 {
+					stepAt = i
+					stepKey = k1
+					stepWant = i-1
+					stepGot = recent1
+					let (_, found) = m[k1]
+					stepOK = found
+					stepHash = rtHashK0
+				}
 			}
 		}
 		k4 = k3
@@ -50,13 +113,76 @@ fn main() {
 		k1 = k
 	}
 	// Every key once more, from the same sequence, with the map no longer growing.
-	mut kk = i64(12345)
+	mut kk = seed
 	mut after = i64(0)
+	mut sum = i64(0)
+	mut badAt = i64(-1)
+	mut badKey = i64(0)
+	mut badValue = i64(0)
+	mut badOK = true
+	mut badHash = i64(0)
+	mut scanFound = false
+	mut scanValue = i64(0)
+	mut retryValue = i64(0)
+	mut retryOK = false
+	mut freshValue = i64(0)
+	mut freshOK = false
+	mut stepFinalValue = i64(0)
+	mut stepFinalOK = false
+	mut stepScanFound = false
+	mut stepScanValue = i64(0)
+	mut stepFreshValue = i64(0)
+	mut stepFreshOK = false
 	for i in i64(0)..n {
 		kk = lcg(kk)
-		if m[kk] != i {
+		let value = m[kk]
+		sum += value
+		if kk == stepKey {
+			stepFinalValue = value
+			stepFinalOK = value == i
+		}
+		if value != i {
 			after += 1
+			if badAt < 0 {
+				badAt = i
+				badKey = kk
+				badValue = value
+				let (_, ok) = m[kk]
+				badOK = ok
+				badHash = rtHashK0
+			}
 		}
 	}
-	say.Line(len(m), bad, after)
+	if badAt >= 0 {
+		// Scan entry storage directly after a failure: this bypasses the hash index and tells
+		// whether the entry was never stored or only became unreachable through lookup.
+		for entryKey, entryValue in m {
+			if entryKey == badKey {
+				scanFound = true
+				scanValue = entryValue
+			}
+		}
+		let (retried, retryFound) = m[badKey]
+		retryValue = retried
+		retryOK = retryFound
+		let freshMap = make(map[i64]i64)
+		freshMap[badKey] = scanValue
+		let (freshGot, freshFound) = freshMap[badKey]
+		freshValue = freshGot
+		freshOK = freshFound
+	}
+	if stepAt >= 0 {
+		for entryKey, entryValue in m {
+			if entryKey == stepKey {
+				stepScanFound = true
+				stepScanValue = entryValue
+			}
+		}
+		let freshMap = make(map[i64]i64)
+		freshMap[stepKey] = stepWant
+		let (freshGot, found) = freshMap[stepKey]
+		stepFreshValue = freshGot
+		stepFreshOK = found
+	}
+	say.Line(len(m), bad, after, sum, badAt, badKey, badValue, badOK, badHash, scanFound, scanValue, retryValue, retryOK, freshValue, freshOK, stepAt, stepKey, stepWant, stepGot, stepOK, stepHash, stepFinalValue, stepFinalOK, stepScanFound, stepScanValue, stepFreshValue, stepFreshOK)
 }

@@ -3188,7 +3188,10 @@ fn rt_cmap_step(m i64) {
 		// with huge pages, the first write to each costs the zeroing of 2 MiB, and entries
 		// moved into untouched memory would pay for sixteen of them in one call.
 		if m[24] < m[1]*8 {
-			(m[4] + m[24])[0] = 0
+			// New entries can already occupy a future stride slot: keep its current value
+			// while forcing the page writable, or a later touch would erase that index entry.
+			let touched = m[4] + m[24]
+			touched[0] = touched[0]
 			m[24] += 2097152
 			return
 		}
