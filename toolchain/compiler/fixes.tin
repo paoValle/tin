@@ -147,7 +147,7 @@ fn fix_table() str {
 		"E621\tmove the loop body into a function that has the `use`.\n" +
 		"E630\twrite `after(30ms) => ...` without a name.\n" +
 		"E640\twait for the task inside the scope block, and return its value rather than its handle.\n" +
-		"E641\ttake a copy for the snapshot (`mut ys = sift.Clone(xs)`), or stop using the old name. The check follows places inside one function (#627): locals, field paths (`let view = b.items`, with `let b = a` making the two one object), constant indices and map keys, struct literal fields, calls that take the slice `mut` and append to it, and calls of a local closure that appends to an outer variable. Dynamic indices, slices returned by calls, `mut` structs and growth two calls deep are not followed (LANGUAGE.md section 3).\n" +
+		"E641\ttake a copy for the snapshot (`mut ys = sift.Clone(xs)`), or stop using the old name. The check follows places inside one function (#627): locals, the result of `append(xs, ...)` (the slice xs names, #1225), field paths (`let view = b.items`, with `let b = a` making the two one object), constant indices and map keys, struct literal fields, calls that take the slice `mut` and append to it, and calls of a local closure that appends to an outer variable. Dynamic indices, slices returned by calls, `mut` structs and growth two calls deep are not followed (LANGUAGE.md section 3).\n" +
 		"E650\tbound `memory` and `tasks` only (`limit memory 4mb, tasks 8 {{ ... }}`); end a block with its value, and leave it early only with `fail`.\n" +
 		"E651\tmake each line an expression (a call, or a value), with at least two lines; compute other values before the block.\n" +
 		"E652\tuse a policy from the `policy` package (`policy.Retry(3)`), or give the type the `Run` method.\n" +

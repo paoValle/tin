@@ -1,0 +1,13 @@
+package main
+
+// #1225: `let ys = append(xs, 1)` makes ys and xs one slice (append grows the header in place
+// and returns it), so reading ys after xs grew again is E641, as after `mut ys = xs`.
+
+import "say"
+
+fn main() {
+	mut xs = make([]i64, 3, 10)
+	let ys = append(xs, 1)
+	xs = append(xs, 2)
+	say.Line(ys)
+}

@@ -7474,6 +7474,16 @@ fn al_place(e i64, make i64) str {
 	return ""
 }
 
+// al_value_place is al_place for a value: append(p, ...) gives the slice p names, since append
+// grows the header in place and returns it, so `let ys = append(xs, 1)` makes ys and xs one slice
+// as `mut ys = xs` does (#1225).
+fn al_value_place(e i64) str {
+	if ck_trusted == 0 && e != 0 && cast(Node, e).kind == EX_CALL && len(cast(Call, e).name) != 0 && cast(Call, e).name == "append" && len(cast(Call, e).args) > 0 {
+		return al_place(cast(Call, e).args[0], 1)
+	}
+	return al_place(e, 1)
+}
+
 // al_sym_key is the place key of local s.
 fn al_sym_key(s Sym) str {
 	return "s" + al_num(cast(i64, s))
@@ -7581,7 +7591,7 @@ fn al_assign_begin(s i64) []str {
 	if len(tk) == 0 {
 		return out
 	}
-	let vk = al_place(v, 1)
+	let vk = al_value_place(v)
 	let vt = al_ptext
 	mut grow = ""
 	if cast(Node, v).kind == EX_CALL && len(cast(Call, v).name) != 0 && cast(Call, v).name == "append" && len(cast(Call, v).args) > 0 && al_place(cast(Call, v).args[0], 1) == tk {
@@ -7865,7 +7875,7 @@ fn check_let(s i64) {
 		return
 	}
 	// The places the value names (#627), taken before checking lowers it.
-	let alk = al_place(cast(i64, init), 1)
+	let alk = al_value_place(cast(i64, init))
 	let alt = al_ptext
 	let alf = al_fields(cast(i64, init))
 	mut alcg = []str{}

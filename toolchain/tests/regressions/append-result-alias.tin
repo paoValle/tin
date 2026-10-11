@@ -1,0 +1,18 @@
+package main
+
+// #1225: reading the name append's result went to is fine until the other name grows, and
+// sift.Clone gives two independent slices.
+
+import "say"
+import "sift"
+
+fn main() {
+	mut xs = make([]i64, 3, 10)
+	let ys = append(xs, 1)
+	say.Line(ys)
+	mut zs = sift.Clone(append(xs, 4))
+	xs = append(xs, 2)
+	zs = append(zs, 5)
+	say.Line(xs)
+	say.Line(zs)
+}

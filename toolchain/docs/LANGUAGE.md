@@ -227,7 +227,8 @@ Use `keep(x)` (a deep copy into long-lived memory) or explicit copies (`copy`,
 `ore.Clone`, `sift.Clone`, a new literal) when independent values are needed.
 
 Slices stay references (#352), so the trap is guarded rather than removed: in user code, once
-`append` has grown a slice that another name shares (`mut ys = xs`), reading that other name is
+`append` has grown a slice that another name shares (`mut ys = xs`, or `let ys = append(xs, v)`,
+since append returns the header it grew, #1225), reading that other name is
 E641 (`ys` would have changed under you). Take `sift.Clone(xs)` for a snapshot. The names the
 check follows within a function (#627) are locals, field paths (`let view = b.items`, also
 after `let b = a`, which makes the two one object), constant indices (`rows[0]`) and constant

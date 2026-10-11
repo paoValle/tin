@@ -1627,5 +1627,24 @@
       "stdout": "2\n5\n6\n6\n",
       "stderr": ""
     }
+  },
+  {
+    "source": "append-result-alias-bad.tin",
+    "issue": 1225,
+    "expected": {
+      "phase": "compile",
+      "exit": 1,
+      "stderr_contains": "E641 SLICE_ALIAS: 'ys' is the same slice as 'xs'"
+    }
+  },
+  {
+    "source": "append-result-alias.tin",
+    "issue": 1225,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "[0 0 0 1]\n[0 0 0 1 4 2]\n[0 0 0 1 4 5]\n",
+      "stderr": ""
+    }
   }
 ]
