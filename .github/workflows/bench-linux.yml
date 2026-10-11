@@ -16,6 +16,13 @@ on:
         description: Measure inline.tin thresholds at current, half, and double values
         type: boolean
         default: false
+      amd64_runner:
+        description: Runner for the amd64 job (dedicated requires a self-hosted tin-bench-amd64 runner)
+        type: choice
+        options:
+          - shared
+          - dedicated
+        default: shared
   schedule:
     - cron: '0 6 * * 1'
 
@@ -36,7 +43,7 @@ concurrency:
 jobs:
   bench:
     name: Linux ${{ matrix.arch }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.arch == 'amd64' && inputs.amd64_runner == 'dedicated' && fromJSON('["self-hosted","linux","x64","tin-bench-amd64"]') || matrix.os }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -116,20 +123,34 @@ jobs:
         run: |
           case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; x86_64) arch=amd64 ;; *) exit 1 ;; esac
           test "$arch" = "$EXPECTED_ARCH"
+          cpu=$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -n 1)
+          kernel=$(uname -srmo)
+          go=$(go version)
+          if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then
+            machine="Self-hosted runner $RUNNER_NAME"
+          elif [ "$EXPECTED_ARCH" = arm64 ]; then
+            machine="GitHub-hosted ubuntu-24.04-arm shared runner ($RUNNER_NAME)"
+          else
+            machine="GitHub-hosted ubuntu-24.04 shared runner ($RUNNER_NAME)"
+          fi
           {
-            echo "## Linux $EXPECTED_ARCH ($RUNNER_OS, GitHub-hosted, shared)"
-            echo '```'
-            echo "TINC_POLLS=$TINC_POLLS (head opt-in; base uses its committed default)"
-            uname -srm
-            lscpu | grep -E '^(Model name|CPU\(s\)):' || true
-            go version
-            wrk --version || true
-            h2load --version || true
-            echo '```'
+            echo "## Linux $EXPECTED_ARCH benchmark run (shared-runner ratios only)"
+            echo '| field | value |'
+            echo '|---|---|'
+            echo "| machine | $machine |"
+            echo "| CPU | $cpu |"
+            echo "| kernel | $kernel |"
+            echo "| Go | $go |"
+            echo "| architecture | $EXPECTED_ARCH |"
+            echo "| runner environment | $RUNNER_ENVIRONMENT |"
+            echo "| compiler option | TINC_POLLS=$TINC_POLLS (head opt-in; base uses its committed default) |"
+            echo "| load generator | $(wrk --version 2>&1 | head -n 1) |"
+            echo "| HTTP/2 tool | $(h2load --version 2>&1 | head -n 1) |"
             echo 'CPU: 7 alternating runs per side; medians. HTTP: 1 server core, wrk -t2 -c100, 10 s, 5 alternating rounds; load generator on the same runner.'
             echo 'HTTPS: 1 server core each (anvil.ServeTLS, Go crypto/tls), TLS 1.3, wrk -t2, 5 s, 5 alternating rounds: handshakes/s (Connection: close), keep-alive req/s, MiB/s of 1 MiB bodies.'
             echo 'CPU head/base is elapsed time (lower is faster); HTTP head/base is req/s (higher is faster). >5% regressions require a rerun and profile/maintainer review; timing is not an automatic merge gate.'
-          } | tee bin/bench-machine.txt
+          } | tee bin/bench-linux-summary.md
+          cp bin/bench-linux-summary.md bin/bench-machine.txt
           cat bin/bench-machine.txt >> "$GITHUB_STEP_SUMMARY"
       - name: ARM64 atomic contention (automatic LSE versus forced fallback)
         if: matrix.arch == 'arm64'
@@ -200,6 +221,7 @@ jobs:
           name: bench-linux-${{ matrix.arch }}
           path: |
             bin/bench-*.txt
+            bin/bench-linux-summary.md
             bin/bench-*.json
             bin/wrk-*/*.log
             bin/h2load-*/*.log
