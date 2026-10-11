@@ -2324,6 +2324,69 @@ fn x_gen_call(e i64, d i64) {
 
 // ---- conditions ----
 // x_gen_cmp_branch branches to target when comparison e evaluates to when_true.
+// x_gen_arith_zero_branch reuses the flags from an add/sub whose result is compared with zero.
+// The checked overflow branch does not alter flags, and the normal path therefore keeps the
+// arithmetic flags for the following conditional branch. Narrow checked operations are excluded.
+fn x_gen_arith_zero_branch(e Binary, target i64, d i64, when_true i64) i64 {
+	mut a = e.l
+	mut b = e.r
+	mut cc = x_cond(e.op)
+	let unsigned = i64(e_unsigned(cast(Node, a)) != 0 || e_unsigned(cast(Node, b)) != 0)
+	if unsigned != 0 {
+		cc = x_ucond(e.op)
+	}
+	if is_const(a) != 0 && const_val(a) == 0 {
+		let t = a
+		a = b
+		b = t
+		cc = x_swap_cc(cc)
+	}
+	if is_const(b) == 0 || const_val(b) != 0 || cast(Node, a).kind != EX_BINARY {
+		return 0
+	}
+	let ar = cast(Binary, a)
+	if (ar.op != "+" && ar.op != "-") || word_int(cast(Ty, cast(Node, ar).type_)) == 0 || int_width(cast(Ty, cast(Node, ar).type_)) != 8 {
+		return 0
+	}
+	let t = cast(Ty, cast(Node, ar).type_)
+	x_gen_pair(ar.l, ar.r, d)
+	let checked = i64(ar.ovf == OVF_CHECK)
+	// r11 is reserved scratch; preserve it first if a deep pair evaluation used it for pr.
+	mut right = pr
+	if right == XSCR {
+		x_mov(XSCR2, right)
+		right = XSCR2
+	}
+	x_mov(XSCR, pl)
+	if ar.op == "+" {
+		emit2(X_ADD, XSCR, right)
+	} else {
+		emit2(X_SUB, XSCR, right)
+	}
+	if checked != 0 {
+		x_checked_flags(ovf_kind(ar.op), i64(t.signed != 0))
+	}
+	if unsigned != 0 && cc != XC_E && cc != XC_NE {
+		if cc == XC_B || cc == XC_AE {
+			let truth = i64(cc == XC_AE)
+			if truth == when_true {
+				emit1(X_JMP, target)
+			}
+			return 1
+		}
+		if cc == XC_A {
+			cc = XC_NE
+		} else if cc == XC_BE {
+			cc = XC_E
+		}
+	}
+	if when_true == 0 {
+		cc = cc ^ 1
+	}
+	emit2(X_JCC, cc, target)
+	return 1
+}
+
 fn x_gen_cmp_branch(e Binary, target i64, d i64, when_true i64) {
 	if e_fp(cast(Node, e.l)) != 0 || e_fp(cast(Node, e.r)) != 0 {
 		x_gen_compare(e, d)
@@ -2332,6 +2395,9 @@ fn x_gen_cmp_branch(e Binary, target i64, d i64, when_true i64) {
 		} else {
 			x_jcc(cmp_cc ^ 1, cmp_unord, target)
 		}
+		return
+	}
+	if x_gen_arith_zero_branch(e, target, d, when_true) != 0 {
 		return
 	}
 	mut cc = x_cond(e.op)

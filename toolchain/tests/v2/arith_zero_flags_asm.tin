@@ -1,0 +1,21 @@
+package main
+
+import "say"
+
+fn sub_lt_zero(a i64, b i64) i64 {
+	if a - b < 0 {
+		return 1
+	}
+	return 0
+}
+
+fn add_eq_zero(a i64, b i64) i64 {
+	if a + b == 0 {
+		return 1
+	}
+	return 0
+}
+
+fn main() {
+	say.Line(sub_lt_zero(3, 7), add_eq_zero(-3, 3))
+}

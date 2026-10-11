@@ -1,0 +1,29 @@
+# A 64-bit add/sub compared with zero branches directly on the arithmetic flags.
+
+[arm64]
+CHECK: _sub_lt_zero:
+CHECK: subs xzr, x[0-9]+, x[0-9]+
+CHECK-NOT: cmp
+CHECK: b.vs
+CHECK-NOT: cmp
+CHECK: b.ge
+CHECK: _add_eq_zero:
+CHECK: adds xzr, x[0-9]+, x[0-9]+
+CHECK-NOT: cmp
+CHECK: b.vs
+CHECK-NOT: cmp
+CHECK: b.ne
+
+[amd64]
+CHECK: # L[0-9]+: sub_lt_zero
+CHECK: # L[0-9]+: add_eq_zero
+CHECK: sub r11,r\w+
+CHECK-NOT: cmp
+CHECK: jo
+CHECK-NOT: cmp
+CHECK: jge
+CHECK: add r11,r\w+
+CHECK-NOT: cmp
+CHECK: jo
+CHECK-NOT: cmp
+CHECK: jne

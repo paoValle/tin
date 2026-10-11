@@ -3604,6 +3604,62 @@ fn low_bits_test(e i64) i64 {
 }
 
 // gen_cmp_branch branches to target when comparison e evaluates to when_true.
+// gen_arith_zero_branch emits an add/sub compared with zero using the arithmetic flags. For
+// checked 64-bit operations, checked_flags only branches on overflow and preserves the flags on
+// the normal path. Narrow checked operations use a compare in narrow_check, so they stay generic.
+fn gen_arith_zero_branch(e Binary, target i64, d i64, when_true i64) i64 {
+	mut a = e.l
+	mut b = e.r
+	mut cc = cond_code(e.op)
+	let unsigned = i64(e_unsigned(cast(Node, a)) != 0 || e_unsigned(cast(Node, b)) != 0)
+	if unsigned != 0 {
+		cc = ucond_code(e.op)
+	}
+	if is_const(a) != 0 && const_val(a) == 0 {
+		let t = a
+		a = b
+		b = t
+		cc = swap_cc(cc)
+	}
+	if is_const(b) == 0 || const_val(b) != 0 || cast(Node, a).kind != EX_BINARY {
+		return 0
+	}
+	let ar = cast(Binary, a)
+	if (ar.op != "+" && ar.op != "-") || word_int(cast(Ty, cast(Node, ar).type_)) == 0 || int_width(cast(Ty, cast(Node, ar).type_)) != 8 {
+		return 0
+	}
+	let t = cast(Ty, cast(Node, ar).type_)
+	gen_pair(ar.l, ar.r, d)
+	let checked = i64(ar.ovf == OVF_CHECK)
+	if ar.op == "+" {
+		emit4(I_ADDS, ZR, pl, pr, 0)
+	} else {
+		emit4(I_SUBS, ZR, pl, pr, 0)
+	}
+	if checked != 0 {
+		checked_flags(ovf_kind(ar.op), i64(t.signed != 0))
+	}
+	if unsigned != 0 && cc != C_EQ && cc != C_NE {
+		if cc == C_LO || cc == C_HS {
+			let truth = i64(cc == C_HS)
+			if truth == when_true {
+				emit1(I_B, target)
+			}
+			return 1
+		}
+		if cc == C_HI {
+			cc = C_NE
+		} else if cc == C_LS {
+			cc = C_EQ
+		}
+	}
+	if when_true == 0 {
+		cc = cc ^ 1
+	}
+	emit2(I_BCOND, cc, target)
+	return 1
+}
+
 fn gen_cmp_branch(e Binary, target i64, d i64, when_true i64) {
 	if e_fp(cast(Node, e.l)) != 0 || e_fp(cast(Node, e.r)) != 0 {
 		gen_compare(e, d)
@@ -3612,6 +3668,9 @@ fn gen_cmp_branch(e Binary, target i64, d i64, when_true i64) {
 		} else {
 			emit2(I_BCOND, cmp_cc ^ 1, target)
 		}
+		return
+	}
+	if gen_arith_zero_branch(e, target, d, when_true) != 0 {
 		return
 	}
 	mut cc = cond_code(e.op)
