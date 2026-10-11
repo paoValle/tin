@@ -1,0 +1,8 @@
+# Float comparisons against zero use FCMP-zero on arm64 and synthesize zero in an XMM
+# scratch register on amd64, without loading a floating constant.
+[arm64]
+CHECK: fcmp d[0-9]+, #0.0
+
+[amd64]
+CHECK: xorpd xmm[0-9]+,xmm[0-9]+
+CHECK: ucomisd xmm[0-9]+,xmm[0-9]+

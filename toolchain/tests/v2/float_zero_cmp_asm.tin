@@ -1,0 +1,12 @@
+package main
+
+fn negative(f f64) bool {
+	return f < 0.0
+}
+
+fn main() {
+	let x = -1.0
+	if negative(x) {
+		println("negative")
+	}
+}

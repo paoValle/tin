@@ -1357,6 +1357,36 @@ fn x_gen_compare(e Binary, d i64) {
 	mut r = e.r
 	let op = e.op
 	if e_fp(cast(Node, l)) != 0 || e_fp(cast(Node, r)) != 0 {
+		let lzero = fzero(l)
+		let rzero = fzero(r)
+		if lzero != rzero {
+			mut x = l
+			if lzero != 0 {
+				x = r
+			}
+			let v = x_gen_val(x, d)
+			emit2(X_XORPD, XFSCR, XFSCR)
+			let reverse = i64(op == "<" || op == "<=")
+			let zero_first = i64(lzero != reverse)
+			if zero_first != 0 {
+				emit2(X_UCOMISD, XFSCR, v)
+			} else {
+				emit2(X_UCOMISD, v, XFSCR)
+			}
+			cmp_unord = 0
+			if op == "<" || op == ">" {
+				cmp_cc = XC_A
+			} else if op == "<=" || op == ">=" {
+				cmp_cc = XC_AE
+			} else if op == "==" {
+				cmp_cc = XC_E
+				cmp_unord = 1
+			} else {
+				cmp_cc = XC_NE
+				cmp_unord = 2
+			}
+			return
+		}
 		x_gen_pair(l, r, d)
 		// Set after the operands, which may contain comparisons of their own.
 		cmp_unord = 0

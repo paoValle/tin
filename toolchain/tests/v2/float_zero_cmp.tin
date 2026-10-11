@@ -1,0 +1,17 @@
+package main
+
+import "gauge"
+import "say"
+
+fn eqZero(f f64) bool { return f == 0.0 }
+fn neZero(f f64) bool { return f != 0.0 }
+fn ltZero(f f64) bool { return f < 0.0 }
+fn geZero(f f64) bool { return f >= 0.0 }
+fn zeroLt(f f64) bool { return 0.0 < f }
+fn zeroGe(f f64) bool { return 0.0 >= f }
+
+fn main() {
+	let n = gauge.NaN()
+	say.Line(eqZero(n), neZero(n), ltZero(n), geZero(n), zeroLt(n), zeroGe(n))
+	say.Line(eqZero(-0.0), neZero(-0.0), ltZero(-0.0), geZero(-0.0))
+}

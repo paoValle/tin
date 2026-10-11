@@ -712,6 +712,18 @@ fn fcond_code(op str) i64 {
 	return C_GE
 }
 
+// fzero identifies a floating zero literal without materializing it in an FP register.
+fn fzero(e i64) i64 {
+	let k = cast(Node, e).kind
+	if k == EX_FLOAT {
+		return i64(cast(FloatLit, e).bits == 0)
+	}
+	if k == EX_INT {
+		return i64(cast(IntLit, e).val == 0)
+	}
+	return i64(k == EX_IDENT && is_const(e) != 0 && const_val(e) == 0)
+}
+
 // swap_cc is the condition for the same comparison with its operands exchanged.
 fn swap_cc(cc i64) i64 {
 	if cc == C_LT {
@@ -2376,6 +2388,22 @@ fn gen_compare(e Binary, d i64) {
 	mut l = e.l
 	mut r = e.r
 	if e_fp(cast(Node, l)) != 0 || e_fp(cast(Node, r)) != 0 {
+		let lzero = fzero(l)
+		let rzero = fzero(r)
+		if lzero != rzero {
+			mut x = l
+			if lzero != 0 {
+				x = r
+			}
+			let v = gen_val(x, d)
+			emit2(I_FCMPZ, v, 0)
+			mut op = e.op
+			if lzero != 0 {
+				if op == "<" { op = ">" } else if op == "<=" { op = ">=" } else if op == ">" { op = "<" } else if op == ">=" { op = "<=" }
+			}
+			cmp_cc = fcond_code(op)
+			return
+		}
 		gen_pair(l, r, d)
 		emit2(I_FCMP, pl, pr)
 		cmp_cc = fcond_code(e.op)
