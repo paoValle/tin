@@ -1,0 +1,69 @@
+package main
+
+import "./ci"
+import "mint"
+import "quarry"
+import "say"
+import "twine"
+
+// Contract checks for the Tin differential runner. The generator is owned by another PR and is optional on this branch.
+
+const FAKE_GENERATOR = `package main
+
+import "quarry"
+
+fn main() {
+	let args = quarry.Args()
+	mut tin = ""
+	mut gofile = ""
+	for i in 1..len(args) {
+		if args[i] == "--tin" && i + 1 < len(args) {
+			tin = args[i + 1]
+		}
+		if args[i] == "--go" && i + 1 < len(args) {
+			gofile = args[i + 1]
+		}
+	}
+	quarry.WriteFile(tin, "package main\nfn main() {{}}\n") catch _ {
+		quarry.Exit(2)
+	}
+	quarry.WriteFile(gofile, "package main\nfunc main() {{}}\n") catch _ {
+		quarry.Exit(2)
+	}
+}
+`
+
+fn main() {
+	let root = ci.Root()
+	let temp = ci.TempDir(ci.Join(root, "bin/ci"), "fuzz-check-")
+	let runner = ci.Join(temp, "run")
+	ci.BuildTin("tools/fuzz/run.tin", runner, "", []str{})
+
+	let diff = ci.Exec([]str{runner, "--first-difference", "one\ntwo\n", "one\nchanged\n"}, root, 10)
+	ci.Same("first mismatch line", diff.Stdout, "line 2: Tin='two'; oracle='changed'\n")
+	let eof = ci.Exec([]str{runner, "--first-difference", "one\n", "one\ntwo\n"}, root, 10)
+	ci.Same("first mismatch EOF", eof.Stdout, "line 2: Tin='<EOF>'; oracle='two'\n")
+	ci.Test("invalid oracle rejected", ci.Exec([]str{runner, "--oracle", "unknown"}, root, 10).Code == 2)
+
+	let generatorSource = ci.Join(temp, "gen.tin")
+	let generator = ci.Join(temp, "gen")
+	ci.Write(generatorSource, FAKE_GENERATOR)
+	ci.BuildTin(generatorSource, generator, "", []str{})
+	let smoke = ci.Exec([]str{runner, "--oracle", "go,noopt", "--seconds", "1", "--jobs", "2", "--generator", generator, "--out", ci.Join(temp, "smoke-out")}, root, 115)
+	ci.Test("Tin generated-pair smoke passes", smoke.Code == 0 && twine.Contains(smoke.Stdout, "with 0 failing cases"))
+
+	let hasGenerator = ci.Exists("bin/ci/tools/gen") || ci.Exists("bin/fuzz/gen")
+	if !hasGenerator {
+		let skipped = ci.Exec([]str{runner, "--oracle", "go,cross,noopt", "--seconds", "1", "--jobs", "2", "--out", ci.Join(temp, "out")}, root, 10)
+		ci.Test("missing generator skips cleanly", skipped.Code == 0 && twine.Contains(skipped.Stdout, "SKIP fuzz runner: generator is not present"))
+		say.Line("SKIP generated-program checks: generator PR has not supplied bin/ci/tools/gen or bin/fuzz/gen")
+	}
+	if ci.Exec([]str{"sh", "-c", "command -v go >/dev/null 2>&1"}, root, 5).Code != 0 {
+		say.Line("SKIP Go twin portion: go is not installed")
+	}
+
+	ci.Remove(temp)
+	ci.Finish()
+	say.Line("runner concurrency uses scope.spawn tasks; each seed gets a unique mktemp directory under bin/ci, and the check uses ci.TempDir")
+	say.Line("validated runner source:", mint.Itoa(len(ci.Read("tools/fuzz/run.tin"))), "bytes")
+}

@@ -1,0 +1,487 @@
+package main
+
+import "fault"
+import "mint"
+import "quarry"
+import "say"
+import "seal"
+import "spawn"
+import "tide"
+import "twine"
+
+// The generator is a separate issue/PR. Its compiled tool is optional until that PR lands.
+type Out struct {
+	Code i64
+	Stdout str
+	Stderr str
+}
+
+type Options struct {
+	Oracles []str
+	Seconds i64
+	Jobs i64
+	Out str
+	Compiler str
+	Generator str
+	Seed i64
+	Size i64
+}
+
+type Failure struct {
+	Kind str
+	Detail str
+	Seed i64
+	Work str
+	Files []str
+	Outputs []str
+	Commands []str
+}
+
+fn root() str {
+	return quarry.Getwd() catch _ {
+		"."
+	}
+}
+
+fn join(a str, b str) str {
+	if twine.HasSuffix(a, "/") {
+		return a + b
+	}
+	return a + "/" + b
+}
+
+fn number(s str) i64 {
+	return mint.Atoi(s) catch _ {
+		0
+	}
+}
+
+fn lines(s str) []str {
+	if len(s) == 0 {
+		return []str{}
+	}
+	return twine.Split(twine.TrimSuffix(s, "\n"), "\n")
+}
+
+fn mkdirs(path str) {
+	quarry.MkdirAll(path) catch err {
+		say.Line("cannot create", path, say.Str(err))
+		quarry.Exit(1)
+	}
+}
+
+fn fileWrite(path str, text str) {
+	quarry.WriteFile(path, text) catch err {
+		say.Line("cannot write", path, say.Str(err))
+		quarry.Exit(1)
+	}
+}
+
+fn fileRead(path str) str {
+	return quarry.ReadFile(path) catch _ {
+		""
+	}
+}
+
+fn remove(path str) {
+	quarry.RemoveAll(path) catch _ {}
+}
+
+fn tempDir(parent str, prefix str) str {
+	mkdirs(parent)
+	let result = exec([]str{"mktemp", "-d", join(parent, prefix + "XXXXXX")}, "", 20)
+	if result.Code != 0 {
+		say.Line(result.Stderr)
+		quarry.Exit(1)
+	}
+	return twine.TrimSpace(result.Stdout)
+}
+
+fn compiler() str {
+	let configured = quarry.Getenv("TIN_COMPILER")
+	if len(configured) > 0 {
+		return configured
+	}
+	return join(root(), "bin/tinc")
+}
+
+fn osName() str {
+	if twine.TrimSpace(exec([]str{"uname", "-s"}, "", 5).Stdout) == "Darwin" {
+		return "darwin"
+	}
+	return "linux"
+}
+
+fn arch() str {
+	let machine = twine.TrimSpace(exec([]str{"uname", "-m"}, "", 5).Stdout)
+	if machine == "aarch64" || machine == "arm64" {
+		return "arm64"
+	}
+	return "amd64"
+}
+
+fn mkdir(path str) bool {
+	return exec([]str{"mkdir", path}, "", 10).Code == 0
+}
+
+fn has(xs []str, value str) bool {
+	for x in xs {
+		if x == value {
+			return true
+		}
+	}
+	return false
+}
+
+fn option(args []str, name str, fallback str) str {
+	for i in 1..len(args) {
+		if args[i] == name && i + 1 < len(args) {
+			return args[i + 1]
+		}
+	}
+	return fallback
+}
+
+fn parse() Options {
+	let args = quarry.Args()
+	let oracleText = option(args, "--oracle", "go")
+	mut out = Options{Oracles: twine.Split(oracleText, ","), Seconds: 600, Jobs: 1, Out: "bin/fuzz", Compiler: compiler(), Seed: 1, Size: 12}
+	out.Seconds = number(option(args, "--seconds", "600"))
+	out.Jobs = number(option(args, "--jobs", "1"))
+	out.Out = option(args, "--out", "bin/fuzz")
+	out.Compiler = option(args, "--compiler", compiler())
+	out.Generator = option(args, "--generator", "")
+	out.Seed = number(option(args, "--seed", "1"))
+	out.Size = number(option(args, "--size", "12"))
+	return out
+}
+
+fn validate(o Options) bool {
+	if o.Seconds < 1 || o.Jobs < 1 || o.Size < 1 || o.Seed < 0 || len(o.Oracles) == 0 {
+		return false
+	}
+	for name in o.Oracles {
+		if name != "go" && name != "cross" && name != "noopt" {
+			return false
+		}
+	}
+	return true
+}
+
+fn generator(preferred str) str {
+	if len(preferred) > 0 && quarry.Exists(preferred) {
+		return preferred
+	}
+	for path in []str{"bin/ci/tools/gen", "bin/fuzz/gen"} {
+		if quarry.Exists(path) {
+			return path
+		}
+	}
+	return ""
+}
+
+fn run(argv []str, seconds i64) Out {
+	let cmd = spawn.Cmd{Argv: argv, Env: spawn.Env.Inherit, Dir: root(), Stdin: spawn.Stdio.Null, Stdout: spawn.Stdio.Pipe, Stderr: spawn.Stdio.Pipe, MaxOutput: 4 * 1024 * 1024}
+	let result = within seconds * 1000000000 {
+		try spawn.Run(cmd)
+	} catch err {
+		if fault.Is(err, fault.DeadlineExceeded) {
+			return Out{Code: 124, Stdout: "", Stderr: "timeout\n"}
+		}
+		return Out{Code: -1, Stdout: "", Stderr: say.Str(err) + "\n"}
+	}
+	return Out{Code: result.Code, Stdout: result.Stdout, Stderr: result.Stderr}
+}
+
+fn exec(argv []str, dir str, seconds i64) Out {
+	let cmd = spawn.Cmd{Argv: argv, Env: spawn.Env.Inherit, Dir: dir, Stdin: spawn.Stdio.Null, Stdout: spawn.Stdio.Pipe, Stderr: spawn.Stdio.Pipe, MaxOutput: 4 * 1024 * 1024}
+	let result = within seconds * 1000000000 {
+		try spawn.Run(cmd)
+	} catch err {
+		if fault.Is(err, fault.DeadlineExceeded) {
+			return Out{Code: 124, Stdout: "", Stderr: "CI timeout\n"}
+		}
+		return Out{Code: -1, Stdout: "", Stderr: say.Str(err) + "\n"}
+	}
+	return Out{Code: result.Code, Stdout: result.Stdout, Stderr: result.Stderr}
+}
+
+fn firstDifference(left str, right str) str {
+	let a = lines(left)
+	let b = lines(right)
+	for i in 0..len(a) {
+		if i >= len(b) {
+			return "line " + mint.Itoa(i + 1) + ": Tin='" + a[i] + "'; oracle='<EOF>'"
+		}
+		if a[i] != b[i] {
+			return "line " + mint.Itoa(i + 1) + ": Tin='" + a[i] + "'; oracle='" + b[i] + "'"
+		}
+	}
+	if len(b) > len(a) {
+		return "line " + mint.Itoa(len(a) + 1) + ": Tin='<EOF>'; oracle='" + b[len(a)] + "'"
+	}
+	return "exit status differs"
+}
+
+fn commandText(argv []str) str {
+	return twine.Join(argv, " ")
+}
+
+fn exitKind(code i64) str {
+	if code == 124 {
+		return "timeout"
+	}
+	if code < 0 {
+		return "signal"
+	}
+	return "exit " + mint.Itoa(code)
+}
+
+fn compilerKind(code i64, stderr str) str {
+	if twine.Contains(stderr, "E990 INTERNAL") {
+		return "E990 INTERNAL"
+	}
+	if code == 124 {
+		return "timeout"
+	}
+	if code < 0 {
+		return "signal"
+	}
+	for line in lines(stderr) {
+		for word in twine.Fields(line) {
+			if twine.HasPrefix(word, "E") && len(word) == 4 {
+				return "diagnostic " + word
+			}
+		}
+	}
+	return exitKind(code)
+}
+
+fn record(o Options, f Failure) {
+	let signature = seal.Hex(seal.Sha256(f.Kind + "|" + f.Detail))[0:16]
+	let dest = join(o.Out, signature)
+	// mkdir is the deduplication lock. Only its winner writes the signature directory.
+	if !mkdir(dest) {
+		return
+	}
+	for i in 0..len(f.Files) {
+		if quarry.Exists(join(f.Work, f.Files[i])) {
+			let content = fileRead(join(f.Work, f.Files[i]))
+			fileWrite(join(dest, f.Files[i]), content)
+		}
+	}
+	fileWrite(join(dest, "outputs.txt"), twine.Join(f.Outputs, "\n"))
+	mut commands = []str{}
+	for c in f.Commands {
+		commands = append(commands, c)
+	}
+	fileWrite(join(dest, "commands.txt"), twine.Join(commands, "\n") + "\n")
+	fileWrite(join(dest, "signature.txt"), f.Kind + ": " + f.Detail + "\nseed: " + mint.Itoa(f.Seed) + "\n")
+	say.Line("FAIL", signature, "seed=" + mint.Itoa(f.Seed), f.Kind + ":", f.Detail)
+}
+
+fn reportFailure(o Options, kind str, detail str, seed i64, work str, outputs []str, commands []str) {
+	record(o, Failure{Kind: kind, Detail: detail, Seed: seed, Work: work, Files: []str{"prog.tin", "prog.go"}, Outputs: outputs, Commands: commands})
+}
+
+fn check(o Options, gen str, seed i64, scratch str) bool {
+	let work = tempDir(scratch, "seed-")
+	let tin = join(work, "prog.tin")
+	let gofile = join(work, "prog.go")
+	let genCmd = []str{gen, "--seed", mint.Itoa(seed), "--size", mint.Itoa(o.Size), "--tin", tin, "--go", gofile}
+	let generated = run(genCmd, 20)
+	if generated.Code != 0 {
+		reportFailure(o, "generator failure", generated.Stderr, seed, work, []str{generated.Stdout, generated.Stderr}, []str{commandText(genCmd)})
+		remove(work)
+		return false
+	}
+	if !quarry.Exists(o.Compiler) {
+		reportFailure(o, "compiler failure", "compiler unavailable: " + o.Compiler, seed, work, []str{}, []str{commandText(genCmd)})
+		remove(work)
+		return false
+	}
+	let native = join(work, "tin-native")
+	let build = []str{o.Compiler, "-o", native, tin}
+	let compiled = run(build, 20)
+	if compiled.Code != 0 || twine.Contains(compiled.Stderr, "E990 INTERNAL") {
+		let detail = compilerKind(compiled.Code, compiled.Stderr)
+		reportFailure(o, "compiler failure", detail, seed, work, []str{compiled.Stdout, compiled.Stderr}, []str{commandText(genCmd), commandText(build)})
+		remove(work)
+		return false
+	}
+	let nativeRun = run([]str{native}, 20)
+	if nativeRun.Code != 0 {
+		reportFailure(o, "program failure", exitKind(nativeRun.Code), seed, work, []str{nativeRun.Stdout, nativeRun.Stderr}, []str{commandText(build), native})
+		remove(work)
+		return false
+	}
+	if has(o.Oracles, "go") && exec([]str{"sh", "-c", "command -v go >/dev/null 2>&1"}, "", 5).Code == 0 {
+		let goCmd = []str{"go", "run", gofile}
+		let twin = run(goCmd, 30)
+		if twin.Code != 0 {
+			reportFailure(o, "Go twin failure", exitKind(twin.Code), seed, work, []str{nativeRun.Stdout, nativeRun.Stderr, twin.Stdout, twin.Stderr}, []str{commandText(build), native, commandText(goCmd)})
+			remove(work)
+			return false
+		}
+		if nativeRun.Stdout != twin.Stdout {
+			reportFailure(o, "Go twin mismatch", firstDifference(nativeRun.Stdout, twin.Stdout), seed, work, []str{"Tin stdout:\n" + nativeRun.Stdout, "Tin stderr:\n" + nativeRun.Stderr, "Go stdout:\n" + twin.Stdout, "Go stderr:\n" + twin.Stderr}, []str{commandText(build), native, commandText(goCmd)})
+			remove(work)
+			return false
+		}
+	}
+	if has(o.Oracles, "noopt") {
+		let noopt = join(work, "tin-noopt")
+		let nooptCmd = []str{o.Compiler, "-noopt", "-o", noopt, tin}
+		let nooptBuild = run(nooptCmd, 20)
+		if nooptBuild.Code != 0 && (twine.Contains(nooptBuild.Stderr, "unknown option") || twine.Contains(nooptBuild.Stderr, "unknown flag") || twine.Contains(nooptBuild.Stderr, "UNRECOGNIZED_OPTION") || twine.Contains(nooptBuild.Stderr, "cannot open -noopt")) {
+			say.Line("SKIP noopt oracle: this tinc has no -noopt flag")
+		} else if nooptBuild.Code != 0 {
+			reportFailure(o, "compiler failure", "-noopt build: " + compilerKind(nooptBuild.Code, nooptBuild.Stderr), seed, work, []str{nooptBuild.Stdout, nooptBuild.Stderr}, []str{commandText(nooptCmd)})
+			remove(work)
+			return false
+		} else {
+			let nooptRun = run([]str{noopt}, 20)
+			if nooptRun.Code != 0 {
+				reportFailure(o, "program failure", "-noopt " + exitKind(nooptRun.Code), seed, work, []str{nooptRun.Stdout, nooptRun.Stderr}, []str{commandText(nooptCmd), noopt})
+				remove(work)
+				return false
+			}
+			if nooptRun.Stdout != nativeRun.Stdout {
+				reportFailure(o, "no-optimization mismatch", firstDifference(nativeRun.Stdout, nooptRun.Stdout), seed, work, []str{"optimized stdout:\n" + nativeRun.Stdout, "noopt stdout:\n" + nooptRun.Stdout}, []str{commandText(build), native, commandText(nooptCmd), noopt})
+				remove(work)
+				return false
+			}
+		}
+	}
+	if has(o.Oracles, "cross") {
+		if osName() != "linux" {
+			say.Line("SKIP cross oracle: Linux is required to execute Linux targets")
+		} else {
+			mut target = "linux-arm64"
+			if arch() == "arm64" {
+				target = "linux-amd64"
+			}
+			let cross = join(work, "tin-" + target)
+			let crossCmd = []str{o.Compiler, "-target", target, "-o", cross, tin}
+			let crossBuild = run(crossCmd, 20)
+			if crossBuild.Code != 0 {
+				reportFailure(o, "cross target failure", target + ": " + compilerKind(crossBuild.Code, crossBuild.Stderr), seed, work, []str{crossBuild.Stdout, crossBuild.Stderr}, []str{commandText(crossCmd)})
+				remove(work)
+				return false
+			}
+			mut runner = []str{}
+			mut available = true
+			if target == "linux-arm64" {
+				if arch() != "arm64" {
+					if exec([]str{"sh", "-c", "command -v qemu-aarch64 >/dev/null 2>&1"}, "", 5).Code == 0 {
+						runner = []str{"qemu-aarch64"}
+					} else if exec([]str{"sh", "-c", "command -v docker >/dev/null 2>&1"}, "", 5).Code == 0 {
+						runner = []str{"docker", "run", "--rm", "-v", work + ":/w", "arm64v8/debian", "/w/tin-linux-arm64"}
+					} else {
+						available = false
+					}
+				}
+			} else if arch() != "amd64" {
+				if exec([]str{"sh", "-c", "command -v qemu-x86_64 >/dev/null 2>&1"}, "", 5).Code == 0 {
+					runner = []str{"qemu-x86_64"}
+				} else {
+					available = false
+				}
+			}
+			if !available {
+				say.Line("SKIP cross execution " + target + ": no native runner, qemu-user, or Docker")
+			} else {
+				mut runCmd = runner
+				if len(runner) == 0 || runner[0] != "docker" {
+					runCmd = append(runCmd, join(work, "tin-" + target))
+				}
+				let runResult = run(runCmd, 20)
+				if runResult.Code != 0 {
+					reportFailure(o, "cross target failure", target + ": " + exitKind(runResult.Code), seed, work, []str{runResult.Stdout, runResult.Stderr}, []str{commandText(crossCmd), commandText(runCmd)})
+					remove(work)
+					return false
+				}
+				if runResult.Stdout != nativeRun.Stdout {
+					reportFailure(o, "cross target mismatch", target + ": " + firstDifference(nativeRun.Stdout, runResult.Stdout), seed, work, []str{"native stdout:\n" + nativeRun.Stdout, target + " stdout:\n" + runResult.Stdout}, []str{commandText(build), native, commandText(crossCmd), commandText(runCmd)})
+					remove(work)
+					return false
+				}
+			}
+		}
+	}
+	remove(work)
+	return true
+}
+
+fn worker(o Options, gen str, id i64, scratch str) (i64, i64) {
+	let started = tide.Now()
+	mut seed = o.Seed + id
+	mut count i64
+	mut failures i64
+	for (tide.Now() - started) / 1000000000 < o.Seconds {
+		if !check(o, gen, seed, scratch) {
+			failures += 1
+		}
+		count += 1
+		seed += o.Jobs
+	}
+	return count, failures
+}
+
+fn runJobs(o Options, gen str, scratch str) !(i64, i64) {
+	scope s {
+		for i in 0..o.Jobs {
+			let id = i
+			s.spawn(fn() ! {
+				let (count, failures) = worker(o, gen, id, scratch)
+				// Each task owns a disjoint counter file; the parent aggregates after scope joins.
+				fileWrite(join(scratch, "count-" + mint.Itoa(id)), mint.Itoa(count))
+				fileWrite(join(scratch, "failures-" + mint.Itoa(id)), mint.Itoa(failures))
+			})
+		}
+	}
+	mut total i64
+	mut failures i64
+	for i in 0..o.Jobs {
+		total += number(fileRead(join(scratch, "count-" + mint.Itoa(i))))
+		failures += number(fileRead(join(scratch, "failures-" + mint.Itoa(i))))
+	}
+	return total, failures
+}
+
+fn main() {
+	let rawArgs = quarry.Args()
+	if len(rawArgs) > 1 && rawArgs[1] == "--first-difference" {
+		if len(rawArgs) != 4 {
+			say.Line("usage: run.tin --first-difference LEFT RIGHT")
+			quarry.Exit(2)
+		}
+		say.Line(firstDifference(rawArgs[2], rawArgs[3]))
+		return
+	}
+	let o = parse()
+	if !validate(o) {
+		say.Line("usage: run.tin --oracle go,cross[,noopt] --seconds 600 --jobs N --out bin/fuzz/")
+		quarry.Exit(2)
+	}
+	let gen = generator(o.Generator)
+	if len(gen) == 0 {
+		say.Line("SKIP fuzz runner: generator is not present (expected bin/ci/tools/gen or bin/fuzz/gen)")
+		return
+	}
+	if has(o.Oracles, "go") && exec([]str{"sh", "-c", "command -v go >/dev/null 2>&1"}, "", 5).Code != 0 {
+		say.Line("SKIP Go twin oracle: go is not installed")
+	}
+	mkdirs(o.Out)
+	let scratch = tempDir(join(root(), "bin/ci"), "fuzz-run-")
+	let (total, failures) = runJobs(o, gen, scratch) catch err {
+		say.Line("runner worker failed:", say.Str(err))
+		quarry.Exit(1)
+		return
+	}
+	remove(scratch)
+	say.Line("completed", total, "seeds with", failures, "failing cases; unique signatures are in", o.Out)
+	if failures > 0 {
+		quarry.Exit(1)
+	}
+}

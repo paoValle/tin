@@ -65,6 +65,8 @@ jobs:
         run: |
           sh tools/ci/tin.sh python_policy_check
           sh tools/ci/tin.sh tools/gen/gendoc.tin --check
+      - name: Tin differential runner contract
+        run: sh tools/ci/tin.sh fuzz_check
       - name: Build from seed and verify self-hosting fixed point
         run: make bootstrap
       - name: Strict language and standard library suite
