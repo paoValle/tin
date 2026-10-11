@@ -1,0 +1,17 @@
+package main
+
+fn left(x i64) i64 {
+	return x << 7
+}
+
+fn right(x i64) i64 {
+	return x >> 5
+}
+
+fn unsignedRight(x u64) u64 {
+	return x >> 9
+}
+
+fn main() {
+	_ = left(1) ^ right(-1) ^ i64(unsignedRight(1))
+}

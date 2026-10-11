@@ -1,0 +1,17 @@
+# Constant shifts use immediate operands on both backends.
+
+[arm64]
+CHECK: _left:
+CHECK: lsl x0, x9, #7
+CHECK: _right:
+CHECK: asr x0, x9, #5
+CHECK: _unsignedRight:
+CHECK: lsr x0, x9, #9
+
+[amd64]
+CHECK: # L[0-9]+: left
+CHECK: # L[0-9]+: right
+CHECK: # L[0-9]+: unsignedRight
+CHECK: shl r\w+,0x7
+CHECK: sar r\w+,0x5
+CHECK: shr r\w+,0x9
