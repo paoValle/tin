@@ -1,0 +1,9 @@
+x * -1 = 9223372036854775807
+-1 * x = -42
+min * -1 panic: integer overflow: *
+-1 * min panic: integer overflow: *
+min * m panic: integer overflow: *
+-min panic: integer overflow: negation
+i32 min * -1 panic: integer overflow: *
+i8 min * -1 panic: integer overflow: *
+i8 5 * -1 = -5

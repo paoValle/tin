@@ -458,7 +458,10 @@ fn x_checked_const(op str, dst i64, l i64, c i64, t Ty) {
 		} else if c == 1 {
 			x_mov(dst, l)
 		} else if c == -1 && signed != 0 {
-			x_checked_neg(t, dst, l)
+			// l * -1 is a negation that reports a failed *, the operator written.
+			x_mov(dst, l)
+			emit1(X_NEG, dst)
+			x_checked_flags(k, signed)
 		} else if signed != 0 && x64_fits32(c) != 0 {
 			emit3(X_IMUL_RRI, dst, l, c)
 			x_checked_flags(k, signed)

@@ -1,0 +1,55 @@
+package main
+
+// Multiplying by the constant -1 compiles to a negation, but an overflow there is a failed *,
+// the operator the program wrote, and its panic says so: `x * -1` and `-1 * x` on the most
+// negative value report "integer overflow: *", as a multiply by a -1 held in a variable does.
+// A written negation still reports "negation". Found by differential fuzzing against Go.
+
+import "say"
+
+fn mulRight(x i64) i64 {
+	return x * -1
+}
+
+fn mulLeft(x i64) i64 {
+	return i64(-1) * x
+}
+
+fn mulVar(x i64, m i64) i64 {
+	return x * m
+}
+
+fn neg(x i64) i64 {
+	return -x
+}
+
+fn mulRight32(x i32) i32 {
+	return x * -1
+}
+
+fn mulRight8(x i8) i8 {
+	return x * -1
+}
+
+fn show(name str, f fn() str) {
+	let v = guard {
+		f()
+	} catch err {
+		say.Line(name, err)
+		return
+	}
+	say.Line(name, "=", v)
+}
+
+fn main() {
+	let min = i64(-9223372036854775807) - 1
+	show("x * -1", fn() str { return "{mulRight(min + 1)}" })
+	show("-1 * x", fn() str { return "{mulLeft(42)}" })
+	show("min * -1", fn() str { return "{mulRight(min)}" })
+	show("-1 * min", fn() str { return "{mulLeft(min)}" })
+	show("min * m", fn() str { return "{mulVar(min, -1)}" })
+	show("-min", fn() str { return "{neg(min)}" })
+	show("i32 min * -1", fn() str { return "{mulRight32(i32(-2147483647) - 1)}" })
+	show("i8 min * -1", fn() str { return "{mulRight8(i8(-127) - 1)}" })
+	show("i8 5 * -1", fn() str { return "{mulRight8(5)}" })
+}

@@ -1928,7 +1928,9 @@ fn checked_const(op str, dst i64, l i64, c i64, t Ty) {
 		} else if c == 1 {
 			mov(dst, l)
 		} else if c == -1 && signed != 0 {
-			gen_checked_neg(t, dst, l)
+			// l * -1 is a negation that reports a failed *, the operator written.
+			emit4(I_SUBS, dst, ZR, l, 0)
+			emit2(I_BCOND, C_VS, ovf_stub(k))
 		} else if p > 0 && c > 0 && signed != 0 {
 			// l << p keeps every bit when shifting back gives l again.
 			emit3(I_LSLI, X16, l, p)
