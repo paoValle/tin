@@ -137,7 +137,7 @@ jobs:
           docker buildx imagetools inspect "$image:$VERSION" --raw | jq -e '[.manifests[].platform.architecture] | sort == ["amd64","arm64"]'
           if [ "${VERSION#*-}" = "$VERSION" ]; then
             docker buildx imagetools create -t "$image:latest" "$image:$VERSION"
-            gh release create "v$VERSION" release/*.tar.gz release/*.zip release/SHA256SUMS release/install.sh --verify-tag --title "Tin $VERSION" --generate-notes
+            gh release create "v$VERSION" release/*.tar.gz release/SHA256SUMS release/install.sh --verify-tag --title "Tin $VERSION" --generate-notes
           else
-            gh release create "v$VERSION" release/*.tar.gz release/*.zip release/SHA256SUMS release/install.sh --verify-tag --title "Tin $VERSION" --generate-notes --prerelease
+            gh release create "v$VERSION" release/*.tar.gz release/SHA256SUMS release/install.sh --verify-tag --title "Tin $VERSION" --generate-notes --prerelease
           fi
