@@ -345,7 +345,7 @@ fn main() {
 	out = append(out, "")
 	out = append(out, "## say")
 	out = append(out, "")
-	out = append(out, "Built into the compiler (formatting by static type, no reflection): `say.Line(a, b...)`, `say.Text(...)`, `say.Out(format, ...)`, `say.Fmt(format, ...) str`, `say.Str(x) str`, `say.Fault(format, ...) fault`, `say.To(fd, ...)`, `say.LineTo(fd, ...)`. See toolchain/docs/LANGUAGE.md.")
+	out = append(out, "Built into the compiler (formatting by static type, no reflection): `say.Line(a, b...)`, `say.Text(...)`, `say.Out(format, ...)`, `say.Fmt(format, ...) str`, `say.Str(x) str`, `say.Fault(format, ...) fault`, `say.To(fd, ...)`, `say.LineTo(fd, ...)`. See LANGUAGE.md.")
 	out = append(out, "")
 	for p in order {
 		if p == "say" {

@@ -56,6 +56,20 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      # The documentation and design notes live in usetin/docs; the checks that read them (docs_check,
+      # diagnostics_check, the libc inventory guard, gendoc --check) read it through these links.
+      # Bump the pinned commit when the documentation changes (tools/dev/setup.sh links a local checkout).
+      - name: Check out the documentation (usetin/docs, pinned)
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: usetin/docs
+          ref: 9bb6c8d4638eb7e43ac0e76cf5842ac09767a542
+          path: .docs
+          persist-credentials: false
+      - name: Link the documentation into the tree
+        run: |
+          ln -s "$PWD/.docs" toolchain/docs
+          ln -s "$PWD/.docs/design" design
       # Docker Hub limits unauthenticated pulls per runner address (429 Too Many Requests): the images the
       # checks run (spawn_check, static_check, distribution_check) come from Google's mirror of it and are
       # tagged under their Docker Hub names, so docker run and docker build find them locally.
@@ -350,14 +364,6 @@ jobs:
           MINIO_ROOT_USER=tinminio MINIO_ROOT_PASSWORD=tinminiosecret nohup "$RUNNER_TEMP/minio-bin/minio" server "$RUNNER_TEMP/minio-data" --address 127.0.0.1:9000 --quiet > "$RUNNER_TEMP/minio.log" 2>&1 &
           for i in $(seq 1 60); do curl -fs -o /dev/null http://127.0.0.1:9000/minio/health/live && break; sleep 1; done
           S3_ENDPOINT=http://127.0.0.1:9000 S3_ACCESS_KEY=tinminio S3_SECRET_KEY=tinminiosecret S3_BUCKET=tin-ci S3_UPLOAD_BYTES=5368709120 sh tools/ci/tin.sh s3_check real || { tail -n 50 "$RUNNER_TEMP/minio.log"; exit 1; }
-      - name: tinhub (unit tests and the build; design/tinhub.md)
-        if: ${{ !(runner.os == 'Linux' && runner.arch == 'X64') }}
-        run: sh products/tinhub/tests/run.sh
-      - name: tinhub against the runner's PostgreSQL (schema, event queue, packs and refs, crash points, readiness, drain; Linux x86-64)
-        if: runner.os == 'Linux' && runner.arch == 'X64'
-        run: |
-          sudo -u postgres createdb -O tin tinhub_test
-          TINHUB_TEST_MINIO=http://127.0.0.1:9000 TINHUB_TEST_MINIO_KEY=tinminio TINHUB_TEST_MINIO_SECRET=tinminiosecret TINHUB_TEST_DB=127.0.0.1:5432/tinhub_test TINHUB_TEST_DB_USER=tin TINHUB_TEST_DB_PASSWORD=tinpass sh products/tinhub/tests/run.sh
       - name: HTTP correctness, RSS stability and shutdown (Linux)
         if: runner.os == 'Linux'
         run: sh tools/ci/tin.sh http_check

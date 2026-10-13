@@ -5,7 +5,7 @@ import "mint"
 import "say"
 import "twine"
 
-// Loop iterations give their memory back (#633): binary-trees (bench/v2/bintrees.tin), which builds and checks each depth's trees
+// Loop iterations give their memory back (#633): binary-trees (toolchain/tests/fixtures/bench/bintrees.tin), which builds and checks each depth's trees
 // inside one loop iteration, peaks within 3x of its Go twin's resident size, and the plain-program loop of the issue (5 million steps
 // of a struct and a string) under 16 MiB, and the loop bodies of #714 (an inlined call that allocates, a slice literal, an inner loop)
 // under 16 MiB each. Linux only: peak RSS is the child's ru_maxrss as /usr/bin/time reports it.
@@ -76,8 +76,8 @@ fn main() {
 		return
 	}
 	let dir = ci.TempDir(ci.Join(ci.Root(), "bin/ci"), "loop-memory-")
-	ci.BuildTin("bench/v2/bintrees.tin", ci.Join(dir, "bintrees"), "", []str{})
-	ci.Must(ci.Exec([]str{"go", "build", "-o", ci.Join(dir, "bintrees_go"), "bench/v2/bintrees.go"}, ci.Root(), 300), "go build bintrees")
+	ci.BuildTin("toolchain/tests/fixtures/bench/bintrees.tin", ci.Join(dir, "bintrees"), "", []str{})
+	ci.Must(ci.Exec([]str{"go", "build", "-o", ci.Join(dir, "bintrees_go"), "toolchain/tests/fixtures/bench/bintrees.go"}, ci.Root(), 300), "go build bintrees")
 	ci.Write(ci.Join(dir, "loop.tin"), LOOP)
 	ci.BuildTin(ci.Join(dir, "loop.tin"), ci.Join(dir, "loop"), "", []str{})
 	let (code, tinOut, tin) = peak(ci.Join(dir, "bintrees"))

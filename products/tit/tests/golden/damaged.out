@@ -1,8 +1,0 @@
-objects: 1394 damaged inputs, 0 panics
-packs: 456 damaged inputs, 0 panics
-indexes: 584 damaged inputs, 0 panics
-oplog records: 498 damaged inputs, 0 panics
-protocol frames: 260 damaged inputs, 0 panics
-git objects: 844 damaged inputs, 0 panics
-git-ids tables: 328 damaged inputs, 0 panics
-Tin source, conflict lines and ref targets: 452 damaged inputs, 0 panics

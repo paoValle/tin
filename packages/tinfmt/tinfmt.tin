@@ -2,7 +2,7 @@ package tinfmt
 
 import "twine"
 
-// Package tinfmt is the canonical layout of Tin source (toolchain/docs/TOOLING.md, "Formatting"): the whitespace of a
+// Package tinfmt is the canonical layout of Tin source (TOOLING.md, "Formatting"): the whitespace of a
 // file, and nothing else. It changes the indentation (tabs, by bracket depth, one more level for a line that continues
 // an expression), trailing whitespace, runs of blank lines, the space after `//` and after a comma, and the space
 // around the assignment, comparison and logical operators, and keeps every other byte: the alignment of fields and of

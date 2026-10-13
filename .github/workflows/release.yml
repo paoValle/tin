@@ -91,16 +91,6 @@ jobs:
           else
             sh tools/ci/tin.sh distribution_check "bin/dist/tin-$VERSION-$TARGET.tar.gz"
           fi
-      - name: Build Tinland.app (macOS)
-        if: runner.os == 'macOS'
-        env:
-          TARGET: ${{ matrix.target }}
-          VERSION: ${{ needs.validate.outputs.version }}
-        run: |
-          tools/dev/tinland_app.sh bin/app
-          zip_name="Tinland-$VERSION-$TARGET.zip"
-          (cd bin/app && ditto -c -k --keepParent Tinland.app "../dist/$zip_name")
-          (cd bin/dist && shasum -a 256 "$zip_name" > "$zip_name.sha256")
       - name: Publish the tested native image
         if: runner.os == 'Linux'
         env:

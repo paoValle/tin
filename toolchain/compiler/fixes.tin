@@ -36,7 +36,7 @@ fn fix_table() str {
 		"E101\trename one of the declarations, or merge them into one.\n" +
 		"E102\tgive the declaration another name.\n" +
 		"E103\tdeclare the name before using it, correct its spelling, or import its package.\n" +
-		"E104\tuse the package's exported API (toolchain/docs/STDLIB.md); in your own package, capitalize the name to export it.\n" +
+		"E104\tuse the package's exported API (STDLIB.md); in your own package, capitalize the name to export it.\n" +
 		"E110\tcorrect the path; for a package in the program's own tree, write it relative to the importing file (`import \"./geom\"`).\n" +
 		"E111\treview the change; if it is intended, run `tin vendor` to copy the dependency again and record the new hashes (or regenerate the entry with `shasum -a 256 example.tin`).\n" +
 		"E112\tadd the package to `tin.mod` with `require` and run `tin vendor`.\n" +
@@ -163,7 +163,7 @@ fn fix_table() str {
 		"E802\tuse the standard library function that wraps it (`hearth.Core()` for the core). A vendored package whose `tin.mod` declares `caps unsafe` may use them, like the library (`toolchain/std/`, `packages/`, `toolchain/runtime/`).\n" +
 		"E803\tprograms pass structs, slices and maps by reference already; there is no `&` outside the library (`toolchain/std/`, `packages/`, `toolchain/runtime/`).\n" +
 		"E804\tif the dependency should dial, add `caps net` to its `tin.mod` (upstream) and run `tin vendor`; the lock then shows the new capability for review. Otherwise do not use the package. `tin caps main.tin` prints what each package can reach.\n" +
-		"E901\tuse one of the listed targets (toolchain/docs/PORTING.md).\n" +
+		"E901\tuse one of the listed targets (PORTING.md).\n" +
 		"E902\tpass `-edition 1`, or leave the flag out: each file is read in the edition it is written in. Edition 0 is retired (#226); `tin fix -edition 1` translates it.\n" +
 		"E903\tset `TIN_ROOT` to the Tin checkout or installation, or run the compiler from its installed `bin/` (the `tin` command sets `TIN_ROOT` itself).\n" +
 		"E904\tcreate the directory first, or choose a writable path.\n" +

@@ -2,7 +2,7 @@
 
 Describe the problem and resulting behavior. Link the issue: `Fixes #N` when this PR completes it and targets `main`; `Part of #N` otherwise (stacked PRs, partial steps).
 
-Spec (Tin 1 work): `design/design_____.md §__`
+Spec (Tin 1 work): `design/design_____.md §__` in [usetin/docs](https://github.com/usetin/docs)
 
 ## Touches hot files
 
@@ -23,7 +23,7 @@ Test(s):
 ## Validation
 
 - [ ] Strict suite, regressions, `tools/ci` checks, `make bootstrap` fixed point (compiles with the checked-in seeds).
-- [ ] Linux numbers (bench-linux run link) if a hot path changed; macOS numbers are never results (AGENTS.md).
+- [ ] Linux numbers ([usetin/bench](https://github.com/usetin/bench) bench-linux run link) if a hot path changed; macOS numbers are never results (AGENTS.md).
 - [ ] Docs updated (LANGUAGE.md / RUNTIME.md / STDLIB.md regenerated), or why not.
 
 The required `CI` check must pass before merging.

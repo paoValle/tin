@@ -13,7 +13,7 @@ import "twine"
 
 // excluded are glob patterns on paths from the repository root ('*' also matches '/').
 fn excluded() []str {
-	return []str{"toolchain/compiler/check.tin", "toolchain/compiler/lower.tin", "toolchain/compiler/region.tin", "toolchain/compiler/parse.tin", "toolchain/compiler/inline.tin", "toolchain/compiler/gen*.tin", "toolchain/runtime/runtime*.tin", "packages/anvil/anvil*.tin", "*_bad.tin", "toolchain/tests/edition1/*", "tools/ci/fixtures/*", "toolchain/tests/fixtures/*", "*/vendor/*", "products/tinland/vscode/*"}
+	return []str{"toolchain/compiler/check.tin", "toolchain/compiler/lower.tin", "toolchain/compiler/region.tin", "toolchain/compiler/parse.tin", "toolchain/compiler/inline.tin", "toolchain/compiler/gen*.tin", "toolchain/runtime/runtime*.tin", "packages/anvil/anvil*.tin", "*_bad.tin", "toolchain/tests/edition1/*", "tools/ci/fixtures/*", "toolchain/tests/fixtures/*", "*/vendor/*"}
 }
 
 // glob matches the path against a pattern whose only special character is '*' (any run, slashes included).

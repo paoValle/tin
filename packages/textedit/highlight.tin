@@ -1,6 +1,6 @@
 package textedit
 
-// Syntax classes of Tin source, from the edition 1 lexical rules (toolchain/docs/LANGUAGE.md): the reserved words,
+// Syntax classes of Tin source, from the edition 1 lexical rules (LANGUAGE.md): the reserved words,
 // // comments, "strings", `raw strings` (which may run over several lines), runes, numbers with their units.
 const KindPlain = 0
 const KindKeyword = 1

@@ -75,7 +75,7 @@ fn main() {
 Install a release without a local toolchain:
 
 ```sh
-curl -fL https://github.com/yasserreslan/tin/releases/latest/download/install.sh -o install-tin.sh
+curl -fL https://github.com/usetin/tin/releases/latest/download/install.sh -o install-tin.sh
 sh install-tin.sh
 export PATH="$HOME/.tin/bin:$PATH"
 ```
@@ -83,10 +83,10 @@ export PATH="$HOME/.tin/bin:$PATH"
 Or compile in Docker:
 
 ```sh
-docker run --rm -v "$PWD:/src" ghcr.io/yasserreslan/tin:latest build app.tin -o app
+docker run --rm -v "$PWD:/src" ghcr.io/usetin/tin:latest build app.tin -o app
 ```
 
-See [distribution and containers](toolchain/docs/DISTRIBUTION.md) for checksums, upgrades and
+See [distribution and containers](https://github.com/usetin/docs/blob/main/DISTRIBUTION.md) for checksums, upgrades and
 multi-stage Dockerfiles. To build and test from a source checkout:
 
 ```sh
@@ -100,16 +100,16 @@ make test                     # the strict suite
 make bootstrap                # tinc rebuilds itself twice; the binaries must be identical
 ```
 
-Documentation: [toolchain/docs/README.md](toolchain/docs/README.md), the index. The language reference is
-[toolchain/docs/LANGUAGE.md](toolchain/docs/LANGUAGE.md) (agents start with the short
-[toolchain/docs/AGENT_PRIMER.md](toolchain/docs/AGENT_PRIMER.md)), the standard library [toolchain/docs/STDLIB.md](toolchain/docs/STDLIB.md)
+Documentation: [docs/README.md](https://github.com/usetin/docs/blob/main/README.md), the index. The language reference is
+[docs/LANGUAGE.md](https://github.com/usetin/docs/blob/main/LANGUAGE.md) (agents start with the short
+[docs/AGENT_PRIMER.md](https://github.com/usetin/docs/blob/main/AGENT_PRIMER.md)), the standard library [docs/STDLIB.md](https://github.com/usetin/docs/blob/main/STDLIB.md)
 (generated from the sources by `tools/gen/gendoc.tin`), commands and builds
-[toolchain/docs/TOOLING.md](toolchain/docs/TOOLING.md), targets and containers [toolchain/docs/PORTING.md](toolchain/docs/PORTING.md),
-the runtime [toolchain/docs/RUNTIME.md](toolchain/docs/RUNTIME.md), the compiler
-[toolchain/docs/COMPILER.md](toolchain/docs/COMPILER.md), and full benchmark results
-[toolchain/docs/PERFORMANCE.md](toolchain/docs/PERFORMANCE.md).
+[docs/TOOLING.md](https://github.com/usetin/docs/blob/main/TOOLING.md), targets and containers [docs/PORTING.md](https://github.com/usetin/docs/blob/main/PORTING.md),
+the runtime [docs/RUNTIME.md](https://github.com/usetin/docs/blob/main/RUNTIME.md), the compiler
+[docs/COMPILER.md](https://github.com/usetin/docs/blob/main/COMPILER.md), and full benchmark results
+[docs/PERFORMANCE.md](https://github.com/usetin/docs/blob/main/PERFORMANCE.md).
 
-CI and the issue-to-regression workflow: [toolchain/docs/CI.md](toolchain/docs/CI.md).
+CI and the issue-to-regression workflow: [docs/CI.md](https://github.com/usetin/docs/blob/main/CI.md).
 
 ## Standard library
 
@@ -133,22 +133,22 @@ CI and the issue-to-regression workflow: [toolchain/docs/CI.md](toolchain/docs/C
 
 Language and library checks live in `toolchain/tests/v2/`, and protocol client checks in
 `tools/ci/`. Core library behavior is also checked against Go equivalents in
-`bench/ref/`; see [design/stdlib_verified.md](design/stdlib_verified.md).
+`bench/ref/`; see [design/stdlib_verified.md](https://github.com/usetin/docs/blob/main/design/stdlib_verified.md).
 
 ## Performance
 
 **Policy:** reference benchmarks are measured on Linux; macOS is a development platform
 and its numbers are not reference results (see
-[toolchain/docs/PERFORMANCE.md](toolchain/docs/PERFORMANCE.md#benchmark-policy)). The tables after the v0.4
+[docs/PERFORMANCE.md](https://github.com/usetin/docs/blob/main/PERFORMANCE.md#benchmark-policy)). The tables after the v0.4
 service benchmark were measured on the macOS development machine before this policy and
-are kept until Linux reference runs replace them; the Linux workflow `.github/workflows/bench-linux.yml`
-tracks Tin/Go ratios on GitHub's Linux runners meanwhile.
+are kept until Linux reference runs replace them; the Linux workflow
+[usetin/bench](https://github.com/usetin/bench) (`bench-linux.yml`) tracks Tin/Go ratios on GitHub's Linux runners meanwhile.
 
 **v0.4 service benchmark on Linux** (`GET /users/{id}` through Redis over MySQL, Tin vs Go
-+ chi under wrk2, `bench/v04`): GitHub `ubuntu-24.04` runner, AMD EPYC 7763 (4 vCPUs),
++ chi under wrk2, [usetin/bench](https://github.com/usetin/bench) `v04/`): GitHub `ubuntu-24.04` runner, AMD EPYC 7763 (4 vCPUs),
 Linux 6.17, Go 1.26.8, each server on 2 pinned cores, wrk2/Redis/MySQL on the other 2,
 median of 5 alternating rounds
-([run](https://github.com/yasserreslan/tin/actions/runs/37210593145)). On a shared runner
+([run](https://github.com/usetin/tin/actions/runs/37210593145)). On a shared runner
 only the Tin/Go ratios are meaningful (throughput above 1 and latency below 1 favour Tin):
 
 | scenario | max req/s | req per CPU-s | p99 at a fixed rate |
@@ -160,11 +160,11 @@ only the Tin/Go ratios are meaningful (throughput above 1 and latency below 1 fa
 The db p99 swings between runs (0.42 in the previous run): MySQL dominates it, so it is
 not a win either way. Tin uses more memory here (about 50 MB against 25 MB RSS). The mixed p99 is equal because
 wrk2's requests wait behind `/slow` on their own connection; details and absolute numbers
-are in [toolchain/docs/PERFORMANCE.md](toolchain/docs/PERFORMANCE.md#v04-service-benchmark-linux).
+are in [docs/PERFORMANCE.md](https://github.com/usetin/docs/blob/main/PERFORMANCE.md#v04-service-benchmark-linux).
 
 Apple M3 Pro (5 performance + 6 efficiency cores), Go 1.26, fasthttp 1.74, wrk 4.2, the
-load generator on the same machine. Run with `bench/http/run_wrk.sh` and
-`bench/http/run_pipelined.sh`.
+load generator on the same machine. Run with usetin/bench `http/run_wrk.sh` and
+`http/run_pipelined.sh`.
 
 **HTTP, 1 server core, wrk -t4 -c100, median of 3** (the server is the bottleneck):
 
@@ -198,7 +198,7 @@ servers land at 220–260k req/s, and net/http comes out about 10% ahead at 4 co
 its bursty replies let wrk batch). Per CPU-second of server time, anvil serves 328k
 requests at one core against 237k for fasthttp and 143k for net/http.
 
-**CPU benchmarks** (bench/v2, best of 3, identical output to Go). The mixed demo
+**CPU benchmarks** (usetin/bench `v2/`, best of 3, identical output to Go). The mixed demo
 (`examples/demo.tin` vs `examples/demo_go`: primes, sort, SHA-256, JSON, maps) runs in
 0.80 s against Go's 1.01 s.
 
@@ -223,24 +223,36 @@ binary-trees uses 917 MB against Go's 37 MB: a plain program never resets its po
 
 ## Layout
 
+Tin lives in several repositories under [usetin](https://github.com/usetin):
+
 ```text
-toolchain/     the language: compiler/ (lex, parse, check, lower, generics, region, inline, opt, gen + asm
-               for arm64, gen_x64 + asm_x64, macho, elf, elf_x64), runtime/, std/ (the standard library, one
-               directory per package, see std/README.md), seed/ (the compilers that start a build),
-               tests/ (v2: strict tests with expected outputs, *_bad.tin: expected compile errors), docs/
-packages/      the ecosystem: anvil, postgres, mysql, redis, kafka, tls, wire, websocket, ...
-products/      tinland (the editor, written in Tin for macOS: app/, editor/, language/ and the packages of ARCHITECTURE.md; vscode/ is the VS Code extension); tinos follows
-bench/         CPU benchmarks vs Go (v2/), HTTP benchmarks (http/), Go reference programs (ref/)
-examples/      programs to read and run
-tools/         ci/ (CI checks), gen/ (generators), dev/ (test runners, debugging helpers)
-design/        design decisions, interfaces, verification, roadmap
+usetin/tin       the language and its toolchain
+  toolchain/     compiler/ (lex, parse, check, lower, generics, region, inline, opt, gen + asm for arm64,
+                 gen_x64 + asm_x64, macho, elf, elf_x64), runtime/, std/ (the standard library, one directory
+                 per package, see std/README.md), seed/ (the compilers that start a build),
+                 tests/ (v2: strict tests with expected outputs, *_bad.tin: expected compile errors)
+  packages/      the ecosystem: anvil, postgres, mysql, redis, kafka, tls, wire, websocket, ...
+  bench/ref/     the Go reference programs the checks compare against
+  examples/      programs to read and run
+  tools/         ci/ (CI checks), gen/ (generators), dev/ (test runners, setup.sh, debugging helpers)
+  docker/        the builder images the Linux checks and the published container use
+
+usetin/docs      the documentation (LANGUAGE.md, STDLIB.md, TOOLING.md, RUNTIME.md, ERRORS.md, ...) and design/
+usetin/bench     the benchmark suites (v2/ CPU, http/, v04/ the service benchmark, tit/)
+usetin/tit       version control written in Tin
+usetin/tinhub    tit repository hosting, reviews and CI
+usetin/tinland   the editor, written in Tin for macOS
+
+A workspace keeps the repositories side by side; `tools/dev/setup.sh` links usetin/docs into the
+toolchain checkout (as `toolchain/docs` and `design`), so the checks that read the documentation run
+as before.
 ```
 
 ## Status and next steps
 
 Targets: linux-arm64 and linux-amd64 (production and benchmarks) and darwin-arm64
 (development only), each tested natively in CI, and the compiler self-hosts on all three;
-see [toolchain/docs/PORTING.md](toolchain/docs/PORTING.md).
+see [docs/PORTING.md](https://github.com/usetin/docs/blob/main/PORTING.md).
 
 v0.4: each anvil request runs in its own task with its own stack and pool, so a handler
 that waits (`tide.Wait`, `wire`, `quarry` files, `redis`, `mysql`, `postgres`, `websocket`) lets its
@@ -248,4 +260,4 @@ core serve other requests meanwhile. Sockets are non-blocking; file I/O goes thr
 core's io_uring on Linux (helper threads elsewhere and for FIFOs and FUSE mounts), macOS DNS
 to helper threads; every request has a deadline. Statements and commands are `query`
 values, so a value is always sent apart from the text. See
-[toolchain/docs/RUNTIME.md](toolchain/docs/RUNTIME.md) and [design/roadmap.md](design/roadmap.md).
+[docs/RUNTIME.md](https://github.com/usetin/docs/blob/main/RUNTIME.md) and [design/roadmap.md](https://github.com/usetin/docs/blob/main/design/roadmap.md).

@@ -66,7 +66,7 @@
 //
 // ServeTLS (and Router.ServeTLS) serve HTTPS: TLS 1.3 with a PEM certificate chain and key, each
 // handshake in a task of its own, then the same event loop with records decrypted before parsing
-// and sealed before writing (toolchain/docs/RUNTIME.md). examples/https_server.tin.
+// and sealed before writing (RUNTIME.md). examples/https_server.tin.
 package anvil
 
 import "hearth"

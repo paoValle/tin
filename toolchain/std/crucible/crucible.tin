@@ -149,7 +149,7 @@ mut runFilter []lasso.Regexp
 
 // Configure sets how tin test runs the tests: pattern (a lasso regular expression, "" for every test) picks
 // the tests and benchmarks whose names match, and json prints one JSON event per line instead of text
-// (toolchain/docs/TOOLING.md section 5.2). A pattern that is not a regular expression ends the run with status 2.
+// (TOOLING.md section 5.2). A pattern that is not a regular expression ends the run with status 2.
 fn Configure(pattern str, json bool) {
 	jsonEvents = json
 	runFilter = []lasso.Regexp{}

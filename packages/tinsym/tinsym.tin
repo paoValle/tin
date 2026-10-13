@@ -4,7 +4,7 @@ import "tinjson"
 import "twine"
 
 // Package tinsym reads what the compiler says about a program (`tinc -symbols -json`: its declarations, and its errors
-// as JSON lines, toolchain/docs/TOOLING.md 3.1 and 3.3) and answers the questions an editor asks of it: which
+// as JSON lines, TOOLING.md 3.1 and 3.3) and answers the questions an editor asks of it: which
 // declaration a name means (Resolve), and which names fit at a place (Complete). tin lsp and the Tinland editor share it.
 // Lines and columns here are 0-based and columns count bytes; the compiler's are 1-based.
 
@@ -46,7 +46,7 @@ type Diag struct {
 	EndCol  i64
 	Code    str
 	Message str
-	Fix     str // what to do about it, from toolchain/docs/ERRORS.md ("" when it gives none)
+	Fix     str // what to do about it, from ERRORS.md ("" when it gives none)
 }
 
 // Item is one candidate for completion: its text, what it is (a Sym kind, or field, package, keyword) and a description.

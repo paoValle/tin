@@ -3,7 +3,7 @@ SELF = toolchain/compiler/entry.tin toolchain/compiler/records.tin toolchain/com
        toolchain/compiler/memory_fast.tin toolchain/compiler/syscall_fast.tin toolchain/compiler/sha256.tin toolchain/compiler/aes_hw.tin toolchain/compiler/macho.tin toolchain/compiler/elf.tin toolchain/compiler/elf_x64.tin toolchain/compiler/caps.tin toolchain/compiler/fixes.tin toolchain/compiler/dwarf.tin toolchain/compiler/main.tin \
        toolchain/compiler/host_$(HOST_OS).tin
 
-.PHONY: all bootstrap seed test bench clean install dist linux-bootstrap linux-amd64-bootstrap linux-test
+.PHONY: all bootstrap seed test clean install dist linux-bootstrap linux-amd64-bootstrap linux-test
 
 HOST_OS := $(shell uname -s | tr A-Z a-z)
 HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
@@ -41,9 +41,6 @@ seed: bootstrap
 
 test: bin/tinc
 	tools/dev/v2test.sh bin/tinc
-
-bench: bin/tinc
-	sh tools/ci/tin.sh bench/run.tin
 
 # Put `tin` on the PATH (a symlink: the tree stays where it is); a leading ~/ in PREFIX means $HOME.
 INSTALL_BIN = $(patsubst ~/%,$(HOME)/%,$(PREFIX))/bin

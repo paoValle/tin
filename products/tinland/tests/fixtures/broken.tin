@@ -1,9 +1,0 @@
-package main
-
-fn a() i64 {
-	return
-}
-
-fn b() i64 {
-	return
-}

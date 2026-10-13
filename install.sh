@@ -2,7 +2,7 @@
 # Install a verified Tin release without root, Go, or a C compiler.
 # Usage: sh install.sh [0.4.0]; TIN_INSTALL_DIR defaults to ~/.tin.
 set -eu
-repo=${TIN_REPOSITORY:-yasserreslan/tin}
+repo=${TIN_REPOSITORY:-usetin/tin}
 base=${TIN_RELEASE_BASE_URL:-https://github.com/$repo/releases/download}
 version=${1:-}
 if [ -z "$version" ]; then

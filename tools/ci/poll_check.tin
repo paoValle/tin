@@ -127,7 +127,7 @@ fn defaults() {
 		ci.Check(!twine.HasPrefix(f, "anvil.") && !twine.HasPrefix(f, "hearth.") && !twine.HasPrefix(f, "rt_"), "poll: library code polls: " + f)
 	}
 	ci.Check(total(pollsIn([]str{"-nopolls"}, "tools/ci/fixtures/poll.tin")) == 0, "poll: -nopolls still polls")
-	ci.Check(total(pollsIn([]str{}, "bench/v2/indexsum.tin")) == 0, "poll: a program without cores polls")
+	ci.Check(total(pollsIn([]str{}, "toolchain/tests/fixtures/bench/indexsum.tin")) == 0, "poll: a program without cores polls")
 	ci.Pass("default polls: " + mint.Itoa(total(on)) + " in a server program's own code, none in lib/, none with -nopolls or in a program without cores")
 }
 

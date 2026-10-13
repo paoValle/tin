@@ -2,7 +2,7 @@
 //
 // Contract: the compiler does not write Go's buildinfo blob (the "\xff Go buildinf:" record that debug/buildinfo of Go reads),
 // and ELF executables carry no build metadata today. A Tin Mach-O executable carries an LC_UUID, a hash of its code, so
-// identical builds have the same UUID (toolchain/docs/COMPILER.md, section 9), and an LC_BUILD_VERSION naming macOS and
+// identical builds have the same UUID (COMPILER.md, section 9), and an LC_BUILD_VERSION naming macOS and
 // the minimum and SDK versions the compiler targets. Nothing else is written, so this package reads only those two commands.
 package buildinfo
 

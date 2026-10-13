@@ -9,10 +9,10 @@ import "seal"
 import "sift"
 import "twine"
 
-const TREES_COUNT = 5
+const TREES_COUNT = 4
 
 fn Trees() []str {
-	return []str{"toolchain", "packages", "tools", "examples", "bench"}
+	return []str{"toolchain", "packages", "tools", "examples"}
 }
 
 fn Targets() []str {
@@ -193,7 +193,7 @@ fn Package(version str, target str, compiler str, output str, root str) !str {
 	// the files, by archive path: the trees (regular files, no symlinks), then the top-level files and the compiler
 	mut paths = []str{}
 	mut sources = []str{}
-	let found = ci.Sh("cd \"" + root + "\" && find toolchain packages tools examples bench -type f -not -path '*/__pycache__/*' 2>/dev/null", "", 120)
+	let found = ci.Sh("cd \"" + root + "\" && find toolchain packages tools examples -type f -not -path '*/__pycache__/*' 2>/dev/null", "", 120)
 	for line in ci.Lines(found.Stdout) {
 		paths = append(paths, line)
 		sources = append(sources, ci.Join(root, line))
@@ -207,7 +207,7 @@ fn Package(version str, target str, compiler str, output str, root str) !str {
 	paths = append(paths, "toolchain/seed/tinc-" + target)
 	sources = append(sources, compiler)
 	// the executables, as the file system says
-	let executable = ci.Sh("cd \"" + root + "\" && find toolchain packages tools examples bench -type f -perm -100 2>/dev/null; for f in tin Makefile README.md go.mod install.sh; do [ -x \"$f\" ] && echo \"$f\"; done", "", 120)
+	let executable = ci.Sh("cd \"" + root + "\" && find toolchain packages tools examples -type f -perm -100 2>/dev/null; for f in tin Makefile README.md go.mod install.sh; do [ -x \"$f\" ] && echo \"$f\"; done", "", 120)
 	let compilerMode = ci.Sh("[ -x \"" + compiler + "\" ] && echo yes", "", 10)
 	mut executables = ci.Lines(executable.Stdout)
 	// a later entry of the same name replaces an earlier one, as in a dictionary; order by name

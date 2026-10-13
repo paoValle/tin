@@ -53,11 +53,3 @@ jobs:
           else
             sh tools/ci/tin.sh distribution_check "bin/dist/tin-$version-$TARGET.tar.gz"
           fi
-      - name: Tinland.app builds with its icon (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          tools/dev/tinland_app.sh bin/app
-          test -x bin/app/Tinland.app/Contents/MacOS/Tinland
-          test -s bin/app/Tinland.app/Contents/Resources/Tinland.icns
-          plutil -lint bin/app/Tinland.app/Contents/Info.plist
-          codesign --verify --deep bin/app/Tinland.app
