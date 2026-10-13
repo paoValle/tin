@@ -1,0 +1,542 @@
+package quarry
+
+import "say"
+
+// Open files for a database or any code that keeps a descriptor: positional IO that never moves
+// the file offset (pread/pwrite), durability (fsync, fdatasync, sync_file_range), allocation
+// (ftruncate, fallocate), hints (readahead, posix_fadvise) and an advisory whole-file lock for a
+// postmaster.pid-style lock. Positional calls never move the offset, so several tasks on several
+// cores may call them on one File at once; scalar reads and writes loop on short results, so a
+// caller gets all it asked for or a fault. The calls are plain syscalls: they block the calling
+// core's thread while the kernel serves them (a page-cache hit returns at once), so give a page
+// cache its own core, as a database does; inside an anvil request task use quarry.ReadAt(path,
+// off, n), which goes through the core's io_uring or a helper thread (#357).
+
+// Flags a File uses: advice for Advise, flock operations, and the "would block" errno that
+// TryLock reports as false (POSIX makes EWOULDBLOCK the same number as EAGAIN).
+const lockEx = 2
+const lockNb = 4
+const lockUn = 8
+const EWOULDBLOCK = EAGAIN
+
+// File is an open file descriptor with its path for faults (Go's os.File). A File is a reference:
+// a copy names the same descriptor, and Close on one closes it for all.
+type File struct {
+	fd   i64
+	name str
+}
+
+// OpenFile opens path with flags (the O* constants below) and permission bits perm (the low 12
+// bits of open's mode; used only with OCreate, and masked by the process umask).
+fn OpenFile(path str, flags i64, perm i64) !File {
+	if badPath(path) {
+		fail invalidFault("open", path)
+	}
+	let fd = c32(rt_sys_open(rt_cstr(path), flags, perm))
+	if fd < 0 {
+		fail pathFault("open", path)
+	}
+	return File{fd: fd, name: path}
+}
+
+// Fd is the raw descriptor, for calls that need it (setsockopt, an io_uring submission, sendfile).
+fn (f File) Fd() i64 {
+	return f.fd
+}
+
+// Name is the path the file was opened with, as faults report it.
+fn (f File) Name() str {
+	return f.name
+}
+
+// Close releases the descriptor. Closing twice is a fault (the OS would close another file's
+// descriptor, so a closed File is marked and refused).
+fn (f mut File) Close() ! {
+	if f.fd < 0 {
+		fail say.Fault("close %s: file is closed", f.name)
+	}
+	let fd = f.fd
+	f.fd = -1
+	if c32(rt_sys_close(fd)) != 0 {
+		fail pathFaultCode("close", f.name, errno())
+	}
+}
+
+// ReadAt reads up to len(p) bytes of f at off into p without moving the file offset, and returns
+// how many it read: fewer only at the end of the file (0 past it). Several lanes may call it on
+// one File at once; nothing allocates.
+fn (f File) ReadAt(p mut []u8, off i64) !i64 {
+	if off < 0 {
+		fail invalidFault("pread", f.name)
+	}
+	if f.fd < 0 {
+		fail say.Fault("pread %s: file is closed", f.name)
+	}
+	let n = len(p)
+	if n == 0 {
+		return 0
+	}
+	let base = cast(i64, p)[2]
+	mut got = 0
+	for got < n {
+		let k = rt_sys_pread(f.fd, base + got, n - got, off + got)
+		if k < 0 {
+			if errno() == EINTR {
+				continue
+			}
+			fail pathFaultCode("pread", f.name, errno())
+		}
+		if k == 0 {
+			break
+		}
+		got += k
+	}
+	return got
+}
+
+// WriteAt writes all of p to f at off without moving the file offset, and returns len(p). A short
+// write is continued, so the file holds every byte or the call fails.
+fn (f File) WriteAt(p []u8, off i64) !i64 {
+	if off < 0 {
+		fail invalidFault("pwrite", f.name)
+	}
+	if f.fd < 0 {
+		fail say.Fault("pwrite %s: file is closed", f.name)
+	}
+	let n = len(p)
+	if n == 0 {
+		return 0
+	}
+	let base = cast(i64, p)[2]
+	mut put = 0
+	for put < n {
+		let k = sysPwrite(f.fd, base + put, n - put, off + put)
+		if k < 0 {
+			if errno() == EINTR {
+				continue
+			}
+			fail pathFaultCode("pwrite", f.name, errno())
+		}
+		if k == 0 {
+			fail say.Fault("pwrite %s: wrote 0 of %s bytes", f.name, say.Str(n - put))
+		}
+		put += k
+	}
+	return put
+}
+
+// ReadAtV reads into bufs in order starting at off (one preadv), without moving the file offset,
+// and returns the total read: fewer only at the end of the file. Short results continue into the
+// next buffers, so every byte that was there is read.
+fn (f File) ReadAtV(bufs mut [][]u8, off i64) !i64 {
+	if off < 0 {
+		fail invalidFault("preadv", f.name)
+	}
+	if f.fd < 0 {
+		fail say.Fault("preadv %s: file is closed", f.name)
+	}
+	mut bi = 0
+	mut bo = 0
+	mut got = 0
+	for bi < len(bufs) && len(bufs[bi]) == bo {
+		bi += 1
+		bo = 0
+	}
+	for bi < len(bufs) {
+		let cnt = iovCount(bufs, bi, bo)
+		let iov = iovBuild(bufs, bi, bo, cnt)
+		let r = sysPreadV(f.fd, iov, cnt, off + got)
+		free(iov)
+		if r < 0 {
+			if errno() == EINTR {
+				continue
+			}
+			fail pathFaultCode("preadv", f.name, errno())
+		}
+		if r == 0 {
+			break
+		}
+		got += r
+		let (nb, no) = iovAdvance(bufs, bi, bo, r)
+		bi = nb
+		bo = no
+	}
+	return got
+}
+
+// WriteAtV writes bufs in order starting at off (pwritev), without moving the file offset, and
+// returns the total written (always the bytes of every buffer, or a fault). Short results
+// continue into the next buffers.
+fn (f File) WriteAtV(bufs []str, off i64) !i64 {
+	if off < 0 {
+		fail invalidFault("pwritev", f.name)
+	}
+	if f.fd < 0 {
+		fail say.Fault("pwritev %s: file is closed", f.name)
+	}
+	mut total = 0
+	for _, b in bufs {
+		total += len(b)
+	}
+	if total == 0 {
+		return 0
+	}
+	mut bi = 0
+	mut bo = 0
+	mut put = 0
+	for bi < len(bufs) && len(bufs[bi]) == bo {
+		bi += 1
+		bo = 0
+	}
+	for bi < len(bufs) {
+		let cnt = iovCountStr(bufs, bi, bo)
+		let iov = iovBuildStr(bufs, bi, bo, cnt)
+		let r = sysPwriteV(f.fd, iov, cnt, off + put)
+		free(iov)
+		if r < 0 {
+			if errno() == EINTR {
+				continue
+			}
+			fail pathFaultCode("pwritev", f.name, errno())
+		}
+		if r == 0 {
+			fail say.Fault("pwritev %s: wrote 0 of %s bytes", f.name, say.Str(total - put))
+		}
+		put += r
+		let (nb, no) = iovAdvanceStr(bufs, bi, bo, r)
+		bi = nb
+		bo = no
+	}
+	return put
+}
+
+// iovCount is how many buffers from index bi (skipping bo bytes of it) are not empty.
+fn iovCount(bufs [][]u8, bi i64, bo i64) i64 {
+	mut cnt = 0
+	for k in bi..len(bufs) {
+		mut skip = 0
+		if k == bi {
+			skip = bo
+		}
+		if len(bufs[k]) > skip {
+			cnt += 1
+		}
+	}
+	return cnt
+}
+
+// iovBuild makes a struct iovec array (base, len per buffer, 16 bytes each) for cnt buffers.
+fn iovBuild(bufs [][]u8, bi i64, bo i64, cnt i64) i64 {
+	let iov = calloc(2*cnt, 8)
+	mut j = 0
+	for k in bi..len(bufs) {
+		mut skip = 0
+		if k == bi {
+			skip = bo
+		}
+		if len(bufs[k]) <= skip {
+			continue
+		}
+		iov[2*j] = cast(i64, bufs[k])[2] + skip
+		iov[2*j+1] = len(bufs[k]) - skip
+		j += 1
+	}
+	return iov
+}
+
+// iovCountStr is iovCount for []str (base is the bytes after the length word).
+fn iovCountStr(bufs []str, bi i64, bo i64) i64 {
+	mut cnt = 0
+	for k in bi..len(bufs) {
+		mut skip = 0
+		if k == bi {
+			skip = bo
+		}
+		if len(bufs[k]) > skip {
+			cnt += 1
+		}
+	}
+	return cnt
+}
+
+// iovBuildStr is iovBuild for []str.
+fn iovBuildStr(bufs []str, bi i64, bo i64, cnt i64) i64 {
+	let iov = calloc(2*cnt, 8)
+	mut j = 0
+	for k in bi..len(bufs) {
+		mut skip = 0
+		if k == bi {
+			skip = bo
+		}
+		if len(bufs[k]) <= skip {
+			continue
+		}
+		iov[2*j] = cast(i64, bufs[k]) + 8 + skip
+		iov[2*j+1] = len(bufs[k]) - skip
+		j += 1
+	}
+	return iov
+}
+
+// iovAdvance moves the cursor (buffer index, bytes used of it) forward by r bytes.
+fn iovAdvance(bufs [][]u8, bi i64, bo i64, r i64) (i64, i64) {
+	mut left = r
+	mut k = bi
+	mut o = bo
+	for left > 0 && k < len(bufs) {
+		let avail = len(bufs[k]) - o
+		if left < avail {
+			o += left
+			left = 0
+		} else {
+			left -= avail
+			k += 1
+			o = 0
+		}
+	}
+	return k, o
+}
+
+// iovAdvanceStr is iovAdvance for []str.
+fn iovAdvanceStr(bufs []str, bi i64, bo i64, r i64) (i64, i64) {
+	mut left = r
+	mut k = bi
+	mut o = bo
+	for left > 0 && k < len(bufs) {
+		let avail = len(bufs[k]) - o
+		if left < avail {
+			o += left
+			left = 0
+		} else {
+			left -= avail
+			k += 1
+			o = 0
+		}
+	}
+	return k, o
+}
+
+// Size is the file's size in bytes from fstat on this descriptor (st_size).
+fn (f File) Size() !i64 {
+	if f.fd < 0 {
+		fail say.Fault("fstat %s: file is closed", f.name)
+	}
+	if c32(rt_sys_fstat(f.fd, stbuf)) != 0 {
+		fail pathFaultCode("fstat", f.name, errno())
+	}
+	return rt_stat_size(stbuf)
+}
+
+// Sync waits until this file's data and metadata are on stable storage (fsync). On macOS that is
+// F_FULLFSYNC, which also flushes the drive's cache (the same choice quarry.Sync makes).
+fn (f File) Sync() ! {
+	if f.fd < 0 {
+		fail say.Fault("fsync %s: file is closed", f.name)
+	}
+	if c32(sysFsync(f.fd)) != 0 {
+		fail pathFaultCode("fsync", f.name, errno())
+	}
+}
+
+// DataSync waits until this file's data (and the metadata a later read needs) is on stable storage
+// (fdatasync), which is cheaper than Sync for a write-ahead log. macOS has no fdatasync: it does
+// what Sync does, F_FULLFSYNC, which is stronger than POSIX fdatasync and never weaker.
+fn (f File) DataSync() ! {
+	if f.fd < 0 {
+		fail say.Fault("fdatasync %s: file is closed", f.name)
+	}
+	if c32(sysFdatasync(f.fd)) != 0 {
+		fail pathFaultCode("fdatasync", f.name, errno())
+	}
+}
+
+// Truncate sets the file's size to n bytes (ftruncate): shorter drops the tail, longer fills with
+// zeros. The file offset is not moved.
+fn (f mut File) Truncate(n i64) ! {
+	if f.fd < 0 {
+		fail say.Fault("ftruncate %s: file is closed", f.name)
+	}
+	if n < 0 {
+		fail invalidFault("ftruncate", f.name)
+	}
+	if c32(sysFtruncate(f.fd, n)) != 0 {
+		fail pathFaultCode("ftruncate", f.name, errno())
+	}
+}
+
+// Preallocate makes room for n bytes at off without writing them, so a later write into the range
+// cannot fail for lack of space (fallocate on Linux, fcntl F_PREALLOCATE on macOS). Neither changes
+// the file's size. On a file system without it (EOPNOTSUPP on Linux) the file is extended with
+// ftruncate instead, which reserves no blocks: the size is right, but the guarantee is not.
+fn (f File) Preallocate(off i64, n i64) ! {
+	if f.fd < 0 {
+		fail say.Fault("fallocate %s: file is closed", f.name)
+	}
+	if off < 0 || n < 0 {
+		fail invalidFault("fallocate", f.name)
+	}
+	if n == 0 {
+		return
+	}
+	let e = sysFallocate(f.fd, off, n)
+	if e == 0 {
+		return
+	}
+	if e == eOpNotSupp || e == eNoSys {
+		let size = try f.Size()
+		if off + n > size {
+			if c32(sysFtruncate(f.fd, off + n)) != 0 {
+				fail pathFaultCode("ftruncate", f.name, errno())
+			}
+		}
+		return
+	}
+	fail pathFaultCode("fallocate", f.name, e)
+}
+
+// ReadAhead asks the kernel to read the n bytes at off into the page cache in the background, so a
+// later sequential read does not wait for the disk (readahead on Linux, F_RDADVISE on macOS). It
+// returns at once; a file system that cannot (a pipe, an unusual mount) fails with its error.
+fn (f File) ReadAhead(off i64, n i64) ! {
+	if f.fd < 0 {
+		fail say.Fault("readahead %s: file is closed", f.name)
+	}
+	if off < 0 || n < 0 {
+		fail invalidFault("readahead", f.name)
+	}
+	let e = sysReadAhead(f.fd, off, n)
+	if e != 0 {
+		fail pathFaultCode("readahead", f.name, e)
+	}
+}
+
+// Advise tells the kernel how the range at off of len n will be used (posix_fadvise): a scan
+// (Advice.Sequential), a random lookup (Advice.Random), a range wanted soon (Advice.WillNeed) or
+// one that can be dropped (Advice.DontNeed). On macOS, which has no posix_fadvise, it does nothing
+// (use ReadAhead or SetNoCache); on a kernel without the call it also does nothing. Advice is a
+// hint: it never fails.
+fn (f File) Advise(a Advice, off i64, n i64) {
+	if f.fd < 0 {
+		return
+	}
+	if off < 0 || n < 0 {
+		return
+	}
+	sysFadvise(f.fd, off, n, adviceCode(a))
+}
+
+// Advice is how a file range will be used, for Advise (POSIX_FADV_*).
+type Advice enum {
+	Normal
+	Sequential
+	Random
+	WillNeed
+	DontNeed
+}
+
+// adviceCode maps an Advice to the POSIX_FADV_* number (the same on Linux and macOS).
+fn adviceCode(a Advice) i64 {
+	let code = match a {
+		Normal => 0
+		Random => 1
+		Sequential => 2
+		WillNeed => 3
+		DontNeed => 4
+	}
+	return code
+}
+
+// SyncRange writes the file range at off of len n back to disk if it is dirty (sync_file_range on
+// Linux), a hint between fdatasync and nothing for a checkpoint that must bound dirty data. macOS
+// has no sync_file_range: it fsyncs the whole file (which is stronger). flags selects what the
+// call waits for (SYNC_FILE_RANGE_WAIT_BEFORE|WRITE|WAIT_AFTER, 1|2|4); 0 starts writeback without
+// waiting.
+fn (f File) SyncRange(off i64, n i64, flags i64) ! {
+	if f.fd < 0 {
+		fail say.Fault("sync_file_range %s: file is closed", f.name)
+	}
+	if off < 0 || n < 0 {
+		fail invalidFault("sync_file_range", f.name)
+	}
+	let e = sysSyncRange(f.fd, off, n, flags)
+	if e != 0 {
+		fail pathFaultCode("sync_file_range", f.name, e)
+	}
+}
+
+// SetNoCache turns the page cache off (or on) for this descriptor: macOS F_NOCACHE, Linux O_DIRECT
+// through fcntl. With the cache off every read and write goes to the device, and the buffer and
+// offset must be aligned to the device's block size, so a caller that wants O_DIRECT usually opens
+// the file with ODirect instead; SetNoCache is for a descriptor that already exists.
+fn (f File) SetNoCache(on bool) ! {
+	if f.fd < 0 {
+		fail say.Fault("fcntl %s: file is closed", f.name)
+	}
+	let e = sysSetNoCache(f.fd, on)
+	if e != 0 {
+		fail pathFaultCode("fcntl", f.name, e)
+	}
+}
+
+// Lock takes an exclusive advisory lock on the whole file, waiting while another process holds it
+// (flock). It is the postmaster.pid pattern: a second process that opens the same file and calls
+// TryLock sees false and exits. The lock is held until Unlock or Close, and belongs to the open
+// descriptor, so it is released when the process ends however it ends.
+fn (f File) Lock() ! {
+	if f.fd < 0 {
+		fail say.Fault("flock %s: file is closed", f.name)
+	}
+	for {
+		if c32(sysFlock(f.fd, lockEx)) == 0 {
+			return
+		}
+		if errno() != EINTR {
+			fail pathFaultCode("flock", f.name, errno())
+		}
+	}
+}
+
+// TryLock takes the exclusive advisory lock without waiting and reports whether it got it; another
+// process holding it is false, not a fault.
+fn (f File) TryLock() !bool {
+	if f.fd < 0 {
+		fail say.Fault("flock %s: file is closed", f.name)
+	}
+	if c32(sysFlock(f.fd, lockEx|lockNb)) == 0 {
+		return true
+	}
+	let e = errno()
+	if e == EAGAIN || e == EWOULDBLOCK {
+		return false
+	}
+	fail pathFaultCode("flock", f.name, e)
+}
+
+// Unlock releases the advisory lock this descriptor holds (flock LOCK_UN).
+fn (f File) Unlock() ! {
+	if f.fd < 0 {
+		fail say.Fault("flock %s: file is closed", f.name)
+	}
+	if c32(sysFlock(f.fd, lockUn)) != 0 {
+		fail pathFaultCode("flock", f.name, errno())
+	}
+}
+
+// SyncDir waits until the directory at path is on stable storage (open with ODirectory, fsync),
+// which is the second half of a durable rename: rename the file, fsync the file, then SyncDir the
+// directory that holds it. quarry.Rename is one renameat and already replaces atomically.
+fn SyncDir(path str) ! {
+	if badPath(path) {
+		fail invalidFault("open", path)
+	}
+	let fd = c32(rt_sys_open(rt_cstr(path), OReadOnly|ODirectory, 0))
+	if fd < 0 {
+		fail pathFault("open", path)
+	}
+	let r = sysFsync(fd)
+	let e = errno()
+	rt_sys_close(fd)
+	if c32(r) != 0 {
+		fail pathFaultCode("fsync", path, e)
+	}
+}

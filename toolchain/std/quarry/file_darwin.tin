@@ -1,0 +1,109 @@
+package quarry
+
+// macOS side of file.tin: libSystem calls and the open flags (no raw system calls on macOS).
+
+extern fn pwrite(fd i64, buf i64, n i64, off i64) i64
+extern fn preadv(fd i64, iov i64, cnt i64, off i64) i64
+extern fn pwritev(fd i64, iov i64, cnt i64, off i64) i64
+extern fn ftruncate(fd i64, n i64) i64
+extern fn flock(fd i64, op i64) i64
+
+const OReadOnly = 0
+const OWriteOnly = 1
+const OReadWrite = 2
+const OCreate = 512        // 0x200
+const OTruncate = 1024     // 0x400
+const OAppend = 8          // 0x8
+const OExcl = 2048         // 0x800
+const OSync = 128          // 0x80
+const ODsync = 4194304     // 0x400000
+const ODirect = 0          // macOS has no O_DIRECT: SetNoCache turns the cache off with F_NOCACHE.
+const ODirectory = 1048576 // 0x100000
+const ONoFollow = 256      // 0x100
+
+const eOpNotSupp = 102
+const eNoSys = 78
+
+fn sysPwrite(fd i64, buf i64, n i64, off i64) i64 {
+	return c32(pwrite(fd, buf, n, off))
+}
+
+fn sysPreadV(fd i64, iov i64, cnt i64, off i64) i64 {
+	return c32(preadv(fd, iov, cnt, off))
+}
+
+fn sysPwriteV(fd i64, iov i64, cnt i64, off i64) i64 {
+	return c32(pwritev(fd, iov, cnt, off))
+}
+
+fn sysFtruncate(fd i64, n i64) i64 {
+	return c32(ftruncate(fd, n))
+}
+
+// sysFdatasync: macOS has no fdatasync, so DataSync does what Sync does (F_FULLFSYNC, then
+// fsync), which is stronger than POSIX fdatasync and never weaker (documented at File.DataSync).
+fn sysFdatasync(fd i64) i64 {
+	return sysFsync(fd)
+}
+
+// sysFallocate reserves space with fcntl F_PREALLOCATE (42): macOS has no posix_fallocate and no
+// fallocate, and F_PREALLOCATE reserves blocks without changing the file's size, as Linux's
+// fallocate does. struct fstore {u32 flags; int posmode; off_t offset; off_t length; off_t
+// bytesalloc; }, 32 bytes; F_ALLOCATEALL (4) reserves freely, F_PEOFPOSMODE (3) counts from the end
+// of the file. Returns 0 or the error code.
+fn sysFallocate(fd i64, off i64, n i64) i64 {
+	let fs = calloc(4, 8)
+	__st(fs, 4, 2)
+	__st(fs+4, 3, 2)
+	fs[1] = off
+	fs[2] = n
+	let r = c32(rt_sys_fcntl(fd, 42, fs))
+	mut e = 0
+	if r != 0 {
+		e = errno()
+	}
+	free(fs)
+	return e
+}
+
+// sysReadAhead is F_RDADVISE (44): struct radvisory { off_t offset; int count; }, 16 bytes.
+fn sysReadAhead(fd i64, off i64, n i64) i64 {
+	let ra = calloc(2, 8)
+	ra[0] = off
+	__st(ra + 8, n, 2)
+	let r = c32(rt_sys_fcntl(fd, 44, ra))
+	mut e = 0
+	if r != 0 {
+		e = errno()
+	}
+	free(ra)
+	return e
+}
+
+// sysFadvise: macOS has no posix_fadvise; ReadAhead and SetNoCache cover its uses.
+fn sysFadvise(fd i64, off i64, n i64, advice i64) {
+}
+
+// sysSyncRange: macOS has no sync_file_range, so the range's file is fsynced (stronger).
+fn sysSyncRange(fd i64, off i64, n i64, flags i64) i64 {
+	if c32(sysFsync(fd)) == 0 {
+		return 0
+	}
+	return errno()
+}
+
+fn sysFlock(fd i64, op i64) i64 {
+	return c32(flock(fd, op))
+}
+
+// sysSetNoCache is F_NOCACHE (48): 0 or the error code.
+fn sysSetNoCache(fd i64, on bool) i64 {
+	mut v = 0
+	if on {
+		v = 1
+	}
+	if c32(rt_sys_fcntl(fd, 48, v)) != 0 {
+		return errno()
+	}
+	return 0
+}

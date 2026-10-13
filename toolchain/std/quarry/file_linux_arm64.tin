@@ -1,0 +1,18 @@
+package quarry
+
+// System call numbers and open flags of file.tin on arm64 Linux (asm-generic table).
+
+const nrPwrite64 = 68
+const nrPreadv = 69
+const nrPwritev = 70
+const nrFtruncate = 46
+const nrFallocate = 47
+const nrFdatasync = 83
+const nrReadahead = 213
+const nrFadvise64 = 223
+const nrSyncFileRange = 84
+const nrFlock = 32
+
+const ODirect = 65536     // 0x10000
+const ODirectory = 16384  // 0x4000
+const ONoFollow = 32768   // 0x8000

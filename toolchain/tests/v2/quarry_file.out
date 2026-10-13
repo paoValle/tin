@@ -1,0 +1,38 @@
+write 12 at 0: 12
+pread 5 at 7: 5 world
+write 2 at 5: 2
+read 12 at 0: 12 helloXXworld
+pread past end: 0
+write 3 at 20: 3
+size after hole: 23
+hole is zeros: true
+truncate 10: ok
+size after truncate 10: 10
+truncate 0: ok
+size after truncate 0: 0
+preallocate 8kb at 0: ok
+write 4 at 8188: 4
+read 4 at 8188: 4 tail
+size after preallocate+write: 8192
+truncate 0: ok
+vectored source: 7
+preadv: 7 abc defg
+truncate 0: ok
+pwritev: 6
+read 6 at 0: 6 123456
+sync: ok
+datasync: ok
+readahead: ok
+advise: ok
+sync range: ok
+no cache off: ok
+no cache on: ok
+no cache off again: ok
+flock first: true
+flock while held: false
+unlock: ok
+flock after unlock: true
+close: ok
+close twice: close /tmp/tin-test-quarry-file/data: file is closed
+read after close: pread /tmp/tin-test-quarry-file/data: file is closed
+sync dir: ok

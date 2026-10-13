@@ -1,0 +1,177 @@
+package main
+
+import "quarry"
+import "say"
+import "twine"
+
+// quarry's open-file and positional IO (file.tin): pread/pwrite and preadv/pwritev at an offset,
+// fsync/fdatasync, ftruncate, fallocate, fstat size, readahead, fadvise, sync_file_range, flock
+// and a directory sync. The Go twin (bench/ref/quarry_file) prints the same lines.
+
+// d is this run's own directory; the lines name it as /tmp/tin-test-quarry-file.
+let d = "/tmp/tin-test-quarry-file-{quarry.Pid()}"
+
+// named is an error's text with this run's directory named as the golden output names it.
+fn named(err fault) str {
+	return twine.ReplaceAll(say.Str(err), d, "/tmp/tin-test-quarry-file")
+}
+
+// wprint writes s at off and prints the count, or the fault.
+fn wprint(f quarry.File, label str, s str, off i64) {
+	let n = f.WriteAt([]u8(s), off) catch err {
+		say.Line(label, named(err))
+		return
+	}
+	say.Line(label, n)
+}
+
+// rprint reads n bytes at off and prints the count and the text, or the fault.
+fn rprint(f quarry.File, label str, n i64, off i64) {
+	mut buf = make([]u8, n)
+	let k = f.ReadAt(mut buf, off) catch err {
+		say.Line(label, named(err))
+		return
+	}
+	say.Line(label, k, str(buf))
+}
+
+// call runs a fault-returning call that prints nothing on success, and reports its label.
+fn call(label str, err fault) {
+	if err != nil {
+		say.Line(label, named(err))
+		return
+	}
+	say.Line(label, "ok")
+}
+
+fn main() {
+	quarry.RemoveAll(d) catch _ {
+	}
+	quarry.MkdirAll(d) catch err {
+		say.Line("mkdir:", named(err))
+		return
+	}
+	let path = d + "/data"
+
+	mut f = quarry.OpenFile(path, quarry.OReadWrite|quarry.OCreate|quarry.OTruncate, 420) catch err {
+		say.Line("open:", named(err))
+		return
+	}
+
+	// pwrite and pread: the offset passed is used, the file's own offset is never moved.
+	wprint(f, "write 12 at 0:", "hello, world", 0)
+	rprint(f, "pread 5 at 7:", 5, 7)
+	wprint(f, "write 2 at 5:", "XX", 5)
+	rprint(f, "read 12 at 0:", 12, 0)
+	mut past = make([]u8, 12)
+	let n4 = f.ReadAt(mut past, 100) catch err {
+		say.Line("pread past end:", named(err))
+		return
+	}
+	say.Line("pread past end:", n4)
+
+	// A write past the end fills the gap with zeros and grows the file.
+	wprint(f, "write 3 at 20:", "end", 20)
+	let size1 = f.Size() catch err {
+		say.Line("size:", named(err))
+		return
+	}
+	say.Line("size after hole:", size1)
+	mut hole = make([]u8, 23)
+	f.ReadAt(mut hole, 0) catch _ {
+	}
+	mut zeros = true
+	for i in 13..20 {
+		if hole[i] != 0 {
+			zeros = false
+		}
+	}
+	say.Line("hole is zeros:", zeros)
+
+	// ftruncate shrinks and grows.
+	call("truncate 10:", f.Truncate(10))
+	let size2 = f.Size() catch _ {
+		return
+	}
+	say.Line("size after truncate 10:", size2)
+	call("truncate 0:", f.Truncate(0))
+	let size3 = f.Size() catch _ {
+		return
+	}
+	say.Line("size after truncate 0:", size3)
+
+	// fallocate (posix_fallocate on macOS) then a write at the end of the range.
+	call("preallocate 8kb at 0:", f.Preallocate(0, 8192))
+	wprint(f, "write 4 at 8188:", "tail", 8188)
+	rprint(f, "read 4 at 8188:", 4, 8188)
+	let size4 = f.Size() catch _ {
+		return
+	}
+	say.Line("size after preallocate+write:", size4)
+
+	// Vectored IO.
+	call("truncate 0:", f.Truncate(0))
+	wprint(f, "vectored source:", "abcdefg", 0)
+	mut a = make([]u8, 3)
+	mut b = make([]u8, 4)
+	mut bufs = [][]u8{a, b}
+	mut total = 0
+	total = f.ReadAtV(mut bufs, 0) catch err {
+		say.Line("preadv:", named(err))
+		return
+	}
+	say.Line("preadv:", total, str(bufs[0]), str(bufs[1]))
+	call("truncate 0:", f.Truncate(0))
+	let pv = f.WriteAtV([]str{"12", "34", "56"}, 0) catch err {
+		say.Line("pwritev:", named(err))
+		return
+	}
+	say.Line("pwritev:", pv)
+	rprint(f, "read 6 at 0:", 6, 0)
+
+	// Durability and hints.
+	call("sync:", f.Sync())
+	call("datasync:", f.DataSync())
+	call("readahead:", f.ReadAhead(0, 6))
+	f.Advise(quarry.Advice.Sequential, 0, 6)
+	f.Advise(quarry.Advice.WillNeed, 0, 6)
+	f.Advise(quarry.Advice.DontNeed, 0, 6)
+	f.Advise(quarry.Advice.Random, 0, 6)
+	f.Advise(quarry.Advice.Normal, 0, 6)
+	say.Line("advise: ok")
+	call("sync range:", f.SyncRange(0, 6, 0))
+	call("no cache off:", f.SetNoCache(false))
+	call("no cache on:", f.SetNoCache(true))
+	call("no cache off again:", f.SetNoCache(false))
+
+	// flock: a second descriptor on the same file cannot take the lock while the first holds it.
+	let first = f.TryLock() catch err {
+		say.Line("flock first:", named(err))
+		return
+	}
+	say.Line("flock first:", first)
+	mut g = quarry.OpenFile(path, quarry.OReadOnly, 0) catch err {
+		say.Line("open second:", named(err))
+		return
+	}
+	let held = g.TryLock() catch _ {
+		return
+	}
+	say.Line("flock while held:", held)
+	call("unlock:", f.Unlock())
+	let after = g.TryLock() catch _ {
+		return
+	}
+	say.Line("flock after unlock:", after)
+	g.Close() catch _ {
+	}
+
+	// A closed file is refused, not silently reused.
+	call("close:", f.Close())
+	call("close twice:", f.Close())
+	rprint(f, "read after close:", 4, 0)
+
+	call("sync dir:", quarry.SyncDir(d))
+	quarry.RemoveAll(d) catch _ {
+	}
+}
