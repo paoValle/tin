@@ -5,5 +5,6 @@
 43 crc32=414fa339 crc32c=22620404 fnv32a=048fff90 fnv64a=f3f9b7f5e7e47110 adler=5bdc0fda xxh64=0b242d361fda71bc xxh64s=b31b9019ec176b0c
 42 crc32=d91874ef crc32c=e14de415 fnv32a=fa2bc862 fnv64a=0384eb2f557f1be2 adler=e79d0ad2 xxh64=a76190c3acf08a1c xxh64s=85c47f73abaa858b
 200 crc32=1ea416f5 crc32c=aa3235b8 fnv32a=d54eb9e0 fnv64a=bf22d43c15a16460 adler=ba612588 xxh64=c0e576ba70ed22c3 xxh64s=85a88dbb0eec37f4
-update 0d4a1185 0d4a1185
+update 0d4a1185 0d4a1185 c99465aa
+bytes e000b1fb d8ab6f7a match=true
 big crc32=0eaf0153 crc32c=31ce2478 adler=6a10942f xxh64=8791b9cbd6d6cd70

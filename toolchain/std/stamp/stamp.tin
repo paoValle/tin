@@ -58,6 +58,11 @@ fn Crc32(s str) u32 {
 	return crc_update(0, ieee, s)
 }
 
+// Crc32Bytes is the IEEE CRC-32 of b, read in place (no string is made).
+fn Crc32Bytes(b []u8) u32 {
+	return Crc32UpdateBytes(0, b)
+}
+
 // Crc32Update continues an IEEE CRC-32 over more data.
 fn Crc32Update(crc u32, s str) u32 {
 	return crc_update(crc, ieee, s)
@@ -75,6 +80,25 @@ fn Crc32UpdateBytes(crc u32, b []u8) u32 {
 // Crc32C is the Castagnoli CRC-32 of s (as in iSCSI, ext4 and many databases).
 fn Crc32C(s str) u32 {
 	return crc_update(0, castagnoli, s)
+}
+
+// Crc32CBytes is the Castagnoli CRC-32 of b, read in place (no string is made).
+fn Crc32CBytes(b []u8) u32 {
+	return Crc32CUpdateBytes(0, b)
+}
+
+// Crc32CUpdate continues a Castagnoli CRC-32 over more data.
+fn Crc32CUpdate(crc u32, s str) u32 {
+	return crc_update(crc, castagnoli, s)
+}
+
+// Crc32CUpdateBytes continues a Castagnoli CRC-32 over the bytes of b, read in place (no string is made).
+fn Crc32CUpdateBytes(crc u32, b []u8) u32 {
+	if len(b) == 0 {
+		return crc
+	}
+	let h = cast(i64, b)
+	return crc_update_at(crc, castagnoli, h[2], len(b))
 }
 
 // Fnv32a is the 32-bit FNV-1a hash of s.
