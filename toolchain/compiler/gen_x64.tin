@@ -1519,6 +1519,17 @@ fn x_gen_conv(e i64, dst i64, d i64) {
 		emit2(X_MOVD_RX, dst, XFSCR)
 		return
 	}
+	if k == CV_I2F32 {
+		// f32 of an i64/u64: convert straight to single precision and widen, so the value is
+		// rounded once instead of twice through f64 (#732).
+		if is_unsigned_t(cast(Ty, x.type_)) != 0 && cast(Ty, x.type_).width == 8 {
+			x_cvt_u2f32(dst, v)
+		} else {
+			emit2(X_CVTSI2SS, dst, v)
+			emit2(X_CVTSS2SD, dst, dst)
+		}
+		return
+	}
 	if k == CV_I2F {
 		if is_unsigned_t(cast(Ty, x.type_)) != 0 && cast(Ty, x.type_).width == 8 {
 			x_cvt_u2f(dst, v)
@@ -1569,6 +1580,29 @@ fn x_cvt_u2f(dst i64, v i64) {
 	emit2(X_ANDI, XSCR2, 1)
 	emit2(X_OR, XSCR, XSCR2)
 	emit2(X_CVTSI2SD, dst, XSCR)
+	emit2(X_ADDSD, dst, dst)
+	x_label(done_l)
+}
+
+// x_cvt_u2f32 is x_cvt_u2f for f32: the halved-and-doubled value keeps the low bit, so the
+// single rounding is correct over the whole u64 range. The doubling is done on the widened
+// value, where it is exact (#732).
+fn x_cvt_u2f32(dst i64, v i64) {
+	let neg_l = new_label()
+	let done_l = new_label()
+	emit2(X_TEST, v, v)
+	emit2(X_JCC, XC_S, neg_l)
+	emit2(X_CVTSI2SS, dst, v)
+	emit2(X_CVTSS2SD, dst, dst)
+	emit1(X_JMP, done_l)
+	x_label(neg_l)
+	x_mov(XSCR, v)
+	emit2(X_SHRI, XSCR, 1)
+	x_mov(XSCR2, v)
+	emit2(X_ANDI, XSCR2, 1)
+	emit2(X_OR, XSCR, XSCR2)
+	emit2(X_CVTSI2SS, dst, XSCR)
+	emit2(X_CVTSS2SD, dst, dst)
 	emit2(X_ADDSD, dst, dst)
 	x_label(done_l)
 }

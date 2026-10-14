@@ -1822,12 +1822,16 @@ fn fold_const_init(e i64) {
 			}
 			replace_node(e, mk_int(pos, iv, t))
 			cast(Node, e).type_ = t
+		} else if ck == CV_I2F32 && cast(Node, x).kind == EX_INT && cast(IntLit, x).big == 0 {
+			// f32 of an integer constant rounds once, straight to single precision (#732):
+			// through int_to_float_bits plus round_f32_bits it would round twice.
+			let fl32 = node_new(EX_FLOAT, pos)
+			cast(FloatLit, fl32).bits = int_to_f32_bits(cast(IntLit, x).val)
+			replace_node(e, fl32)
+			cast(Node, e).type_ = t
 		} else if ck == CV_I2F && cast(Node, x).kind == EX_INT && cast(IntLit, x).big == 0 {
 			let fl = node_new(EX_FLOAT, pos)
-			mut bits = int_to_float_bits(cast(IntLit, x).val)
-			if is_f32(cast(Ty, t)) != 0 {
-				bits = round_f32_bits(bits)
-			}
+			let bits = int_to_float_bits(cast(IntLit, x).val)
 			cast(FloatLit, fl).bits = bits
 			replace_node(e, fl)
 			cast(Node, e).type_ = t
@@ -4546,6 +4550,7 @@ fn mk_conv(pos i64, x i64, kind i64, t i64) i64 {
 const CV_SAME = 8 // retype only: same bits
 const CV_ROUND32 = 10 // f64 value rounded to the nearest f32 (still in an f64 register)
 const CV_F2BITS32 = 11 // f32 value (in an f64 register) to its 32-bit pattern
+const CV_I2F32 = 18 // integer converted straight to single precision (in an f64 register, rounded once; #732)
 const CV_INT = 9 // integer to integer: truncate or extend to the target width
 const CV_I2F = 1
 const CV_F2I = 2

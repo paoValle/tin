@@ -1,0 +1,76 @@
+package main
+
+import "gauge"
+import "say"
+
+// f32 of an i64 or u64 went through f64 and was rounded twice, so from 2^53 up a value just past
+// the midpoint between two f32 values could land one step away from the correctly rounded one (#732).
+// The values below are the 2^53 + k*2^29 + 1 family from the report plus one midpoint case per f32
+// magnitude up to 2^64; every one of them rounds differently through f64 than directly, so each line
+// is a case the old code got wrong. The expected bits are Go's math.Float64bits(float64(float32(x))),
+// which IEEE 754 and the report agree with; the controls (1, 2^24 and 2^53) are exactly representable
+// and must not move.
+fn f32of(x i64) f32 {
+	return f32(x)
+}
+
+fn f32ofu(x u64) f32 {
+	return f32(x)
+}
+
+fn f32of32(x i32) f32 {
+	return f32(x)
+}
+
+fn f32of16(x i16) f32 {
+	return f32(x)
+}
+
+// A typed integer constant must fold through the same single rounding (#732).
+const K i64 = 9007199791611905
+const KF f32 = f32(K)
+
+fn main() {
+	say.Line("1", gauge.F64bits(f64(f32of(1))))
+	say.Line("16777216", gauge.F64bits(f64(f32of(16777216))))
+	say.Line("9007199254740992", gauge.F64bits(f64(f32of(9007199254740992))))
+	say.Line("1", gauge.F64bits(f64(f32ofu(1))))
+	say.Line("16777216", gauge.F64bits(f64(f32ofu(16777216))))
+	say.Line("9007199254740992", gauge.F64bits(f64(f32ofu(9007199254740992))))
+	say.Line("9007199791611905", gauge.F64bits(f64(f32of(9007199791611905))))
+	say.Line("18014399583223809", gauge.F64bits(f64(f32of(18014399583223809))))
+	say.Line("18014403878191106", gauge.F64bits(f64(f32of(18014403878191106))))
+	say.Line("36028803461414911", gauge.F64bits(f64(f32of(36028803461414911))))
+	say.Line("72057598332895233", gauge.F64bits(f64(f32of(72057598332895233))))
+	say.Line("72057615512764418", gauge.F64bits(f64(f32of(72057615512764418))))
+	say.Line("144115213845659647", gauge.F64bits(f64(f32of(144115213845659647))))
+	say.Line("288230393331580929", gauge.F64bits(f64(f32of(288230393331580929))))
+	say.Line("288230462051057666", gauge.F64bits(f64(f32of(288230462051057666))))
+	say.Line("576460855382638591", gauge.F64bits(f64(f32of(576460855382638591))))
+	say.Line("1152921573326323713", gauge.F64bits(f64(f32of(1152921573326323713))))
+	say.Line("1152921848204230658", gauge.F64bits(f64(f32of(1152921848204230658))))
+	say.Line("2305843421530554367", gauge.F64bits(f64(f32of(2305843421530554367))))
+	say.Line("4611686293305294849", gauge.F64bits(f64(f32of(4611686293305294849))))
+	say.Line("9223372586610589697", gauge.F64bits(f64(f32ofu(9223372586610589697))))
+	say.Line("9223372586610589698", gauge.F64bits(f64(f32ofu(9223372586610589698))))
+	say.Line("9223373686122217471", gauge.F64bits(f64(f32ofu(9223373686122217471))))
+	say.Line("9223374785633845249", gauge.F64bits(f64(f32ofu(9223374785633845249))))
+	say.Line("9223374785633845250", gauge.F64bits(f64(f32ofu(9223374785633845250))))
+	say.Line("9223375885145473023", gauge.F64bits(f64(f32ofu(9223375885145473023))))
+	say.Line("18446741324930482175", gauge.F64bits(f64(f32ofu(18446741324930482175))))
+	say.Line("18446740225418854401", gauge.F64bits(f64(f32ofu(18446740225418854401))))
+	say.Line("18446739125907226623", gauge.F64bits(f64(f32ofu(18446739125907226623))))
+	say.Line("18446738026395598849", gauge.F64bits(f64(f32ofu(18446738026395598849))))
+	say.Line("-9007199791611905", gauge.F64bits(f64(f32of(-9007199791611905))))
+	say.Line("-18014403878191106", gauge.F64bits(f64(f32of(-18014403878191106))))
+	say.Line("-4611686293305294849", gauge.F64bits(f64(f32of(-4611686293305294849))))
+	say.Line("i32 16777217", gauge.F64bits(f64(f32of32(16777217))))
+	say.Line("i32 2147483647", gauge.F64bits(f64(f32of32(2147483647))))
+	say.Line("i16 32767", gauge.F64bits(f64(f32of16(32767))))
+	// A constant folds to f32 as well: the integer must be rounded once there too (#732).
+	say.Line("lit 9007199791611905", gauge.F64bits(f64(f32(9007199791611905))))
+	say.Line("lit 18014403878191106", gauge.F64bits(f64(f32(18014403878191106))))
+	let folded f32 = 9007199791611905
+	say.Line("lit let 9007199791611905", gauge.F64bits(f64(folded)))
+	say.Line("const 9007199791611905", gauge.F64bits(f64(KF)))
+}

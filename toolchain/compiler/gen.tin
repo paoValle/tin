@@ -2597,6 +2597,17 @@ fn gen_conv(e i64, dst i64, d i64) {
 		emit2(I_FMOVWS, dst, FPR + 31)
 		return
 	}
+	if k == CV_I2F32 {
+		// f32 of an i64/u64: convert straight to single precision and widen, so the value is
+		// rounded once instead of twice through f64 (#732).
+		if is_unsigned_t(cast(Ty, x.type_)) != 0 && cast(Ty, x.type_).width == 8 {
+			emit2(I_UCVTFS, dst, v)
+		} else {
+			emit2(I_SCVTFS, dst, v)
+		}
+		emit2(I_FCVTDS, dst, dst)
+		return
+	}
 	if k == CV_I2F {
 		if is_unsigned_t(cast(Ty, x.type_)) != 0 && cast(Ty, x.type_).width == 8 {
 			emit2(I_UCVTF, dst, v)

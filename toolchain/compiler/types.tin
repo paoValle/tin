@@ -770,6 +770,45 @@ fn int_to_float_bits(v i64) i64 {
 	return (sign << 63) | ((top + 1023) << 52) | (mant & ((1 << 52) - 1))
 }
 
+// int_to_f32_bits converts an integer constant straight to the nearest f32 (ties to even) and
+// returns that value's f64 bits. Going through int_to_float_bits first would round twice (#732).
+fn int_to_f32_bits(v i64) i64 {
+	if v == 0 {
+		return 0
+	}
+	mut sign = 0
+	mut m = v
+	if v < 0 {
+		sign = 1
+		m = -v
+	}
+	// m is now the magnitude, read as unsigned (the most negative int stays 2^63).
+	mut top = 63
+	for ((m >> top) & 1) == 0 {
+		top = top - 1
+	}
+	mut mant = 0
+	if top <= 23 {
+		mant = m << (23 - top)
+	} else {
+		let shift = top - 23
+		mant = (m >> shift) & ((1 << (64 - shift)) - 1)
+		if shift == 63 {
+			mant = 1
+		}
+		let rest = m & ((1 << shift) - 1)
+		let half = 1 << (shift - 1)
+		if rest > half || (rest == half && (mant & 1) != 0) {
+			mant = mant + 1
+			if mant == (1 << 24) {
+				mant = mant >> 1
+				top = top + 1
+			}
+		}
+	}
+	return (sign << 63) | ((top + 1023) << 52) | ((mant & ((1 << 23) - 1)) << 29)
+}
+
 // ---- bounded types (#240): str max 100, []Item max 1000, map[str]T max 50 ----
 //
 // A bounded type is a twin of its unbounded type (same kind and layout) that also records

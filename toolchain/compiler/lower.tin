@@ -478,14 +478,15 @@ fn adapt_int(e i64, want_in i64) i64 {
 	}
 	if is_float_t(want) != 0 {
 		cast(Node, e).kind = EX_FLOAT
-		cast(FloatLit, e).bits = int_to_float_bits(cast(IntLit, e).val)
 		if is_f32(cast(Ty, want)) != 0 {
-			cast(FloatLit, e).bits = round_f32_bits(cast(FloatLit, e).bits)
+			// Round the integer straight to f32: through f64 first it would round twice (#732).
+			cast(FloatLit, e).bits = int_to_f32_bits(cast(IntLit, e).val)
 			if cast(Ty, want).under != 0 {
 				return want
 			}
 			return ty_f32
 		}
+		cast(FloatLit, e).bits = int_to_float_bits(cast(IntLit, e).val)
 		if kind_of(cast(Ty, want)) == K_FLOAT && cast(Ty, want).under != 0 {
 			return want
 		}
@@ -4770,7 +4771,7 @@ fn chk_conversion(e i64, to Ty) i64 {
 			reconvert(cast(Node, x), ty_int)
 		}
 		if is_f32(to) != 0 {
-			replace_node(e, mk_conv(pos, mk_conv(pos, x, CV_I2F, ty_float), CV_ROUND32, ty_f32))
+			replace_node(e, mk_conv(pos, x, CV_I2F32, ty_f32))
 			return ty_f32
 		}
 		replace_node(e, mk_conv(pos, x, CV_I2F, ty_float))

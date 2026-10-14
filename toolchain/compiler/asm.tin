@@ -131,6 +131,8 @@ const I_ADDISH = 119 // a=rd b=rn c=imm12: add rd, rn, #imm12, lsl #12
 const I_SUBISH = 120 // sub rd, rn, #imm12, lsl #12
 const I_FPARG = 121 // a=rt b=incoming byte offset: the caller's stack argument, expanded once the frame is known
 const I_LINE = 122 // a=source position: marks where a statement starts for the debug line table (-g); no code, taken out before linking (dwarf.tin)
+const I_SCVTFS = 130 // a=sd b=xn: scvtf s(a), x(b) — one rounding, for f32 of an int (#732)
+const I_UCVTFS = 131 // a=sd b=xn: ucvtf s(a), x(b)
 const MK_SIGNED = 4
 const MK_FLOAT = 8
 const MK_SCALED = 16
@@ -572,6 +574,18 @@ fn print_ins(b []u8, ins i64) {
 		pr_regs(b, "fmov", cast(i64, x), y, -1)
 	} else if op == I_SCVTF {
 		pr_regs(b, "scvtf", cast(i64, x), y, -1)
+	} else if op == I_SCVTFS || op == I_UCVTFS {
+		// One rounding to single precision: f32 of an i64/u64 must not go through f64 (#732).
+		buf_byte(b, '\t')
+		if op == I_SCVTFS {
+			buf_str(b, "scvtf")
+		} else {
+			buf_str(b, "ucvtf")
+		}
+		buf_str(b, " s")
+		buf_int(b, cast(i64, x) - 64)
+		buf_str(b, ", ")
+		pr_reg(b, y)
 	} else if op == I_FCVTZS {
 		pr_regs(b, "fcvtzs", cast(i64, x), y, -1)
 	} else if op == I_FCMP {
@@ -1133,6 +1147,12 @@ fn encode(ins i64, pc i64) i64 {
 	}
 	if op == I_SCVTF {
 		return enc_rrr(0x9E620000, x, y, 0)
+	}
+	if op == I_SCVTFS {
+		return enc_rrr(0x9E220000, x, y, 0)
+	}
+	if op == I_UCVTFS {
+		return enc_rrr(0x9E230000, x, y, 0)
 	}
 	if op == I_FCVTZS {
 		return enc_rrr(0x9E780000, x, y, 0)

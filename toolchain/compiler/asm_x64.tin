@@ -86,6 +86,7 @@ const X_ADCI = 84 // a=rd b=imm32: rd += imm + CF
 const X_ROLI = 85 // a=rd b=imm8: rotate left (#488)
 const X_ALIGN = 86 // a=boundary (a power of two) b=fill (0 int3, 1 nops): pads pc up to the boundary
 const X_LINE = 87 // a=source position: marks where a statement starts for the debug line table (-g); no code (dwarf.tin)
+const X_CVTSI2SS = 88 // a=xd b=rs: cvtsi2ss, one rounding to single precision (#732)
 
 const XK_SIGNED = 4
 
@@ -530,7 +531,7 @@ fn x64_print(b []u8, ins i64, pc i64) {
 			buf_byte(cast([]u8, b), ',')
 			x64_pr_reg(cast([]u8, b), y, z)
 		}
-	} else if op >= X_MOVSD && op <= X_ANDPD {
+	} else if (op >= X_MOVSD && op <= X_ANDPD) || op == X_CVTSI2SS {
 		x64_pr_sse(b, op, x, y, end)
 	} else if op == X_ROUNDSD {
 		x64_pr_rr(cast([]u8, b), "roundsd", x, y, 3)
@@ -645,6 +646,8 @@ fn x64_pr_sse(b []u8, op i64, x i64, y i64, end i64) {
 		x64_pr_rr(cast([]u8, b), "ucomisd", x, y, 3)
 	} else if op == X_CVTSI2SD {
 		x64_pr_rr(cast([]u8, b), "cvtsi2sd", x, y, 3)
+	} else if op == X_CVTSI2SS {
+		x64_pr_rr(cast([]u8, b), "cvtsi2ss", x, y, 3)
 	} else if op == X_CVTTSD2SI {
 		x64_pr_rr(cast([]u8, b), "cvttsd2si", x, y, 3)
 	} else if op == X_MOVQ {
@@ -970,6 +973,8 @@ fn x64_encode(ins i64, pc i64, out []u8) i64 {
 		x64_rr(cast([]u8, out), 0x66, 0, 0x0F2E, x, y, 0)
 	} else if op == X_CVTSI2SD {
 		x64_rr(cast([]u8, out), 0xF2, 1, 0x0F2A, x, y, 0)
+	} else if op == X_CVTSI2SS {
+		x64_rr(cast([]u8, out), 0xF3, 1, 0x0F2A, x, y, 0)
 	} else if op == X_CVTTSD2SI {
 		x64_rr(cast([]u8, out), 0xF2, 1, 0x0F2C, x, y, 0)
 	} else if op == X_MOVQ {
