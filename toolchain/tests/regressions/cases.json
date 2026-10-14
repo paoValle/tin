@@ -1313,6 +1313,16 @@
     }
   },
   {
+    "source": "map-value-later.tin",
+    "issue": 841,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "1 7 B\n",
+      "stderr": ""
+    }
+  },
+  {
     "source": "map-key-nested-foreign.tin",
     "issue": 841,
     "expected": {

@@ -1,0 +1,32 @@
+package main
+
+import "say"
+
+// Manager's field map is keyed by a struct and holds a slice of another struct, both declared
+// after Manager (#841): the tingres transaction manager's shape, with LockKey, LockHolder and
+// LockMode after Manager, where the struct value type declared later once segfaulted the checker.
+type Manager struct {
+	locks map[Key][]Holder
+}
+
+type Key struct {
+	rel u32
+}
+
+type Holder struct {
+	xid  u32
+	mode Mode
+}
+
+type Mode enum {
+	A
+	B
+}
+
+fn main() {
+	mut m = Manager{locks: map[Key][]Holder{}}
+	let k = Key{rel: 1}
+	m.locks[k] = []Holder{Holder{xid: 7, mode: Mode.B}}
+	let h = m.locks[k][0]
+	say.Line(len(m.locks), h.xid, h.mode)
+}
