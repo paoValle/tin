@@ -63,7 +63,7 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: usetin/docs
-          ref: 743e153e47a8fcc9109f1a049f348dff6f845fe2
+          ref: 8073192aad0f927d26e91c8ced1227c231acaa2c
           path: .docs
           persist-credentials: false
       - name: Link the documentation into the tree

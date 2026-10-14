@@ -11,6 +11,9 @@ import "twine"
 // d is this run's own directory; the lines name it as /tmp/tin-test-quarry-file.
 let d = "/tmp/tin-test-quarry-file-{quarry.Pid()}"
 
+// pathfile is the file the path-addressed WriteAt and DataSync use.
+let pathfile = d + "/path"
+
 // named is an error's text with this run's directory named as the golden output names it.
 fn named(err fault) str {
 	return twine.ReplaceAll(say.Str(err), d, "/tmp/tin-test-quarry-file")
@@ -42,6 +45,11 @@ fn call(label str, err fault) {
 		return
 	}
 	say.Line(label, "ok")
+}
+
+// taskWrite is the same write from inside a task, where quarry.WriteAt runs on a helper thread.
+fn taskWrite() ! {
+	try quarry.WriteAt(pathfile, 100, []u8("patch"))
 }
 
 fn main() {
@@ -172,6 +180,36 @@ fn main() {
 	rprint(f, "read after close:", 4, 0)
 
 	call("sync dir:", quarry.SyncDir(d))
+
+	// The path-addressed forms mirror quarry.ReadAt: WriteAt writes a range, DataSync waits for the
+	// data, and inside a task the write runs on a helper thread.
+	quarry.WriteFile(pathfile, "0123456789") catch err {
+		say.Line("write path file:", named(err))
+		return
+	}
+	quarry.WriteAt(pathfile, 4, []u8("XX")) catch err {
+		say.Line("path WriteAt:", named(err))
+		return
+	}
+	let got2 = quarry.ReadAt(pathfile, 0, 10) catch _ {
+		""
+	}
+	say.Line("path WriteAt:", got2)
+	quarry.WriteAt(pathfile, 20, []u8("end")) catch _ {
+	}
+	let got3 = quarry.ReadAt(pathfile, 0, 23) catch _ {
+		""
+	}
+	say.Line("path WriteAt past the end:", len(got3))
+	call("path DataSync:", quarry.DataSync(pathfile))
+	taskWrite() catch _ {
+		say.Line("task WriteAt: faulted")
+	}
+	let got4 = quarry.ReadAt(pathfile, 100, 5) catch _ {
+		""
+	}
+	say.Line("task WriteAt:", got4)
+
 	quarry.RemoveAll(d) catch _ {
 	}
 }

@@ -540,3 +540,125 @@ fn SyncDir(path str) ! {
 		fail pathFaultCode("fsync", path, e)
 	}
 }
+
+// WriteAt writes data at off in the file at path (pwrite), which must exist: the file offset is
+// never moved, so several lanes may write one file at once, and all of data is written or the call
+// fails. Inside a request task the write runs on a helper thread (the core serves others), as
+// quarry.ReadAt's read does; on a storage core or in a plain program it is one pwrite.
+fn WriteAt(path str, off i64, data []u8) ! {
+	if off < 0 {
+		fail invalidFault("write", path)
+	}
+	if rt_task_current() != 0 {
+		return try writeAtOnHelper(path, off, data)
+	}
+	return try writeAtAt(path, off, cast(i64, data)[2], len(data))
+}
+
+// writeAtAt is WriteAt on a raw buffer where it runs: the file is opened and closed here.
+fn writeAtAt(path str, off i64, p i64, n i64) ! {
+	if badPath(path) {
+		fail invalidFault("open", path)
+	}
+	let fd = c32(rt_sys_open(rt_cstr(path), OWriteOnly, 0))
+	if fd < 0 {
+		fail pathFault("open", path)
+	}
+	if n == 0 {
+		rt_sys_close(fd)
+		return
+	}
+	mut put = 0
+	for put < n {
+		let k = sysPwrite(fd, p + put, n - put, off + put)
+		if k < 0 {
+			if errno() == EINTR {
+				continue
+			}
+			let e = errno()
+			rt_sys_close(fd)
+			fail pathFaultCode("write", path, e)
+		}
+		if k == 0 {
+			rt_sys_close(fd)
+			fail say.Fault("write %s: wrote 0 of %s bytes", path, say.Str(n - put))
+		}
+		put += k
+	}
+	rt_sys_close(fd)
+}
+
+// writeAtOnHelper is WriteAt's write on a helper thread, copying the data to heap memory the
+// helper owns (the caller's slice may not outlive its task).
+fn writeAtOnHelper(path str, off i64, data []u8) ! {
+	let job = calloc(7, 8)
+	job[0] = rt_heap_str(path)
+	job[1] = malloc(len(data) + 1)
+	memcpy(job[1], cast(i64, data)[2], len(data))
+	job[2] = len(data)
+	job[6] = off
+	try rt_helper_run(writeAtJob, job, jobDrop)
+	if job[3] != 0 {
+		let m = rt_str_from_raw(job[3], job[4])
+		jobDrop(job)
+		fail m
+	}
+	jobDrop(job)
+}
+
+// writeAtJob runs writeAtAt on a helper thread, copying the fault's message into the job.
+fn writeAtJob(job i64) {
+	writeAtAt(cast(str, job[0]), job[6], job[1], job[2]) catch err {
+		jobFault(job, err)
+		return
+	}
+}
+
+// DataSync waits until the file's data at path is on stable storage (fdatasync), which is cheaper
+// than quarry.Sync for a write-ahead log. macOS has no fdatasync: it does what Sync does
+// (F_FULLFSYNC), which is stronger and never weaker. Inside a request task the wait runs on a
+// helper thread; on a storage core or in a plain program it is one call.
+fn DataSync(path str) ! {
+	if rt_task_current() != 0 {
+		return try dataSyncOnHelper(path)
+	}
+	return try dataSyncHere(path)
+}
+
+// dataSyncHere is DataSync where it runs.
+fn dataSyncHere(path str) ! {
+	if badPath(path) {
+		fail invalidFault("open", path)
+	}
+	let fd = c32(rt_sys_open(rt_cstr(path), oRdonly, 0))
+	if fd < 0 {
+		fail pathFault("open", path)
+	}
+	let r = sysFdatasync(fd)
+	let e = errno()
+	rt_sys_close(fd)
+	if c32(r) != 0 {
+		fail pathFaultCode("fdatasync", path, e)
+	}
+}
+
+// dataSyncOnHelper is DataSync's wait on a helper thread.
+fn dataSyncOnHelper(path str) ! {
+	let job = calloc(7, 8)
+	job[0] = rt_heap_str(path)
+	try rt_helper_run(dataSyncJob, job, jobDrop)
+	if job[3] != 0 {
+		let m = rt_str_from_raw(job[3], job[4])
+		jobDrop(job)
+		fail m
+	}
+	jobDrop(job)
+}
+
+// dataSyncJob runs dataSyncHere on a helper thread.
+fn dataSyncJob(job i64) {
+	dataSyncHere(cast(str, job[0])) catch err {
+		jobFault(job, err)
+		return
+	}
+}

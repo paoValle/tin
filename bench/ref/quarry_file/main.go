@@ -315,6 +315,38 @@ func main() {
 	}
 
 	call("sync dir:", syncDir(d))
+
+	// The path-addressed forms (os.OpenFile + WriteAt, and fdatasync).
+	p2 := d + "/path"
+	os.WriteFile(p2, []byte("0123456789"), 0o644)
+	if fw, e := os.OpenFile(p2, os.O_WRONLY, 0); e == nil {
+		fw.WriteAt([]byte("XX"), 4)
+		fw.Close()
+	}
+	rb, _ := os.ReadFile(p2)
+	fmt.Println("path WriteAt:", string(rb))
+	if fw, e := os.OpenFile(p2, os.O_WRONLY, 0); e == nil {
+		fw.WriteAt([]byte("end"), 20)
+		fw.Close()
+	}
+	rb2, _ := os.ReadFile(p2)
+	fmt.Println("path WriteAt past the end:", len(rb2))
+	ds, e := os.Open(p2)
+	if e != nil {
+		fmt.Println("path DataSync:", named(e))
+	} else {
+		call("path DataSync:", dataSync(ds))
+		ds.Close()
+	}
+	// The task write runs on a helper thread in Tin; the observable bytes are the same.
+	if fw, e := os.OpenFile(p2, os.O_WRONLY, 0); e == nil {
+		fw.WriteAt([]byte("patch"), 100)
+		fw.Close()
+	}
+	tb, _ := os.ReadFile(p2)
+	if len(tb) >= 105 {
+		fmt.Println("task WriteAt:", string(tb[100:105]))
+	}
 	os.RemoveAll(d)
 }
 

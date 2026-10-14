@@ -36,3 +36,7 @@ close: ok
 close twice: close /tmp/tin-test-quarry-file/data: file is closed
 read after close: pread /tmp/tin-test-quarry-file/data: file is closed
 sync dir: ok
+path WriteAt: 0123XX6789
+path WriteAt past the end: 23
+path DataSync: ok
+task WriteAt: patch
