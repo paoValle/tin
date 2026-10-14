@@ -2280,17 +2280,23 @@ fn rt_slice_sub(s i64, lo i64, hi i64, esz i64, hasHi i64) i64 {
 // (#944): a sub-slice that only a call reads, or a local that never leaves its function, takes
 // no pool memory.
 fn rt_slice_sub_in(h i64, s i64, lo i64, hi i64, esz i64, hasHi i64) i64 {
+	let n = s[0]
 	if hasHi == 0 {
-		hi = s[0]
+		hi = n
 	}
-	if lo < 0 || hi > s[0] || lo > hi {
+	if lo < 0 || hi > n || lo > hi {
 		rt_panic("slice bounds out of range")
 	}
+	// h may be s: a buffer reset (b = b[:0]) writes the same frame header it reads (#1288), so
+	// every field of s is read before h is written.
+	let cap = s[1]
+	let data = s[2]
+	let long = s[3]
 	h[0] = hi - lo
-	h[1] = s[1] - lo
-	h[2] = s[2] + lo*esz
+	h[1] = cap - lo
+	h[2] = data + lo*esz
 	h[3] = 0
-	if s[3] != 0 {
+	if long != 0 {
 		h[3] = 2
 	}
 	return h

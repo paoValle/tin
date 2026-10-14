@@ -3452,9 +3452,13 @@ fn fo_stmt(s i64) {
 		let tk = cast(Node, t).kind
 		if tk == EX_IDENT {
 			if cast(IdentExpr, t).ref == fo_sym {
-				// Rebinding the local: the object it held may still be in use.
-				fo_ok = 0
-				return
+				if fo_rebind == 0 {
+					// Rebinding the local: the object it held may still be in use.
+					fo_ok = 0
+					return
+				}
+				// A local whose sub-slices go in a frame area (#1288): the area is the only
+				// reference to the header, so replacing it cannot be observed elsewhere.
 			}
 		} else if tk == EX_MEM {
 			fo_field_base(cast(MemExpr, t).base)
@@ -3574,8 +3578,9 @@ fn fo_call(e i64) {
 				fo_ok = 0
 			} else if len(name) > 3 && str_prefix(name, "rt_") != 0 {
 				if fo_hdr != 0 {
-					// A header local goes only where the runtime reads it (#944).
-					if fh_rt_reads(name, i) == 0 {
+					// A header local goes only where the runtime reads it, or mutates the header
+					// it is given and hands it back (#944, #1288).
+					if fh_rt_reads(name, i) == 0 && fh_hdr_mut(name, i) == 0 {
 						fo_ok = 0
 					}
 				} else if str_prefix(name, "rt_keep") == 0 {
@@ -3635,11 +3640,14 @@ shared mut fh_areas []i64 // the function's argument areas, reused statement by 
 shared mut fh_next i64 // the first argument area the statement being walked has not used
 shared mut fh_count i64 // areas made in this function, argument and local ones
 shared mut fh_depth i64 // > 0 inside an expression, whose statements free no areas
+shared mut fh_locals []i64 // [sym, area] pairs: the area an assigned local's sub-slices write (#1288)
 shared mut fo_hdr i64 // fo_stmts is checking a header local: its elements may be used
+shared mut fo_rebind i64 // fo_stmts is checking a local a sub-slice assignment feeds (#1288)
 
 fn fh_fn(f Fn) {
 	fh_f = cast(i64, f)
 	fh_areas = []i64{}
+	fh_locals = []i64{}
 	fh_count = 0
 	fh_depth = 0
 	fh_stmts(cast(Block, f.body).stmts)
@@ -3669,6 +3677,7 @@ fn fh_stmt(s i64) {
 	} else if k == ST_ASSIGN {
 		fh_expr(cast(AssignStmt, s).target)
 		fh_expr(cast(AssignStmt, s).value)
+		fh_assign(cast(AssignStmt, s))
 	} else if k == ST_EXPR {
 		fh_expr(cast(ExprStmt, s).x)
 	} else if k == ST_BLOCK {
@@ -3782,6 +3791,19 @@ fn fh_rt_reads(name str, i i64) i64 {
 	return 0
 }
 
+// fh_hdr_mut reports a runtime function whose argument i is a slice header it mutates and hands
+// back to the caller: a header local may be passed there, because the call reads and rewrites the
+// header it is given (append, and the append(s, x...) family).
+fn fh_hdr_mut(name str, i i64) i64 {
+	if i != 0 {
+		return 0
+	}
+	if name == "rt_append_str" || name == "rt_append" || name == "rt_append_rc" || name == "rt_append_dyn" || name == "rt_append_pair" || name == "rt_append_mem" || name == "rt_append_mem_rc" || name == "rt_slice_appendn" || name == "rt_slice_appendn_rc" || name == "rt_slice_appendn_dyn" || name == "rt_slice_appendn_vrc" {
+		return 1
+	}
+	return 0
+}
+
 // fh_arg_area is the next argument area of the statement being walked, made on first use, or 0
 // when the function has made all it may.
 fn fh_arg_area() i64 {
@@ -3853,5 +3875,50 @@ fn fh_let(s LetStmt) {
 	let area = fh_new_area()
 	if area != 0 {
 		fh_into(s.init, area)
+	}
+}
+
+// fh_area_for is the frame area a local's sub-slice assignments write, made on first use.
+fn fh_area_for(sym i64) i64 {
+	mut i = 0
+	for i < len(fh_locals) {
+		if fh_locals[i] == sym {
+			return fh_locals[i + 1]
+		}
+		i = i + 2
+	}
+	let area = fh_new_area()
+	if area != 0 {
+		fh_locals = append(fh_locals, sym, area)
+	}
+	return area
+}
+
+// fh_assign puts the header of a sub-slice bound to a local by an assignment in a frame area of
+// its own when the local stays contained, so a loop's buffer reset (b = b[:0]) takes no pool
+// memory (#1288). The local may be rebound: a header local's area is the only reference to the
+// header it holds, so replacing it is not observable anywhere else.
+fn fh_assign(s AssignStmt) {
+	if cast(Node, s.target).kind != EX_IDENT || fh_is_sub(s.value) == 0 {
+		return
+	}
+	let sym = cast(Sym, cast(IdentExpr, s.target).ref)
+	if sym.kind != SYM_LOCAL || sym.captured != 0 || kind_of(cast(Ty, sym.type_)) != K_SLICE || fh_count >= fh_max {
+		return
+	}
+	fo_fn = fh_f
+	fo_sym = cast(i64, sym)
+	fo_ok = 1
+	fo_hdr = 1
+	fo_rebind = 1
+	fo_stmts(cast(Block, cast(Fn, fh_f).body).stmts)
+	fo_hdr = 0
+	fo_rebind = 0
+	if fo_ok == 0 {
+		return
+	}
+	let area = fh_area_for(cast(i64, sym))
+	if area != 0 {
+		fh_into(s.value, area)
 	}
 }
