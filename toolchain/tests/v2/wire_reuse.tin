@@ -1,0 +1,32 @@
+package main
+
+import "say"
+import "wire"
+
+// ListenReuse sets SO_REUSEPORT before bind (#1289): a second listener may share the address while
+// a plain Listen is refused, so a program can open one listener per core.
+fn main() {
+	mut a = wire.ListenReuse("127.0.0.1:0") catch err {
+		say.Line("reuse failed", err)
+		return
+	}
+	let addr = "127.0.0.1:{a.Port()}"
+	mut b = wire.ListenReuse(addr) catch err {
+		say.Line("second reuse failed", err)
+		a.Close()
+		return
+	}
+	say.Line("reuse", a.Port() == b.Port())
+	let c = wire.Listen(addr) catch err {
+		if err != nil {
+			say.Line("plain refused")
+		}
+		b.Close()
+		a.Close()
+		return
+	}
+	say.Line("plain bound")
+	c.Close()
+	b.Close()
+	a.Close()
+}

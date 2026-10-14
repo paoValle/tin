@@ -13,6 +13,8 @@ extern fn fcntl(fd i64, cmd i64, ...) i64
 fn rt_sys_fcntl(fd i64, cmd i64, arg i64) i64 { return fcntl(fd, cmd, arg) }
 extern fn getsockname(fd i64, addr i64, n i64) i64
 fn rt_sys_getsockname(fd i64, addr i64, n i64) i64 { return getsockname(fd, addr, n) }
+extern fn getpeername(fd i64, addr i64, n i64) i64
+fn rt_sys_getpeername(fd i64, addr i64, n i64) i64 { return getpeername(fd, addr, n) }
 extern fn getsockopt(fd i64, level i64, name i64, val i64, n i64) i64
 fn rt_sys_getsockopt(fd i64, level i64, name i64, val i64, n i64) i64 { return getsockopt(fd, level, name, val, n) }
 extern fn listen(fd i64, backlog i64) i64

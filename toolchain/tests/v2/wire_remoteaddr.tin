@@ -1,0 +1,19 @@
+package main
+
+import "say"
+import "wire"
+import "mint"
+
+// Conn.RemoteAddr (#1290): each end's peer address is the other's local address.
+fn main() ! {
+	mut l = try wire.Listen("127.0.0.1:0")
+	mut c = try wire.Dial("127.0.0.1:{l.Port()}")
+	mut s = try l.Accept()
+	let sp = try s.RemoteAddr()
+	let cp = try c.RemoteAddr()
+	say.Line("server sees client:", sp == "127.0.0.1:" + mint.Itoa(c.LocalPort()))
+	say.Line("client sees server:", cp == "127.0.0.1:" + mint.Itoa(l.Port()))
+	s.Close()
+	c.Close()
+	l.Close()
+}

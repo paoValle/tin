@@ -11,6 +11,7 @@ import "say"
 import "seal"
 import "tls"
 import "httptrace"
+import "netip"
 
 // Conn is a TCP connection.
 type Conn struct {
@@ -297,6 +298,19 @@ fn (c mut Conn) Close() {
 
 // Listen opens a TCP listener on "host:port" (":0" picks a free port: see Port).
 fn Listen(addr str) !Listener {
+	return try listen_at(addr, false)
+}
+
+// ListenReuse opens a TCP listener on "host:port" with SO_REUSEPORT set before bind (#1289): several
+// listeners in one process, or several processes, can bind the same address and the kernel balances
+// new connections over them, so a program can open one listener per core as anvil does. On macOS the
+// kernel does not balance this way (see packages/anvil/anvil_darwin.tin). ":0" picks a free port: see Port.
+fn ListenReuse(addr str) !Listener {
+	return try listen_at(addr, true)
+}
+
+// listen_at opens a non-blocking TCP listener on addr, setting SO_REUSEPORT as well as SO_REUSEADDR when reuse.
+fn listen_at(addr str, reuse bool) !Listener {
 	let none = Listener{fd: -1}
 	let (host, port, err) = split_addr(addr)
 	if err != nil {
@@ -315,6 +329,9 @@ fn Listen(addr str) !Listener {
 	let one = calloc(1, 8)
 	one[0] = 1
 	rt_sys_setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, one, 4)
+	if reuse {
+		rt_sys_setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, one, 4)
+	}
 	free(one)
 	if i64(i32(rt_sys_bind(fd, sa, rt_sockaddr_len(sa)))) < 0 {
 		let f = os_fault(say.Fmt("bind %s", addr))
@@ -355,6 +372,38 @@ fn (c Conn) LocalPort() i64 {
 	free(ln)
 	free(sa)
 	return port
+}
+
+// RemoteAddr is the address the connection comes from, "ip:port" ("[ip]:port" for IPv6, and an IPv4
+// peer of an IPv6 listener as "a.b.c.d:port"), read with getpeername: it fails when the peer cannot
+// be read. It is the wire twin of anvil.Req.RemoteAddr (#355), for a server that has no Req
+// (pg_hba.conf matching, an access log).
+fn (c Conn) RemoteAddr() !str {
+	let sa = calloc(1, 128)
+	let sl = calloc(1, 8)
+	sl[0] = 120
+	if i64(i32(rt_sys_getpeername(c.fd, sa, sl))) < 0 {
+		let f = os_fault("getpeername")
+		free(sa)
+		free(sl)
+		fail f
+	}
+	free(sl)
+	let port = i64(load8(sa+2))<<8 | i64(load8(sa+3))
+	mut ip = make([]u8, 0, 16)
+	if rt_sockaddr_family(sa) == 2 {
+		ip = append(ip, u8(load8(sa+4)), u8(load8(sa+5)), u8(load8(sa+6)), u8(load8(sa+7)))
+	} else {
+		for k in 0..16 {
+			ip = append(ip, u8(load8(sa+8+k)))
+		}
+	}
+	free(sa)
+	let (a, ok) = netip.AddrFromSlice(ip)
+	if !ok {
+		fail "wire: getpeername gave an address of an unknown family"
+	}
+	return netip.AddrPortFrom(a, u16(port)).String()
 }
 
 // CloseWrite half-closes the connection: the peer reads the end of the stream after what was written, and this end still reads what
