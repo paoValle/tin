@@ -1,0 +1,18 @@
+page size is a power of two: true
+anon len is 4 pages: true
+anon is page aligned: true
+bytes length matches: true
+write and read back: true
+append copies into the pool: true
+mapping untouched by append: true
+populate len is a page: true
+populate read: 1
+advise: ok
+hugepage: ok
+protect: ok, write after restoring: 9
+file mapping first bytes: 0123
+file sees the mapping write: X123
+mapping sees the file write: XYZ3
+msync: ok
+private write not in file: XYZ3
+unmap: ok

@@ -1,0 +1,5 @@
+package mmap
+
+// System call number of mmap.tin on x86-64 Linux.
+
+const nrMsync = 26

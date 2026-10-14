@@ -1,0 +1,154 @@
+package main
+
+import "mmap"
+import "quarry"
+import "say"
+
+// mmap's mappings and advice: an anonymous region and its []u8 view (append copies into the pool,
+// never past the mapping), a prefaulted region, madvise and huge pages, mprotect with a caught
+// write fault, a shared file mapping (writes both ways) and a private one, msync, and munmap.
+
+// d is this run's own directory; the lines name it as /tmp/tin-test-mmap.
+let d = "/tmp/tin-test-mmap-{quarry.Pid()}"
+
+fn main() {
+	quarry.RemoveAll(d) catch _ {
+	}
+	quarry.MkdirAll(d) catch err {
+		say.Line("mkdir:", err)
+		return
+	}
+	let page = mmap.PageSize()
+	say.Line("page size is a power of two:", page > 0 && page & (page - 1) == 0)
+
+	mut r = mmap.MapAnon(4*page, mmap.ProtRead|mmap.ProtWrite) catch err {
+		say.Line("map anon:", err)
+		return
+	}
+	say.Line("anon len is 4 pages:", r.Len() == 4*page)
+	say.Line("anon is page aligned:", r.Addr() % page == 0)
+
+	mut b = r.Bytes()
+	say.Line("bytes length matches:", len(b) == r.Len())
+	b[0] = 65
+	b[len(b)-1] = 90
+	say.Line("write and read back:", b[0] == 65 && b[len(b)-1] == 90)
+
+	// The slice is a view into long-lived memory: append copies into the caller's pool and leaves
+	// the mapping (and other views of it) untouched.
+	mut grown = append(b, 7)
+	mut again = r.Bytes()
+	say.Line("append copies into the pool:", len(grown) == r.Len()+1 && len(again) == r.Len())
+	say.Line("mapping untouched by append:", again[0] == 65 && again[len(again)-1] == 90)
+
+	// A prefaulted region.
+	mut rp = mmap.MapAnonPopulate(page, mmap.ProtRead|mmap.ProtWrite) catch err {
+		say.Line("map anon populate:", err)
+		return
+	}
+	say.Line("populate len is a page:", rp.Len() == page)
+	mut bp = rp.Bytes()
+	bp[0] = 1
+	say.Line("populate read:", bp[0])
+
+	// Advice and huge pages are hints.
+	r.Advise(mmap.Advice.WillNeed) catch err {
+		say.Line("advise:", err)
+	}
+	r.Advise(mmap.Advice.Sequential) catch err {
+		say.Line("advise:", err)
+	}
+	r.Advise(mmap.Advice.Random) catch err {
+		say.Line("advise:", err)
+	}
+	r.Advise(mmap.Advice.Normal) catch err {
+		say.Line("advise:", err)
+	}
+	r.Advise(mmap.Advice.DontNeed) catch err {
+		say.Line("advise:", err)
+	}
+	say.Line("advise: ok")
+	r.HugePage() catch err {
+		say.Line("hugepage:", err)
+	}
+	say.Line("hugepage: ok")
+
+	// mprotect: a range protected without ProtWrite faults on a write (a panic; guarding it needs a
+	// task, so this checks the call and that the region works again afterwards).
+	r.Protect(mmap.ProtRead) catch err {
+		say.Line("protect:", err)
+	}
+	r.Protect(mmap.ProtRead|mmap.ProtWrite) catch err {
+		say.Line("protect:", err)
+	}
+	mut after = r.Bytes()
+	after[0] = 9
+	say.Line("protect: ok, write after restoring:", after[0])
+
+	// A shared file mapping: a write through the mapping reaches the file and the other way.
+	let path = d + "/map"
+	quarry.WriteFile(path, "0123456789abcdef") catch err {
+		say.Line("write file:", err)
+		return
+	}
+	mut f = quarry.OpenFile(path, quarry.OReadWrite, 0) catch err {
+		say.Line("open:", err)
+		return
+	}
+	mut m = mmap.MapFile(f.Fd(), 0, page, mmap.ProtRead|mmap.ProtWrite, true) catch err {
+		say.Line("map file:", err)
+		return
+	}
+	mut mb = m.Bytes()
+	say.Line("file mapping first bytes:", str(mb[0:4]))
+	mb[0] = 88
+	mut buf = make([]u8, 4)
+	f.ReadAt(mut buf, 0) catch err {
+		say.Line("read:", err)
+	}
+	say.Line("file sees the mapping write:", str(buf))
+	f.WriteAt([]u8("YZ"), 1) catch err {
+		say.Line("write:", err)
+	}
+	say.Line("mapping sees the file write:", str(m.Bytes()[0:4]))
+	m.Sync() catch err {
+		say.Line("msync:", err)
+	}
+	m.SyncAsync() catch err {
+		say.Line("msync async:", err)
+	}
+	say.Line("msync: ok")
+
+	// A private mapping's writes stay in this mapping.
+	mut p = mmap.MapFile(f.Fd(), 0, page, mmap.ProtRead|mmap.ProtWrite, false) catch err {
+		say.Line("map file private:", err)
+		return
+	}
+	p.Bytes()[0] = 81
+	f.ReadAt(mut buf, 0) catch err {
+		say.Line("read:", err)
+	}
+	say.Line("private write not in file:", str(buf))
+
+	p.Unmap() catch err {
+		say.Line("munmap:", err)
+	}
+	m.Unmap() catch err {
+		say.Line("munmap:", err)
+	}
+	r.Unmap() catch err {
+		say.Line("munmap:", err)
+	}
+	rp.Unmap() catch err {
+		say.Line("munmap:", err)
+	}
+	f.Close() catch err {
+		say.Line("close:", err)
+	}
+	r.Unmap() catch err {
+		say.Line("munmap twice:", err)
+	}
+	say.Line("unmap: ok")
+	quarry.RemoveAll(d) catch _ {
+	}
+}

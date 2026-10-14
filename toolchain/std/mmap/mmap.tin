@@ -1,0 +1,195 @@
+// Package mmap maps memory and hands it out as bytes: anonymous regions for a buffer pool, file
+// ranges shared with the page cache, and the advice calls (madvise, msync, mprotect) a database
+// uses to control them. A Region lives outside the runtime's pools and heaps: it is page-aligned,
+// preallocated, and never scanned, moved or freed by the runtime, which is what a buffer pool
+// needs. Linux arm64 and x86-64 use raw system calls; macOS uses libSystem.
+package mmap
+
+import "say"
+
+// Protection flags for MapAnon, MapFile and Protect, OR-ed together. The numbers are the same on
+// Linux and macOS.
+const ProtNone = 0
+const ProtRead = 1
+const ProtWrite = 2
+const ProtExec = 4
+
+// Region is a mapping: its address and length. It is a value struct, so a copy is another name for
+// the same mapping and nothing is allocated to make or pass one. A Region's bytes must not be used
+// after Unmap; the zero Region is not mapped.
+type Region value struct {
+	addr i64
+	n    i64
+}
+
+// Advice is how a mapped range will be used, for Advise (POSIX_MADV_* and madvise).
+type Advice enum {
+	Normal
+	Random
+	Sequential
+	WillNeed
+	DontNeed
+}
+
+// adviceCode maps an Advice to its madvise number (the same on Linux and macOS).
+fn adviceCode(a Advice) i64 {
+	let code = match a {
+		Normal => 0
+		Random => 1
+		Sequential => 2
+		WillNeed => 3
+		DontNeed => 4
+	}
+	return code
+}
+
+// PageSize is the OS mapping page size in bytes (4 KiB on Linux, 16 KiB on Apple silicon). A file
+// mapping's offset and length must be multiples of it.
+fn PageSize() i64 {
+	return rt_page_size()
+}
+
+// sysErrno is the error code of the call that just failed.
+fn sysErrno() i64 {
+	return rt_errno()
+}
+
+// errnoText is the error text of an errno, without a path.
+fn errnoText(e i64) str {
+	let p = rt_sys_strerror(e)
+	return rt_str_from_raw(p, strlen(p))
+}
+
+// opFault is a fault naming an operation and an errno.
+fn opFault(op str, e i64) ! {
+	fail say.Fault("%s: %s", op, errnoText(e))
+}
+
+// MapAnon maps n bytes of zeroed anonymous memory for reading and writing (or whatever prot says),
+// page-aligned and outside every runtime pool. Unmap it when done.
+fn MapAnon(n i64, prot i64) !Region {
+	return try mapAnon(n, prot, 0)
+}
+
+// MapAnonPopulate is MapAnon with the pages prefaulted (MAP_POPULATE on Linux), so a later write
+// does not wait for a page fault; macOS has no MAP_POPULATE and does the same as MapAnon.
+fn MapAnonPopulate(n i64, prot i64) !Region {
+	return try mapAnon(n, prot, mapPopulate)
+}
+
+// mapAnon is MapAnon with extra mapping flags.
+fn mapAnon(n i64, prot i64, extra i64) !Region {
+	if n <= 0 {
+		fail say.Fault("mmap: length %s is not positive", say.Str(n))
+	}
+	let p = sysMap(0, n, prot, mapPrivate|mapAnonymous|extra, -1, 0)
+	if p < 0 {
+		fail opFault("mmap", sysErrno())
+	}
+	return Region{addr: p, n: n}
+}
+
+// MapFile maps n bytes of the file at fd starting at off, page-aligned (off must be a multiple of
+// PageSize()). sharedMap selects MAP_SHARED (writes reach the file and other mappers) over
+// MAP_PRIVATE (writes stay in this mapping). The descriptor must be open for the access prot asks
+// for.
+fn MapFile(fd i64, off i64, n i64, prot i64, sharedMap bool) !Region {
+	if n <= 0 {
+		fail say.Fault("mmap: length %s is not positive", say.Str(n))
+	}
+	let page = PageSize()
+	if off % page != 0 {
+		fail say.Fault("mmap: offset %s is not a multiple of the page size %s", say.Str(off), say.Str(page))
+	}
+	mut flags = mapPrivate
+	if sharedMap {
+		flags = mapShared
+	}
+	let p = sysMap(0, n, prot, flags, fd, off)
+	if p < 0 {
+		fail opFault("mmap", sysErrno())
+	}
+	return Region{addr: p, n: n}
+}
+
+// Addr is the mapping's address, for a call that needs it (an io_uring buffer, a sendfile).
+fn (r Region) Addr() i64 {
+	return r.addr
+}
+
+// Len is the mapping's length in bytes.
+fn (r Region) Len() i64 {
+	return r.n
+}
+
+// Bytes is the mapping as a []u8 of its length. The slice is a view into long-lived memory (the
+// runtime's region word is 2), so the runtime never frees the mapping, and append copies into the
+// caller's pool instead of writing past it. The slice must not outlive the Region; each call makes
+// one 32-byte slice header, so hoist it out of a loop.
+fn (r Region) Bytes() []u8 {
+	if r.addr == 0 {
+		panic("mmap: the region is not mapped")
+	}
+	let h = rt_alloc(32)
+	h[0] = r.n
+	h[1] = r.n
+	h[2] = r.addr
+	h[3] = 2
+	return cast([]u8, h)
+}
+
+// Sync writes the mapping's dirty pages to the file and waits (msync MS_SYNC). Only a MAP_SHARED
+// file mapping has anything to write.
+fn (r Region) Sync() ! {
+	if sysMsync(r.addr, r.n, msSync) != 0 {
+		fail opFault("msync", sysErrno())
+	}
+}
+
+// SyncAsync starts writing the mapping's dirty pages to the file without waiting (msync MS_ASYNC).
+fn (r Region) SyncAsync() ! {
+	if sysMsync(r.addr, r.n, msAsync) != 0 {
+		fail opFault("msync", sysErrno())
+	}
+}
+
+// Advise tells the kernel how the mapped range will be used (madvise): Advice.WillNeed reads it
+// ahead, Advice.DontNeed drops its pages (they are faulted in again as zeros for anonymous memory,
+// or from the file for a file mapping), Advice.Sequential and Advice.Random tune readahead.
+fn (r Region) Advise(a Advice) ! {
+	if sysAdvise(r.addr, r.n, adviceCode(a)) != 0 {
+		fail opFault("madvise", sysErrno())
+	}
+}
+
+// HugePage asks the kernel to back the mapping with huge pages where it can (madvise MADV_HUGEPAGE
+// on Linux, a hint that a buffer pool should make for a large region). macOS has no huge-page
+// advice, so it does nothing there.
+fn (r Region) HugePage() ! {
+	if sysHugePage(r.addr, r.n) != 0 {
+		fail opFault("madvise", sysErrno())
+	}
+}
+
+// Protect changes the mapping's protection (mprotect): a write to a range protected without
+// ProtWrite panics, which guard turns into a fault.
+fn (r Region) Protect(prot i64) ! {
+	if sysProtect(r.addr, r.n, prot) != 0 {
+		fail opFault("mprotect", sysErrno())
+	}
+}
+
+// Unmap releases the mapping. Every slice from Bytes is invalid afterwards; unmapping an already
+// unmapped (zero) Region is a no-op.
+fn (r mut Region) Unmap() ! {
+	if r.addr == 0 {
+		return
+	}
+	let addr = r.addr
+	let n = r.n
+	r.addr = 0
+	r.n = 0
+	if sysUnmap(addr, n) != 0 {
+		fail opFault("munmap", sysErrno())
+	}
+}

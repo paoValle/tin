@@ -1,0 +1,38 @@
+package mmap
+
+// macOS side of mmap.tin: the mapping calls are runtime leaves (libSystem); msync is libSystem too.
+// macOS has no MAP_POPULATE and no MADV_HUGEPAGE.
+
+const mapShared = 1
+const mapPrivate = 2
+const mapAnonymous = 0x1000
+const mapPopulate = 0
+const msAsync = 1
+const msSync = 4
+
+extern fn msync(addr i64, n i64, flags i64) i64
+
+fn sysMap(addr i64, n i64, prot i64, flags i64, fd i64, off i64) i64 {
+	return rt_sys_mmap(addr, n, prot, flags, fd, off)
+}
+
+fn sysUnmap(addr i64, n i64) i64 {
+	return rt_sys_munmap(addr, n)
+}
+
+fn sysProtect(addr i64, n i64, prot i64) i64 {
+	return rt_sys_mprotect(addr, n, prot)
+}
+
+fn sysAdvise(addr i64, n i64, advice i64) i64 {
+	return rt_sys_madvise(addr, n, advice)
+}
+
+fn sysMsync(addr i64, n i64, flags i64) i64 {
+	return i64(i32(msync(addr, n, flags)))
+}
+
+// sysHugePage does nothing: macOS has no huge-page advice (documented at Region.HugePage).
+fn sysHugePage(addr i64, n i64) i64 {
+	return 0
+}

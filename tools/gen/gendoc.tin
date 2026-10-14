@@ -55,6 +55,7 @@ fn packages() []str {
 		"jsonv2", "JSON Marshal and Unmarshal with options (encoding/json/v2)",
 		"flume", "buffered I/O (bufio)",
 		"quarry", "files, environment, process (os)",
+		"mmap", "memory mappings, madvise and pinned regions (sys/mman, syscall.Mmap)",
 		"debug", "binary formats of the executables Tin writes (debug/elf, debug/macho, debug/buildinfo)",
 		"debug/elf", "ELF executable headers, sections, symbols and dynamic tables (debug/elf)",
 		"debug/macho", "Mach-O executable headers, load commands, sections and symbols (debug/macho)",
