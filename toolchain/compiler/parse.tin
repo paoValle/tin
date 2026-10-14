@@ -1001,6 +1001,15 @@ fn p_peek2() Token {
 	return p_toks[p_i]
 }
 
+// p_newline_before_peek reports a source newline between the last consumed token and the next.
+fn p_newline_before_peek() bool {
+	if p_i <= 0 {
+		return false
+	}
+	let prev = cast(Token, p_toks[p_i-1])
+	return source_has_newline(file_sources[cur_file], prev.end, p_peek().start) != 0
+}
+
 fn p_next() i64 {
 	let t = p_peek()
 	if t.kind != TK_EOF {
@@ -1578,7 +1587,7 @@ fn parse_results() []i64 {
 		mut br = []i64{}
 		if p_is("(") != 0 {
 			br = parse_type_list()
-		} else if starts_type() != 0 && p_is("{{") == 0 {
+		} else if starts_type() != 0 && p_is("{{") == 0 && !p_newline_before_peek() {
 			br = append(br, parse_type())
 		}
 		let ft = cast(TypeExpr, node_new(TX_NAME, bpos))

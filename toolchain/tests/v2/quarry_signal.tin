@@ -1,0 +1,34 @@
+package main
+
+import "anvil"
+import "quarry"
+import "say"
+import "signal"
+import "tide"
+
+fn main() ! {
+	quarry.OnSignal(0, signalCallback) catch err {
+		say.Line("invalid signal rejected", err)
+	}
+	try quarry.OnSignal(i64(signal.SIGUSR1), signalCallback)
+	detach {
+		sendSignal() catch err {
+			say.Line("signal sender failed", err)
+		}
+	}
+	try anvil.Serve("127.0.0.1:0", handler)
+	say.Line("listener loop stopped")
+}
+
+fn signalCallback() {
+	tide.Sleep(1ms)
+	say.Line("signal callback on core task")
+	anvil.Drain(0)
+}
+
+fn sendSignal() ! {
+	tide.Sleep(20ms)
+	try signal.Raise(signal.SIGUSR1)
+}
+
+fn handler(q anvil.Req, w mut anvil.Out) {}

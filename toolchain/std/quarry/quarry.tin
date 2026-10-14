@@ -2,6 +2,7 @@
 package quarry
 
 import "say"
+import "signal"
 
 const oRdonly = 0
 const oWrite = O_WRITE_CREATE
@@ -1215,6 +1216,34 @@ fn Hostname() !str {
 // Pid returns the process id.
 fn Pid() i64 {
 	return c32(rt_sys_getpid())
+}
+
+// OnSignal calls h serially in a detached task on this core, never in signal context; task-aware waits yield, but blocking calls stall this core.
+fn OnSignal(sig i64, h fn()) ! {
+	mut c = try signal.New()
+	let err = signal.Notify(c, signal.Signal(sig))
+	if err != nil {
+		c.Close()
+		fail err
+	}
+	let longC = keep(c)
+	let longH = keep(h)
+	detach {
+		signalLoop(longC, longH)
+	}
+}
+
+// signalLoop delivers a registered signal to its callback until the core drains.
+fn signalLoop(c signal.Chan, h fn()) {
+	mut listener = c
+	defer listener.Close()
+	for {
+		let (_, err) = listener.Recv()
+		if err != nil {
+			return
+		}
+		h()
+	}
 }
 
 // Exit flushes stdout and ends the program with status code.

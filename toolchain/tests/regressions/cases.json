@@ -1656,5 +1656,25 @@
       "stdout": "[0 0 0 1]\n[0 0 0 1 4 2]\n[0 0 0 1 4 5]\n",
       "stderr": ""
     }
+  },
+  {
+    "source": "shape-bang-member.tin",
+    "issue": 1307,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "shape signatures parsed\n",
+      "stderr": ""
+    }
+  },
+  {
+    "source": "inline-value-struct-enum.tin",
+    "issue": 1306,
+    "expected": {
+      "phase": "run",
+      "exit": 0,
+      "stdout": "a 23 1\nb 23 2\n",
+      "stderr": ""
+    }
   }
 ]

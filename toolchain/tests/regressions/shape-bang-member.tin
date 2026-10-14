@@ -1,0 +1,17 @@
+package main
+
+import "say"
+
+shape TwoFaultOnly {
+	mut Close() !
+	mut Reset() !
+}
+
+shape FaultThenValue {
+	mut Close() !
+	Read() !i64
+}
+
+fn main() {
+	say.Line("shape signatures parsed")
+}

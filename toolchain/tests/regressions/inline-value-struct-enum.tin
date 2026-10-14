@@ -1,0 +1,51 @@
+package main
+
+import "say"
+
+type Datum value struct {
+	oid u32
+	null bool
+	i i64
+	f f64
+	b bool
+	s str
+	bytes []u8
+	months i64
+	days i64
+	offset i64
+}
+
+fn FromI64(oid u32, value i64) Datum {
+	return Datum{oid: oid, null: false, i: value, f: 0.0, b: false, s: "", bytes: []u8{}, months: 0, days: 0, offset: 0}
+}
+
+fn (d Datum) Oid() u32 {
+	return d.oid
+}
+
+fn (d Datum) Text() i64 {
+	return d.i
+}
+
+type ConstExpr struct {
+	Value Datum
+	Type u32
+}
+
+type Expr enum {
+	Const(ConstExpr)
+	Other
+}
+
+fn main() {
+	let a = Expr.Const(ConstExpr{Value: FromI64(23, 1), Type: 23})
+	let b = Expr.Const(ConstExpr{Value: FromI64(23, 2), Type: 23})
+	match a {
+		Const(v) => { say.Line("a", v.Value.Oid(), v.Value.Text()) }
+		_ => { say.Line("a notconst") }
+	}
+	match b {
+		Const(v) => { say.Line("b", v.Value.Oid(), v.Value.Text()) }
+		_ => { say.Line("b notconst") }
+	}
+}
